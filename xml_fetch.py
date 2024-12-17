@@ -1,63 +1,93 @@
-import xml.etree.ElementTree as ET
 import requests
-from io import StringIO
+import xml.etree.ElementTree as ET
+from io import BytesIO
 
-def fetch_and_parse_inline_xml(url):
+def fetch_ecfr_data(base_url, date, title, **kwargs):
     """
-    Fetches and parses inline XML content from a URL.
-    :param url: URL where the XML content is displayed.
+    Fetches the eCFR XML data for a specific title, date, and optional query parameters.
+    
+    :param base_url: Base URL for the API.
+    :param date: The date in 'YYYY-MM-DD' format (mandatory).
+    :param title: The title number (mandatory).
+    :param kwargs: Optional query parameters like chapter, subchapter, part, etc.
+    :return: XML content as a file-like object.
     """
+    # Build the URL with mandatory parameters
+    endpoint = f"{base_url}/api/versioner/v1/full/{date}/title-{title}.xml"
+    
+    # Append optional query parameters
+    params = {key: value for key, value in kwargs.items() if value is not None}
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "application/xml"
     }
-
+    
     try:
-        print(f"Fetching XML content from: {url}")
-        response = requests.get(url, headers=headers, timeout=60)
+        print(f"Fetching data from: {endpoint} with parameters {params}")
+        response = requests.get(endpoint, headers=headers, params=params, timeout=60)
+        response.raise_for_status()  # Raise an error for bad responses
         
-        # Check for successful response
-        if response.status_code == 200:
-            print("XML content fetched successfully.\n")
-            xml_content = response.text  # Read the raw XML content as text
-            
-            # Parse XML content using StringIO
-            tree = ET.parse(StringIO(xml_content))
-            root = tree.getroot()
-            return root
-        else:
-            print(f"Failed to fetch XML. HTTP Status Code: {response.status_code}")
-            return None
-
+        print("Successfully fetched XML data.")
+        return BytesIO(response.content)
     except requests.exceptions.RequestException as e:
-        print(f"An error occurred while fetching the XML: {e}")
+        print(f"An error occurred while fetching the data: {e}")
         return None
+
+def parse_ecfr_xml(xml_content):
+    """
+    Parses the eCFR XML content.
+    
+    :param xml_content: XML content as a file-like object.
+    """
+    try:
+        tree = ET.parse(xml_content)
+        root = tree.getroot()
+        print("XML content parsed successfully.")
+        return root
     except ET.ParseError as e:
-        print(f"Error parsing XML content: {e}")
+        print(f"Error parsing XML: {e}")
         return None
 
-def parse_ecfr_inline_xml(url):
+def display_ecfr_content(root):
     """
-    Fetches inline XML content from a URL and parses it.
+    Example function to display eCFR content from the parsed XML.
+    
+    :param root: Root of the parsed XML tree.
     """
-    root = fetch_and_parse_inline_xml(url)
-    if root is None:
-        return
-
-    print("Parsing ECFR XML content...\n")
-    for part in root.findall(".//PART"):
-        part_number = part.findtext("PARTNO", default="N/A")
-        part_heading = part.findtext("PARTNAME", default="No Title")
-        print(f"Part {part_number}: {part_heading}")
-
-        for section in part.findall(".//SECTION"):
-            section_number = section.findtext("SECTNO", default="N/A")
-            section_title = section.findtext("SUBJECT", default="No Title")
+    print("\nDisplaying eCFR Content...\n")
+    for part in root.findall('.//PART'):
+        part_number = part.findtext('PARTNO', default="N/A")
+        part_name = part.findtext('PARTNAME', default="No Title")
+        print(f"Part {part_number}: {part_name}")
+        
+        for section in part.findall('.//SECTION'):
+            section_number = section.findtext('SECTNO', default="N/A")
+            section_title = section.findtext('SUBJECT', default="No Title")
             print(f"  Section {section_number}: {section_title}")
 
-            for paragraph in section.findall(".//P"):
-                print(f"    - {paragraph.text.strip()}")
-
 if __name__ == "__main__":
-    # Example URL where XML content is displayed inline
-    xml_url = "https://www.govinfo.gov/bulkdata/ECFR/title-1/2024-01-01/ECFR-title1.xml"
-    parse_ecfr_inline_xml(xml_url)
+    # Base API URL
+    BASE_URL = "https://www.ecfr.gov"
+    
+    # Mandatory parameters
+    date = "2024-12-13"  # Example date
+    title = "12"         # Example title number
+    
+    # Optional parameters
+    optional_params = {
+        "chapter": "2",
+        "subchapter": "A",
+        "part": "211",
+        "section": None  # Set to None if not provided
+    }
+
+    # Fetch the eCFR XML data
+    xml_content = fetch_ecfr_data(BASE_URL, date, title, **optional_params)
+    if xml_content:
+        # Parse the XML content
+        root = parse_ecfr_xml(xml_content)
+        
+        if root:
+            # Display the content
+            display_ecfr_content(root)
