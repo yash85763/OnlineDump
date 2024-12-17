@@ -1,58 +1,63 @@
 import xml.etree.ElementTree as ET
 import requests
-from xml.etree.ElementTree import iterparse
+from io import StringIO
 
-def fetch_and_stream_parse_ecfr_xml(url, chunk_size=1024):
+def fetch_and_parse_inline_xml(url):
     """
-    Fetches a large ECFR XML file in chunks using streaming and parses it.
-    :param url: URL of the ECFR XML file.
-    :param chunk_size: Size of chunks to download in bytes.
+    Fetches and parses inline XML content from a URL.
+    :param url: URL where the XML content is displayed.
     """
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     }
 
     try:
-        print(f"Fetching XML file in streaming mode from: {url}")
+        print(f"Fetching XML content from: {url}")
+        response = requests.get(url, headers=headers, timeout=60)
         
-        # Start streaming the file
-        with requests.get(url, headers=headers, stream=True) as response:
-            response.raise_for_status()  # Raise an error for bad responses
+        # Check for successful response
+        if response.status_code == 200:
+            print("XML content fetched successfully.\n")
+            xml_content = response.text  # Read the raw XML content as text
             
-            # Use iterparse to parse incrementally
-            context = iterparse(response.raw, events=("start", "end"))
-            context = iter(context)
+            # Parse XML content using StringIO
+            tree = ET.parse(StringIO(xml_content))
+            root = tree.getroot()
+            return root
+        else:
+            print(f"Failed to fetch XML. HTTP Status Code: {response.status_code}")
+            return None
 
-            # Track PARTS and SECTIONS
-            current_part_number = ""
-            current_part_heading = ""
-
-            for event, elem in context:
-                if event == "start" and elem.tag == "PART":
-                    # Part tag starts
-                    current_part_number = elem.findtext("PARTNO")
-                    current_part_heading = elem.findtext("PARTNAME")
-                    print(f"\nPart {current_part_number}: {current_part_heading}")
-                
-                if event == "start" and elem.tag == "SECTION":
-                    # Section starts
-                    section_number = elem.findtext("SECTNO", default="N/A")
-                    section_title = elem.findtext("SUBJECT", default="No Title")
-                    print(f"  Section {section_number}: {section_title}")
-
-                    # Print paragraphs under this section
-                    for paragraph in elem.findall(".//P"):
-                        print(f"    - {paragraph.text.strip()}")
-
-                # Clear the element from memory to prevent memory buildup
-                elem.clear()
-    
     except requests.exceptions.RequestException as e:
-        print(f"An error occurred while fetching the XML file: {e}")
+        print(f"An error occurred while fetching the XML: {e}")
+        return None
     except ET.ParseError as e:
-        print(f"Error parsing XML: {e}")
+        print(f"Error parsing XML content: {e}")
+        return None
+
+def parse_ecfr_inline_xml(url):
+    """
+    Fetches inline XML content from a URL and parses it.
+    """
+    root = fetch_and_parse_inline_xml(url)
+    if root is None:
+        return
+
+    print("Parsing ECFR XML content...\n")
+    for part in root.findall(".//PART"):
+        part_number = part.findtext("PARTNO", default="N/A")
+        part_heading = part.findtext("PARTNAME", default="No Title")
+        print(f"Part {part_number}: {part_heading}")
+
+        for section in part.findall(".//SECTION"):
+            section_number = section.findtext("SECTNO", default="N/A")
+            section_title = section.findtext("SUBJECT", default="No Title")
+            print(f"  Section {section_number}: {section_title}")
+
+            for paragraph in section.findall(".//P"):
+                print(f"    - {paragraph.text.strip()}")
 
 if __name__ == "__main__":
-    # Example ECFR XML URL
+    # Example URL where XML content is displayed inline
     xml_url = "https://www.govinfo.gov/bulkdata/ECFR/title-1/2024-01-01/ECFR-title1.xml"
-    fetch_and_stream_parse_ecfr_xml(xml_url)
+    parse_ecfr_inline_xml(xml_url)
