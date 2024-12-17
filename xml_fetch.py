@@ -5,12 +5,6 @@ from io import BytesIO
 def fetch_ecfr_data(base_url, date, title, **kwargs):
     """
     Fetches the eCFR XML data for a specific title, date, and optional query parameters.
-    
-    :param base_url: Base URL for the API.
-    :param date: The date in 'YYYY-MM-DD' format (mandatory).
-    :param title: The title number (mandatory).
-    :param kwargs: Optional query parameters like chapter, subchapter, part, etc.
-    :return: XML content as a file-like object.
     """
     endpoint = f"{base_url}/api/versioner/v1/full/{date}/title-{title}.xml"
     params = {key: value for key, value in kwargs.items() if value is not None}
@@ -25,40 +19,38 @@ def fetch_ecfr_data(base_url, date, title, **kwargs):
         response = requests.get(endpoint, headers=headers, params=params, timeout=60)
         response.raise_for_status()
         print("Successfully fetched XML data.")
-        return BytesIO(response.content)  # Convert to file-like object for parsing
+        return BytesIO(response.content)
     except requests.exceptions.RequestException as e:
         print(f"An error occurred while fetching the data: {e}")
         return None
 
-def parse_ecfr_xml(xml_content):
+def parse_and_display_ecfr_content(xml_content):
     """
-    Parses the eCFR XML content.
-    :param xml_content: XML content as a file-like object.
+    Parses and displays the eCFR XML content dynamically.
     """
     try:
         tree = ET.parse(xml_content)
         root = tree.getroot()
-        print("XML content parsed successfully.")
-        return root
+
+        # Parse PARTS (DIV5)
+        for part in root.findall(".//DIV5[@TYPE='PART']"):
+            part_number = part.attrib.get("N", "N/A")
+            part_title = part.findtext("HEAD", default="No Title")
+            print(f"\nPart {part_number}: {part_title}")
+
+            # Parse SUBPARTS (DIV6)
+            for subpart in part.findall(".//DIV6[@TYPE='SUBPART']"):
+                subpart_title = subpart.findtext("HEAD", default="No Subpart Title")
+                print(f"  Subpart: {subpart_title}")
+
+                # Parse SECTIONS (DIV8)
+                for section in subpart.findall(".//DIV8[@TYPE='SECTION']"):
+                    section_number = section.attrib.get("N", "N/A")
+                    section_title = section.findtext("HEAD", default="No Section Title")
+                    print(f"    Section {section_number}: {section_title}")
+
     except ET.ParseError as e:
         print(f"Error parsing XML: {e}")
-        return None
-
-def display_ecfr_content(root):
-    """
-    Display content from the parsed XML tree.
-    :param root: Root of the parsed XML tree.
-    """
-    print("\nDisplaying eCFR Content...\n")
-    for part in root.findall('.//PART'):
-        part_number = part.findtext('PARTNO', default="N/A")
-        part_name = part.findtext('PARTNAME', default="No Title")
-        print(f"Part {part_number}: {part_name}")
-        
-        for section in part.findall('.//SECTION'):
-            section_number = section.findtext('SECTNO', default="N/A")
-            section_title = section.findtext('SUBJECT', default="No Title")
-            print(f"  Section {section_number}: {section_title}")
 
 if __name__ == "__main__":
     BASE_URL = "https://www.ecfr.gov"
@@ -74,9 +66,7 @@ if __name__ == "__main__":
         "part": "211"
     }
 
-    # Fetch and parse XML data
+    # Fetch the XML
     xml_content = fetch_ecfr_data(BASE_URL, date, title, **optional_params)
     if xml_content:
-        root = parse_ecfr_xml(xml_content)
-        if root:
-            display_ecfr_content(root)
+        parse_and_display_ecfr_content(xml_content)
