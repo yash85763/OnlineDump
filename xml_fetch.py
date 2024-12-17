@@ -1,67 +1,58 @@
 import xml.etree.ElementTree as ET
 import requests
-from io import BytesIO
+from xml.etree.ElementTree import iterparse
 
-def fetch_ecfr_xml(url):
+def fetch_and_stream_parse_ecfr_xml(url, chunk_size=1024):
     """
-    Fetches the ECFR XML file from a given URL.
+    Fetches a large ECFR XML file in chunks using streaming and parses it.
     :param url: URL of the ECFR XML file.
-    :return: ElementTree root of the fetched XML.
+    :param chunk_size: Size of chunks to download in bytes.
     """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
+    }
+
     try:
-        print(f"Fetching XML file from: {url}")
-        response = requests.get(url)
+        print(f"Fetching XML file in streaming mode from: {url}")
         
-        # Check for successful request
-        if response.status_code != 200:
-            print(f"Failed to fetch XML file. HTTP Status Code: {response.status_code}")
-            return None
-        
-        print("XML file fetched successfully.")
-        
-        # Parse the XML content
-        xml_content = BytesIO(response.content)  # Create a file-like object from content
-        tree = ET.parse(xml_content)
-        return tree.getroot()
+        # Start streaming the file
+        with requests.get(url, headers=headers, stream=True) as response:
+            response.raise_for_status()  # Raise an error for bad responses
+            
+            # Use iterparse to parse incrementally
+            context = iterparse(response.raw, events=("start", "end"))
+            context = iter(context)
+
+            # Track PARTS and SECTIONS
+            current_part_number = ""
+            current_part_heading = ""
+
+            for event, elem in context:
+                if event == "start" and elem.tag == "PART":
+                    # Part tag starts
+                    current_part_number = elem.findtext("PARTNO")
+                    current_part_heading = elem.findtext("PARTNAME")
+                    print(f"\nPart {current_part_number}: {current_part_heading}")
+                
+                if event == "start" and elem.tag == "SECTION":
+                    # Section starts
+                    section_number = elem.findtext("SECTNO", default="N/A")
+                    section_title = elem.findtext("SUBJECT", default="No Title")
+                    print(f"  Section {section_number}: {section_title}")
+
+                    # Print paragraphs under this section
+                    for paragraph in elem.findall(".//P"):
+                        print(f"    - {paragraph.text.strip()}")
+
+                # Clear the element from memory to prevent memory buildup
+                elem.clear()
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"An error occurred while fetching the XML file: {e}")
-        return None
-
-def parse_ecfr_xml_from_url(url):
-    """
-    Fetches and parses an ECFR XML file from a URL.
-    :param url: URL of the ECFR XML file.
-    """
-    # Fetch the root element from the XML file
-    root = fetch_ecfr_xml(url)
-    if root is None:
-        return
-
-    # Check for root element
-    if root.tag != "ECFR":
-        print("Not a valid ECFR XML file.")
-        return
-
-    print("\nParsing ECFR XML file...\n")
-
-    # Loop through PARTs and SECTIONS
-    for part in root.findall(".//PART"):
-        part_number = part.findtext("PARTNO")
-        part_heading = part.findtext("PARTNAME")
-        print(f"Part {part_number}: {part_heading}")
-
-        for section in part.findall(".//SECTION"):
-            section_number = section.findtext("SECTNO", default="N/A")
-            section_title = section.findtext("SUBJECT", default="No Title")
-
-            print(f"\n  Section {section_number}: {section_title}")
-
-            # Extract paragraphs (<P>) under this section
-            for paragraph in section.findall(".//P"):
-                print(f"    - {paragraph.text.strip()}")
+    except ET.ParseError as e:
+        print(f"Error parsing XML: {e}")
 
 if __name__ == "__main__":
-    # URL to the ECFR XML file
-    xml_url = "https://www.govinfo.gov/bulkdata/ECFR/title-1/2024-01-01/ECFR-title1.xml"  # Example URL
-    parse_ecfr_xml_from_url(xml_url)
+    # Example ECFR XML URL
+    xml_url = "https://www.govinfo.gov/bulkdata/ECFR/title-1/2024-01-01/ECFR-title1.xml"
+    fetch_and_stream_parse_ecfr_xml(xml_url)
