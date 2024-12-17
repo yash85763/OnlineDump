@@ -12,24 +12,20 @@ def fetch_ecfr_data(base_url, date, title, **kwargs):
     :param kwargs: Optional query parameters like chapter, subchapter, part, etc.
     :return: XML content as a file-like object.
     """
-    # Build the URL with mandatory parameters
     endpoint = f"{base_url}/api/versioner/v1/full/{date}/title-{title}.xml"
-    
-    # Append optional query parameters
     params = {key: value for key, value in kwargs.items() if value is not None}
-    
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "Accept": "application/xml"
     }
-    
+
     try:
         print(f"Fetching data from: {endpoint} with parameters {params}")
         response = requests.get(endpoint, headers=headers, params=params, timeout=60)
-        response.raise_for_status()  # Raise an error for bad responses
-        
+        response.raise_for_status()
         print("Successfully fetched XML data.")
-        return BytesIO(response.content)
+        return BytesIO(response.content)  # Convert to file-like object for parsing
     except requests.exceptions.RequestException as e:
         print(f"An error occurred while fetching the data: {e}")
         return None
@@ -37,7 +33,6 @@ def fetch_ecfr_data(base_url, date, title, **kwargs):
 def parse_ecfr_xml(xml_content):
     """
     Parses the eCFR XML content.
-    
     :param xml_content: XML content as a file-like object.
     """
     try:
@@ -51,8 +46,7 @@ def parse_ecfr_xml(xml_content):
 
 def display_ecfr_content(root):
     """
-    Example function to display eCFR content from the parsed XML.
-    
+    Display content from the parsed XML tree.
     :param root: Root of the parsed XML tree.
     """
     print("\nDisplaying eCFR Content...\n")
@@ -67,27 +61,22 @@ def display_ecfr_content(root):
             print(f"  Section {section_number}: {section_title}")
 
 if __name__ == "__main__":
-    # Base API URL
     BASE_URL = "https://www.ecfr.gov"
-    
+
     # Mandatory parameters
-    date = "2024-12-13"  # Example date
-    title = "12"         # Example title number
-    
+    date = "2024-12-13"
+    title = "12"
+
     # Optional parameters
     optional_params = {
         "chapter": "2",
         "subchapter": "A",
-        "part": "211",
-        "section": None  # Set to None if not provided
+        "part": "211"
     }
 
-    # Fetch the eCFR XML data
+    # Fetch and parse XML data
     xml_content = fetch_ecfr_data(BASE_URL, date, title, **optional_params)
     if xml_content:
-        # Parse the XML content
         root = parse_ecfr_xml(xml_content)
-        
         if root:
-            # Display the content
             display_ecfr_content(root)
