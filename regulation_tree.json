@@ -1,0 +1,484 @@
+{
+  "id": "regulation",
+  "text": "Regulation",
+  "children": [
+    {
+      "id": "211.1",
+      "text": "§ 211.1 Authority, purpose, and scope.",
+      "children": [
+        {
+          "id": "p-211.1(a)",
+          "text": "(a)Authority.This subpart is issued by the Board of Governors of the Federal Reserve System (Board) under the authority of the Federal Reserve Act (FRA) (12 U.S.C. 221et seq.); the Bank Holding Company Act of 1956 (BHC Act) (12 U.S.C. 1841et seq.); and the International Banking Act of 1978 (IBA) (12 U.S.C. 3101et seq.). Footnote: [1]Section 25 of the FRA (12 U.S.C. 601-604a), which refers to national banking associations, also applies to state member banks of the Federal Reserve System by virtue of section 9 of the FRA (12 U.S.C. 321)",
+          "children": []
+        },
+        {
+          "id": "p-211.1(b)",
+          "text": "(b)Purpose.This subpart sets out rules governing the international and foreign activities of U.S. banking organizations, including procedures for establishing foreign branches and Edge and agreement corporations to engage in international banking, and for investments in foreign organizations. Footnote: [1]Section 25 of the FRA (12 U.S.C. 601-604a), which refers to national banking associations, also applies to state member banks of the Federal Reserve System by virtue of section 9 of the FRA (12 U.S.C. 321)",
+          "children": []
+        },
+        {
+          "id": "p-211.1(c)",
+          "text": "(c)Scope.This subpart applies to: (1)Member banks with respect to their foreign branches and investments in foreign banks under section 25 of the FRA (12 U.S.C. 601-604a);[1]and (2)Corporations organized under section 25A of the FRA (12 U.S.C. 611-631) (Edge corporations); (3)Corporations having an agreement or undertaking with the Board under section 25 of the FRA (12 U.S.C. 601-604a) (agreement corporations); and (4)Bank holding companies with respect to the exemption from the nonbanking prohibitions of the BHC Act afforded by section 4(c)(13) of that act (12 U.S.C. 1843(c)(13)). Footnote: [1]Section 25 of the FRA (12 U.S.C. 601-604a), which refers to national banking associations, also applies to state member banks of the Federal Reserve System by virtue of section 9 of the FRA (12 U.S.C. 321)",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.2",
+      "text": "§ 211.2 Definitions.",
+      "children": [
+        {
+          "id": "p-211.2(a)",
+          "text": "(a)Anaffiliateof an organization means: (1)Any entity of which the organization is a direct or indirect subsidiary; or (2)Any direct or indirect subsidiary of the organization or such entity.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(b)",
+          "text": "(b)Capital and surplusmeans, unless otherwise provided in this part: (1)For organizations subject to the capital rule:(i)Tier 1 and tier 2 capital included in an organization's risk-based capital (under the capital rule); and(ii)The balance of allowance for loan and lease losses or adjusted allowance for credit losses, as applicable, not included in an organization's tier 2 capital for calculation of risk-based capital, based on the organization's most recent consolidated Report of Condition and Income.(iii)For qualifying community banking organizations (as defined in§ 217.12 of this chapter) that are subject to the community bank leverage ratio framework (as defined in§ 217.12 of this chapter), tier 1 capital (as defined in§ 217.2 of this chapterand calculated in accordance with§ 217.12(b) of this chapter) plus allowances for loan and lease losses or adjusted allowance for credit losses, as applicable. (2)For all other organizations, paid-in and unimpaired capital and surplus, and includes undivided profits but does not include the proceeds of capital notes or debentures.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(c)",
+          "text": "(c)Capital rulemeanspart 217 of this chapter.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(d)",
+          "text": "(d)Directlyorindirectly,when used in reference to activities or investments of an organization, means activities or investments of the organization or of any subsidiary of the organization.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(e)",
+          "text": "(e)Eligible countrymeans any country: (1)For which an allocated transfer risk reserve is required pursuant to§ 211.43 of this partand that has restructured its sovereign debt held by foreign creditors; and (2)Any other country that the Board deems to be eligible.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(f)",
+          "text": "(f)An Edge corporation isengaged in bankingif it is ordinarily engaged in the business of accepting deposits in the United States from nonaffiliated persons.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(g)",
+          "text": "(g)Engaged in businessorengaged in activitiesin the United States means maintaining and operating an office (other than a representative office) or subsidiary in the United States.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(h)",
+          "text": "(h)Equitymeans an ownership interest in an organization, whether through: (1)Voting or nonvoting shares; (2)General or limited partnership interests; (3)Any other form of interest conferring ownership rights, including warrants, debt, or any other interests that are convertible into shares or other ownership rights in the organization; or (4)Loans that provide rights to participate in the profits of an organization, unless the investor receives a determination that such loans should not be considered equity in the circumstances of the particular investment.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(i)",
+          "text": "(i)Foreignorforeign countryrefers to one or more foreign nations, and includes the overseas territories, dependencies, and insular possessions of those nations and of the United States, and the Commonwealth of Puerto Rico.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(j)",
+          "text": "(j)Foreign bankmeans an organization that: (1)Is organized under the laws of a foreign country; (2)Engages in the business of banking; (3)Is recognized as a bank by the bank supervisory or monetary authority of the country of its organization or principal banking operations; (4)Receives deposits to a substantial extent in the regular course of its business; and (5)Has the power to accept demand deposits.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(k)",
+          "text": "(k)Foreign branchmeans an office of an organization (other than a representative office) that is located outside the country in which the organization is legally established and at which a banking or financing business is conducted.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(l)",
+          "text": "(l)Foreign personmeans an office or establishment located outside the United States, or an individual residing outside the United States.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(m)",
+          "text": "(m)Investmentmeans: (1)The ownership or control of equity; (2)Binding commitments to acquire equity; (3)Contributions to the capital and surplus of an organization; or (4)The holding of an organization's subordinated debt when the investor and the investor's affiliates hold more than 5 percent of the equity of the organization.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(n)",
+          "text": "(n)Investment grademeans a security that is rated in one of the four highest rating categories by: (1)Two or more NRSROs; or (2)One NRSRO if the security has been rated by only one NRSRO.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(o)",
+          "text": "(o)Investormeans an Edge corporation, agreement corporation, bank holding company, or member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(p)",
+          "text": "(p)Joint venturemeans an organization that has 20 percent or more of its voting shares held directly or indirectly by the investor or by an affiliate of the investor under any authority, but which is not a subsidiary of the investor or of an affiliate of the investor.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(q)",
+          "text": "(q)Loans and extensions of creditmeans all direct and indirect advances of funds to a person made on the basis of any obligation of that person to repay the funds.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(r)",
+          "text": "(r)NRSROmeans a nationally recognized statistical rating organization as designated by the Securities and Exchange Commission.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(s)",
+          "text": "(s)Organizationmeans a corporation, government, partnership, association, or any other entity.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(t)",
+          "text": "(t)Personmeans an individual or an organization.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(u)",
+          "text": "(u)Portfolio investmentmeans an investment in an organization other than a subsidiary or joint venture.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(v)",
+          "text": "(v)Representative officemeans an office that: (1)Engages solely in representational and administrative functions (such as soliciting new business or acting as liaison between the organization's head office and customers in the United States); and (2)Does not have authority to make any business decision (other than decisions relating to its premises or personnel) for the account of the organization it represents, including contracting for any deposit or deposit-like liability on behalf of the organization.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(w)",
+          "text": "(w)Subsidiarymeans an organization that has more than 50 percent of its voting shares held directly or indirectly, or that otherwise is controlled or capable of being controlled, by the investor or an affiliate of the investor under any authority. Among other circumstances, an investor is considered to control an organization if: (1)The investor or an affiliate is a general partner of the organization; or (2)The investor and its affiliates directly or indirectly own or control more than 50 percent of the equity of the organization.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(x)",
+          "text": "(x)Tier 1 capitalhas the same meaning as provided in§ 217.2 of this chapter. A qualifying community banking organization (as defined in§ 217.12 of this chapter) that is subject to the community bank leverage ratio framework (as defined in§ 217.12 of this chapter), calculates its tier 1 capital in accordance with§ 217.12(b) of this chapter.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(y)",
+          "text": "(y)Well capitalizedmeans: (1)In relation to a parent member or insured bank, that the standards set out in§ 208.43(b)(1)of Regulation H (12 CFR 208.43(b)(1)) are satisfied; (2)In relation to a bank holding company, that the standards set out in§ 225.2(r)(1)of Regulation Y (12 CFR 225.2(r)(1)) are satisfied; and (3)In relation to an Edge or agreement corporation, that it has tier 1 and total risk-based capital ratios of 6.0 and 10.0 percent, respectively, or greater.",
+          "children": []
+        },
+        {
+          "id": "p-211.2(z)",
+          "text": "(z)Well managedmeans that the Edge or agreement corporation, any parent insured bank, and the bank holding company either received a composite rating of 1 or 2 or is considered satisfactory under the applicable rating system, and has at least a satisfactory rating for management if such a rating is given, at their most recent examination or review.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.3",
+      "text": "§ 211.3 Foreign branches of U.S. banking organizations.",
+      "children": [
+        {
+          "id": "p-211.3(a)",
+          "text": "(a)General— (1)Definition of banking organization.For purposes of this section, abanking organizationis defined as a member bank and its affiliates. (2)A banking organization is considered to be operating a branch in a foreign country if it has an affiliate that is a member bank, Edge or agreement corporation, or foreign bank that operates an office (other than a representative office) in that country. (3)For purposes of this subpart, a foreign office of an operating subsidiary of a member bank shall be treated as a foreign branch of the member bank and may engage only in activities permissible for a branch of a member bank. (4)At any time upon notice, the Board may modify or suspend branching authority conferred by this section with respect to any banking organization.",
+          "children": []
+        },
+        {
+          "id": "p-211.3(b)",
+          "text": "(b) (1)Establishment of foreign branches.(i)Foreign branches may be established by any member bank having capital and surplus of $1,000,000 or more, an Edge corporation, an agreement corporation, any subsidiary the shares of which are held directly by the member bank, or any other subsidiary held pursuant to this subpart.(ii)The Board grants its general consent under section 25 of the FRA (12 U.S.C. 601-604a) for a member bank to establish a branch in the Commonwealth of Puerto Rico and the overseas territories, dependencies, and insular possessions of the United States. (2)Prior notice.Unless otherwise provided in this section, the establishment of a foreign branch requires 30 days' prior written notice to the Board. (3)Branching into additional foreign countries.After giving the Board 12 business days prior written notice, a banking organization that operates branches in two or more foreign countries may establish a branch in an additional foreign country. (4)Additional branches within a foreign country.No prior notice is required to establish additional branches in any foreign country where the banking organization operates one or more branches. (5)Branching by nonbanking affiliates.No prior notice is required for a nonbanking affiliate of a banking organization (i.e.,an organization that is not a member bank, an Edge or agreement corporation, or foreign bank) to establish branches within a foreign country or in additional foreign countries. (6)Expiration of branching authority.Authority to establish branches, when granted following prior written notice to the Board, shall expire one year from the earliest date on which the authority could have been exercised, unless extended by the Board.",
+          "children": []
+        },
+        {
+          "id": "p-211.3(c)",
+          "text": "(c)Reporting.Any banking organization that opens, closes, or relocates a branch shall report such change in a manner prescribed by the Board.",
+          "children": []
+        },
+        {
+          "id": "p-211.3(d)",
+          "text": "(d)Reserves of foreign branches of member banks.Member banks shall maintain reserves against foreign branch deposits when required by Regulation D (12 CFR part 204).",
+          "children": []
+        },
+        {
+          "id": "p-211.3(e)",
+          "text": "(e)Conditional approval; access to information.The Board may impose such conditions on authority granted by it under this section as it deems necessary, and may require termination of any activities conducted under authority of this section if a member bank is unable to provide information on its activities or those of its affiliates that the Board deems necessary to determine and enforce compliance with U.S. banking laws.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.4",
+      "text": "§ 211.4 Permissible activities and investments of foreign branches of member banks.",
+      "children": [
+        {
+          "id": "p-211.4(a)",
+          "text": "(a)Permissible activities and investments.In addition to its general banking powers, and to the extent consistent with its charter, a foreign branch of a member bank may engage in the following activities and make the following investments, so far as is usual in connection with the business of banking in the country where it transacts business: (1)Guarantees.Guarantee debts, or otherwise agree to make payments on the occurrence of readily ascertainable events (including, but not limited to, nonpayment of taxes, rentals, customs duties, or costs of transport, and loss or nonconformance of shipping documents) if the guarantee or agreement specifies a maximum monetary liability; however, except to the extent that the member bank is fully secured, it may not have liabilities outstanding for any person on account of such guarantees or agreements which, when aggregated with other unsecured obligations of the same person, exceed the limit contained in section 5200(a)(1) of the Revised Statutes (12 U.S.C. 84) for loans and extensions of credit; (2)Government obligations.(i)Underwrite, distribute, buy, sell, and hold obligations of:(A)The national government of the country where the branch is located and any political subdivision of that country;(B)An agency or instrumentality of the national government of the country where the branch is located where such obligations are supported by the taxing authority, guarantee, or full faith and credit of that government;(C)The national government or political subdivision of any country, where such obligations are rated investment grade; and(D)An agency or instrumentality of any national government where such obligations are rated investment grade and are supported by the taxing authority, guarantee or full faith and credit of that government.(ii)No member bank, under authority of thisparagraph (a)(2), may hold, or be under commitment with respect to, such obligations for its own account in relation to any one country in an amount exceeding the greater of:(A)10 percent of its tier 1 capital; or(B)10 percent of the total deposits of the bank's branches in that country on the preceding year-end call report date (or the date of acquisition of the branch, in the case of a branch that has not been so reported); (3)Other investments.(i)Invest in:(A)The securities of the central bank, clearinghouses, governmental entities other than those authorized underparagraph (a)(2)of this section, and government-sponsored development banks of the country where the foreign branch is located;(B)Other debt securities eligible to meet local reserve or similar requirements; and(C)Shares of automated electronic-payments networks, professional societies, schools, and the like necessary to the business of the branch;(ii)The total investments of a bank's branches in a country under thisparagraph (a)(3)(exclusive of securities held as required by the law of that country or as authorized under section 5136 of the Revised Statutes (12 U.S.C. 24, Seventh)) may not exceed 1 percent of the total deposits of the bank's branches in that country on the preceding year-end call report date (or on the date of acquisition of the branch, in the case of a branch that has not been so reported); (4)Real estate loans.Take liens or other encumbrances on foreign real estate in connection with its extensions of credit, whether or not of first priority and whether or not the real estate has been improved; (5)Insurance.Act as insurance agent or broker; (6)Employee benefits program.Pay to an employee of the branch, as part of an employee benefits program, a greater rate of interest than that paid to other depositors of the branch; (7)Repurchase agreements.Engage in repurchase agreements involving securities and commodities that are the functional equivalents of extensions of credit; (8)Investment in subsidiaries.With the Board's prior approval, acquire all of the shares of a company (except where local law requires other investors to hold directors' qualifying shares or similar types of instruments) that engages solely in activities:(i)In which the member bank is permitted to engage; or(ii)That are incidental to the activities of the foreign branch.",
+          "children": []
+        },
+        {
+          "id": "p-211.4(b)",
+          "text": "(b)Other activities.With the Board's prior approval, engage in other activities that the Board determines are usual in connection with the transaction of the business of banking in the places where the member bank's branches transact business.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.5",
+      "text": "§ 211.5 Edge and agreement corporations.",
+      "children": [
+        {
+          "id": "p-211.5(a)",
+          "text": "(a)Board Authority.The Board shall have the authority to approve: (1)The establishment of Edge corporations; (2)Investments in agreement corporations; and (3)A member bank's proposal to invest more than 10 percent of its capital and surplus in the aggregate amount of stock held in all Edge and agreement corporations. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(b)",
+          "text": "(b)Organization of an Edge corporation— (1)Permit.A proposed Edge corporation shall become a body corporate when the Board issues a permit approving its proposed name, articles of association, and organization certificate. (2)Name.The name of the Edge corporation shall includeinternational, foreign, overseas,or a similar word, but may not resemble the name of another organization to an extent that might mislead or deceive the public. (3)Federal Register notice.The Board shall publish in theFederal Registernotice of any proposal to organize an Edge corporation and shall give interested persons an opportunity to express their views on the proposal. (4)Factors considered by Board.The factors considered by the Board in acting on a proposal to organize an Edge corporation include:(i)The financial condition and history of the applicant;(ii)The general character of its management;(iii)The convenience and needs of the community to be served with respect to international banking and financing services; and(iv)The effects of the proposal on competition. (5)Authority to commence business.After the Board issues a permit, the Edge corporation may elect officers and otherwise complete its organization, invest in obligations of the U.S. government, and maintain deposits with depository institutions, but it may not exercise any other powers until at least 25 percent of the authorized capital stock specified in the articles of association has been paid in cash, and each shareholder has paid in cash at least 25 percent of that shareholder's stock subscription. (6)Expiration of unexercised authority.Unexercised authority to commence business as an Edge corporation shall expire one year after issuance of the permit, unless the Board extends the period. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(c)",
+          "text": "(c)Other provisions regarding Edge corporations— (1)Amendments to articles of association.No amendment to the articles of association shall become effective until approved by the Board. (2)Shareholders' meeting.An Edge corporation shall provide in its bylaws that:(i)A shareholders' meeting shall be convened at the request of the Board within five business days after the Board gives notice of the request to the Edge corporation;(ii)Any shareholder or group of shareholders that owns or controls 25 percent or more of the shares of the Edge corporation shall attend such a meeting in person or by proxy; and(iii)Failure by a shareholder or authorized representative to attend such meeting in person or by proxy may result in removal or barring of the shareholder or representative from further participation in the management or affairs of the Edge corporation. (3)Nature and ownership of shares—(i)Shares.Shares of stock in an Edge corporation may not include no-par-value shares and shall be issued and transferred only on its books and in compliance with section 25A of the FRA (12 U.S.C. 611et seq.) and this subpart.(ii)Contents of share certificates.The share certificates of an Edge corporation shall:(A)Name and describe each class of shares, indicating its character and any unusual attributes, such as preferred status or lack of voting rights; and(B)Conspicuously set forth the substance of:(1)Any limitations on the rights of ownership and transfer of shares imposed by section 25A of the FRA (12 U.S.C. 611et seq.); and(2)Any rules that the Edge corporation prescribes in its bylaws to ensure compliance with thisparagraph (c). (4)Change in status of shareholder.Any change in status of a shareholder that causes a violation of section 25A of the FRA (12 U.S.C. 611et seq.) shall be reported to the Board as soon as possible, and the Edge corporation shall take such action as the Board may direct. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(d)",
+          "text": "(d)Ownership of Edge corporations by foreign institutions— (1)Prior Board approval.One or more foreign or foreign-controlled domestic institutions referred to in section 25A(11) of the FRA (12 U.S.C. 619) may apply for the Board's prior approval to acquire, directly or indirectly, a majority of the shares of the capital stock of an Edge corporation. (2)Conditions and requirements.Such an institution shall:(i)Provide the Board with information related to its financial condition and activities and such other information as the Board may require;(ii)Ensure that any transaction by an Edge corporation with an affiliate[2]is on substantially the same terms, including interest rates and collateral, as those prevailing at the same time for comparable transactions by the Edge corporation with nonaffiliated persons, and does not involve more than the normal risk of repayment or present other unfavorable features;(iii)Ensure that the Edge corporation will not provide funding on a continual or substantial basis to any affiliate or office of the foreign institution through transactions that would be inconsistent with the international and foreign business purposes for which Edge corporations are organized; and(iv)Comply with the limitation on aggregate investments in all Edge and agreement corporations set forth inparagraph (h)of this section. (3)Foreign institutions not subject to the BHC Act.In the case of a foreign institution not subject to section 4 of the BHC Act (12 U.S.C. 1843), that institution shall:(i)Comply with any conditions that the Board may impose that are necessary to prevent undue concentration of resources, decreased or unfair competition, conflicts of interest, or unsound banking practices in the United States; and(ii)Give the Board 30 days' prior written notice before engaging in any nonbanking activity in the United States, or making any initial or additional investments in another organization, that would require prior Board approval or notice by an organization subject to section 4 of the BHC Act (12 U.S.C. 1843); in connection with such notice, the Board may impose conditions necessary to prevent adverse effects that may result from such activity or investment. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(e)",
+          "text": "(e)Change in control of an Edge corporation— (1)Prior notice.(i)Any person shall give the Board 60 days' prior written notice before acquiring, directly or indirectly, 25 percent or more of the voting shares, or otherwise acquiring control, of an Edge corporation.(ii)The Board may extend the 60-day period for an additional 30 days by notifying the acquiring party.(iii)A notice under thisparagraph (e)need not be filed where a change in control is effected through a transaction requiring the Board's approval under section 3 of the BHC Act (12 U.S.C. 1842). (2)Board review.In reviewing a notice filed under thisparagraph (e), the Board shall consider the factors set forth inparagraph (b)(4)of this section, and may disapprove a notice or impose any conditions that it finds necessary to assure the safe and sound operation of the Edge corporation, to assure the international character of its operation, and to prevent adverse effects, such as decreased or unfair competition, conflicts of interest, or undue concentration of resources. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(f)",
+          "text": "(f)Domestic branching by Edge corporations— (1)Prior notice.(i)An Edge corporation may establish branches in the United States 30 days after the Edge corporation has given written notice of its intention to do so to its Reserve Bank, unless the Edge corporation is notified to the contrary within that time.(ii)The notice to the Reserve Bank shall include a copy of the notice of the proposal published in a newspaper of general circulation in the communities to be served by the branch.(iii)The newspaper notice may appear no earlier than 90 calendar days prior to submission of notice of the proposal to the Reserve Bank. The newspaper notice shall provide an opportunity for the public to give written comment on the proposal to the appropriate Federal Reserve Bank for at least 30 days after the date of publication. (2)Factors considered.The factors considered in acting upon a proposal to establish a branch are enumerated inparagraph (b)(4)of this section. (3)Expiration of authority.Authority to establish a branch under prior notice shall expire one year from the earliest date on which that authority could have been exercised, unless the Board extends the period. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(g)",
+          "text": "(g)Agreement corporations— (1)General.With the prior approval of the Board, a member bank or bank holding company may invest in a federally or state-chartered corporation that has entered into an agreement or undertaking with the Board that it will not exercise any power that is impermissible for an Edge corporation under this subpart. (2)Factors considered by Board.The factors considered in acting upon a proposal to establish an agreement corporation are enumerated inparagraph (b)(4)of this section. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(h)",
+          "text": "(h) (1)Limitation on investment in Edge and agreement corporations.A member bank may invest up to 10 percent of its capital and surplus in the capital stock of Edge and agreement corporations or, with the prior approval of the Board, up to 20 percent of its capital and surplus in such stock. (2)Factors considered by Board.The factors considered by the Board in acting on a proposal underparagraph (h)(1)of this section shall include:(i)The composition of the assets of the bank's Edge and agreement corporations;(ii)The total capital invested by the bank in its Edge and agreement corporations when combined with retained earnings of the Edge and agreement corporations (including amounts invested in and retained earnings of any foreign bank subsidiaries) as a percentage of the bank's capital;(iii)Whether the bank, bank holding company, and Edge and agreement corporations are well-capitalized and well-managed;(iv)Whether the bank is adequately capitalized after deconsolidating and deducting the aggregate investment in and assets of all Edge or agreement corporations and all foreign bank subsidiaries; and(v)Any other factor the Board deems relevant to the safety and soundness of the member bank. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(i)",
+          "text": "(i)Reserve requirements and interest rate limitations.The deposits of an Edge or agreement corporation are subject to Regulations D and Q (12 CFR parts 204and217) in the same manner and to the same extent as if the Edge or agreement corporation were a member bank. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(j)",
+          "text": "(j)Liquid funds.Funds of an Edge or agreement corporation that are not currently employed in its international or foreign business, if held or invested in the United States, shall be in the form of: (1)Cash; (2)Deposits with depository institutions, as described in Regulation D (12 CFR part 204), and other Edge and agreement corporations; (3)Money-market instruments (including repurchase agreements with respect to such instruments), such as bankers' acceptances, federal funds sold, and commercial paper; and (4)Short- or long-term obligations of, or fully guaranteed by, federal, state, and local governments and their instrumentalities. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(k)",
+          "text": "(k)Reports by Edge and agreement corporations of crimes and suspected crimes.An Edge or agreement corporation, or any branch or subsidiary thereof, shall file a suspicious-activity report in accordance with the provisions of§ 208.62of Regulation H (12 CFR 208.62). Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(l)",
+          "text": "(l)Protection of customer information and consumer information.An Edge or agreement corporation shall comply with the Interagency Guidelines Establishing Information Security Standards prescribed pursuant to sections 501 and 505 of the Gramm-Leach-Bliley Act (15 U.S.C. 6801and6805) and, with respect to the proper disposal of consumer information, section 216 of the Fair and Accurate Credit Transactions Act of 2003 (15 U.S.C. 1681w), set forth in appendix D-2 topart 208 of this chapter. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        },
+        {
+          "id": "p-211.5(m)",
+          "text": "(m)Procedures for monitoring Bank Secrecy Act compliance. (1)Establishment of Compliance Program.Each Edge corporation and each agreement corporation shall, in accordance with the provisions of§ 208.63of the Board's Regulation H,12 CFR 208.63, develop and provide for the continued administration of a program reasonably designed to assure and monitor compliance with the provisions ofsubchapter II of chapter 53 of title 31, United States Code, the Bank Secrecy Act, and the implementing regulations promulgated thereunder by the Department of the Treasury at31 CFR part 103. The compliance program shall be reduced to writing, approved by the board of directors, and noted in the minutes. (2)Customer identification program.Each Edge or agreement corporation is subject to the requirements of31 U.S.C. 5318(l)and the implementing regulation jointly promulgated by the Board and the Department of the Treasury at31 CFR 103.121, which require a customer identification program. Footnote: [2]For purposes of thisparagraph (d)(2),affiliatemeans any organization that would be an affiliate under section 23A of the FRA (12 U.S.C. 371c) if the Edge corporation were a member bank.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.6",
+      "text": "§ 211.6 Permissible activities of Edge and agreement corporations in the United States.",
+      "children": [
+        {
+          "id": "p-211.6(a)",
+          "text": "(a)Activities incidental to international or foreign business.An Edge or agreement corporation may engage, directly or indirectly, in activities in the United States that are permitted by section 25A(6) of the FRA (12 U.S.C. 615) and are incidental to international or foreign business, and in such other activities as the Board determines are incidental to international or foreign business. The following activities will ordinarily be considered incidental to an Edge or agreement corporation's international or foreign business: (1)Deposit-taking activities—(i)Deposits from foreign governments and foreign persons.An Edge or agreement corporation may receive in the United States transaction accounts, savings, and time deposits (including issuing negotiable certificates of deposits) from foreign governments and their agencies and instrumentalities, and from foreign persons.(ii)Deposits from other persons.An Edge or agreement corporation may receive from any other person in the United States transaction accounts, savings, and time deposits (including issuing negotiable certificates of deposit) if such deposits:(A)Are to be transmitted abroad;(B)Consist of funds to be used for payment of obligations to the Edge or agreement corporation or collateral securing such obligations;(C)Consist of the proceeds of collections abroad that are to be used to pay for exported or imported goods or for other costs of exporting or importing or that are to be periodically transferred to the depositor's account at another financial institution;(D)Consist of the proceeds of extensions of credit by the Edge or agreement corporation;(E)Represent compensation to the Edge or agreement corporation for extensions of credit or services to the customer;(F)Are received from Edge or agreement corporations, foreign banks, and other depository institutions (as described in Regulation D (12 CFR part 204)); or(G)Are received from an organization that by its charter, license, or enabling law is limited to business that is of an international character, including foreign sales corporations, as defined in26 U.S.C. 922; transportation organizations engaged exclusively in the international transportation of passengers or in the movement of goods, wares, commodities, or merchandise in international or foreign commerce; and export trading companies established undersubpart C of this part. (2)Borrowings.An Edge or agreement corporation may:(i)Borrow from offices of other Edge and agreement corporations, foreign banks, and depository institutions (as described in Regulation D (12 CFR part 204));(ii)Issue obligations to the United States or any of its agencies or instrumentalities;(iii)Incur indebtedness from a transfer of direct obligations of, or obligations that are fully guaranteed as to principal and interest by, the United States or any agency or instrumentality thereof that the Edge or agreement corporation is obligated to repurchase; and(iv)Issue long-term subordinated debt that does not qualify as adepositunder Regulation D (12 CFR part 204). (3)Credit activities.An Edge or agreement corporation may:(i)Finance the following:(A)Contracts, projects, or activities performed substantially abroad;(B)The importation into or exportation from the United States of goods, whether direct or through brokers or other intermediaries;(C)The domestic shipment or temporary storage of goods being imported or exported (or accumulated for export); and(D)The assembly or repackaging of goods imported or to be exported;(ii)Finance the costs of production of goods and services for which export orders have been received or which are identifiable as being directly for export;(iii)Assume or acquire participations in extensions of credit, or acquire obligations arising from transactions the Edge or agreement corporation could have financed, including acquisition of obligations of foreign governments;(iv)Guarantee debts, or otherwise agree to make payments on the occurrence of readily ascertainable events (including, but not limited to, nonpayment of taxes, rentals, customs duties, or cost of transport, and loss or nonconformance of shipping documents), so long as the guarantee or agreement specifies the maximum monetary liability thereunder and is related to a type of transaction described inparagraphs (a)(3)(i)and(ii)of this section; and(v)Provide credit and other banking services for domestic and foreign purposes to foreign governments and their agencies and instrumentalities, foreign persons, and organizations of the type described inparagraph (a)(1)(ii)(G)of this section. (4)Payments and collections.An Edge or agreement corporation may receive checks, bills, drafts, acceptances, notes, bonds, coupons, and other instruments for collection abroad, and collect such instruments in the United States for a customer abroad; and may transmit and receive wire transfers of funds and securities for depositors. (5)Foreign exchange.An Edge or agreement corporation may engage in foreign exchange activities. (6)Fiduciary and investment advisory activities.An Edge or agreement corporation may:(i)Hold securities in safekeeping for, or buy and sell securities upon the order and for the account and risk of, a person, provided such services for U.S. persons are with respect to foreign securities only;(ii)Act as paying agent for securities issued by foreign governments or other entities organized under foreign law;(iii)Act as trustee, registrar, conversion agent, or paying agent with respect to any class of securities issued to finance foreign activities and distributed solely outside the United States;(iv)Make private placements of participations in its investments and extensions of credit; however, except to the extent permissible for member banks under section 5136 of the Revised Statutes (12 U.S.C. 24(Seventh)), no Edge or agreement corporation otherwise may engage in the business of underwriting, distributing, or buying or selling securities in the United States;(v)Act as investment or financial adviser by providing portfolio investment advice and portfolio management with respect to securities, other financial instruments, real-property interests, and other investment assets,[3]and by providing advice on mergers and acquisitions, provided such services for U.S. persons are with respect to foreign assets only; and(vi)Provide general economic information and advice, general economic statistical forecasting services, and industry studies, provided such services for U.S. persons shall be with respect to foreign economies and industries only. (7)Banking services for employees.Provide banking services, including deposit services, to the officers and employees of the Edge or agreement corporation and its affiliates; however, extensions of credit to such persons shall be subject to the restrictions of Regulation O (12 CFR part 215) as if the Edge or agreement corporation were a member bank. Footnote: [3]For purposes of this section, management of an investment portfolio does not include operational management of real property, or industrial or commercial assets.",
+          "children": []
+        },
+        {
+          "id": "p-211.6(b)",
+          "text": "(b)Other activities.With the Board's prior approval, an Edge or agreement corporation may engage, directly or indirectly, in other activities in the United States that the Board determines are incidental to their international or foreign business. Footnote: [3]For purposes of this section, management of an investment portfolio does not include operational management of real property, or industrial or commercial assets.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.7",
+      "text": "§ 211.7 Voluntary liquidation of Edge and agreement corporations.",
+      "children": [
+        {
+          "id": "p-211.7(a)",
+          "text": "(a)Prior notice.An Edge or agreement corporation desiring voluntarily to discontinue normal business and dissolve, shall provide the Board with 45 days' prior written notice of its intent to do so.",
+          "children": []
+        },
+        {
+          "id": "p-211.7(b)",
+          "text": "(b)Waiver of notice period.The Board may waive the 45-day period if it finds that immediate action is required by the circumstances presented.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.8",
+      "text": "§ 211.8 Investments and activities abroad.",
+      "children": [
+        {
+          "id": "p-211.8(a)",
+          "text": "(a)General policy.Activities abroad, whether conducted directly or indirectly, shall be confined to activities of a banking or financial nature and those that are necessary to carry on such activities. In doing so, investors[4]shall at all times act in accordance with high standards of banking or financial prudence, having due regard for diversification of risks, suitable liquidity, and adequacy of capital. Subject to these considerations and the other provisions of this section, it is the Board's policy to allow activities abroad to be organized and operated as best meets corporate policies. Footnote: [4]For purposes of this section and§§ 211.9and211.10 of this part, a direct subsidiary of a member bank is deemed to be an investor.",
+          "children": []
+        },
+        {
+          "id": "p-211.8(b)",
+          "text": "(b)Direct investments by member banks.A member bank's direct investments under section 25 of the FRA (12 U.S.C. 601et seq.) shall be limited to: (1)Foreign banks; (2)Domestic or foreign organizations formed for the sole purpose of holding shares of a foreign bank; (3)Foreign organizations formed for the sole purpose of performing nominee, fiduciary, or other banking services incidental to the activities of a foreign branch or foreign bank affiliate of the member bank; and (4)Subsidiaries established pursuant to§ 211.4(a)(8) of this part. Footnote: [4]For purposes of this section and§§ 211.9and211.10 of this part, a direct subsidiary of a member bank is deemed to be an investor.",
+          "children": []
+        },
+        {
+          "id": "p-211.8(c)",
+          "text": "(c)Eligible investments.Subject to the limitations set out inparagraphs (b)and(d)of this section, an investor may, directly or indirectly: (1)Investment in subsidiary.Invest in a subsidiary that engages solely in activities listed in§ 211.10 of this part, or in such other activities as the Board has determined in the circumstances of a particular case are permissible; provided that, in the case of an acquisition of a going concern, existing activities that are not otherwise permissible for a subsidiary may account for not more than 5 percent of either the consolidated assets or consolidated revenues of the acquired organization; (2)Investment in joint venture.Invest in a joint venture; provided that, unless otherwise permitted by the Board, not more than 10 percent of the joint venture's consolidated assets or consolidated revenues are attributable to activities not listed in§ 211.10 of this part; and (3)Portfolio investments.Make portfolio investments in an organization, provided that:(i)Individual investment limits.The total direct and indirect portfolio investments by the investor and its affiliates in an organization engaged in activities that are not permissible for joint ventures, when combined with all other shares in the organization held under any other authority, do not exceed:(A)40 percent of the total equity of the organization; or(B)19.9 percent of the organization's voting shares.(ii)Aggregate Investment Limit.Portfolio investments made under authority of this subpart shall be subject to the aggregate equity limit of§ 211.10(a)(15)(iii).(iii)Loans and extensions of credit.Any loans and extensions of credit made by an investor or its affiliates to the organization are on substantially the same terms, including interest rates and collateral, as those prevailing at the same time for comparable transactions between the investor or its affiliates and nonaffiliated persons; and(iv)Protecting shareholder rights.Nothing in thisparagraph (c)(3)shall prohibit an investor from otherwise exercising rights it may have as shareholder to protect the value of its investment, so long as the exercise of such rights does not result in the investor's direct or indirect control of the organization. Footnote: [4]For purposes of this section and§§ 211.9and211.10 of this part, a direct subsidiary of a member bank is deemed to be an investor.",
+          "children": []
+        },
+        {
+          "id": "p-211.8(d)",
+          "text": "(d)Investment limit.In calculating the amount that may be invested in any organization under this section and§§ 211.9and211.10 of this part, there shall be included any unpaid amount for which the investor is liable and any investments in the same organization held by affiliates under any authority. Footnote: [4]For purposes of this section and§§ 211.9and211.10 of this part, a direct subsidiary of a member bank is deemed to be an investor.",
+          "children": []
+        },
+        {
+          "id": "p-211.8(e)",
+          "text": "(e)Divestiture.An investor shall dispose of an investment promptly (unless the Board authorizes retention) if: (1)The organization invested in:(i)Engages in impermissible activities to an extent not permitted underparagraph (c)of this section; or(ii)Engages directly or indirectly in other business in the United States that is not permitted to an Edge corporation in the United States; provided that an investor may:(A)Retain portfolio investments in companies that derive no more than 10 percent of their total revenue from activities in the United States; and(B)Hold up to 5 percent of the shares of a foreign company that engages directly or indirectly in business in the United States that is not permitted to an Edge corporation; or (2)After notice and opportunity for hearing, the investor is advised by the Board that such investment is inappropriate under the FRA, the BHC Act, or this subpart. Footnote: [4]For purposes of this section and§§ 211.9and211.10 of this part, a direct subsidiary of a member bank is deemed to be an investor.",
+          "children": []
+        },
+        {
+          "id": "p-211.8(f)",
+          "text": "(f)Debts previously contracted.Shares or other ownership interests acquired to prevent a loss upon a debt previously contracted in good faith are not subject to the limitations or procedures of this section; provided that such interests shall be disposed of promptly but in no event later than two years after their acquisition, unless the Board authorizes retention for a longer period. Footnote: [4]For purposes of this section and§§ 211.9and211.10 of this part, a direct subsidiary of a member bank is deemed to be an investor.",
+          "children": []
+        },
+        {
+          "id": "p-211.8(g)",
+          "text": "(g)Investments made through debt-for-equity conversions— (1)Permissible investments.A bank holding company may make investments through the conversion of sovereign-or private-debt obligations of an eligible country, either through direct exchange of the debt obligations for the investment, or by a payment for the debt in local currency, the proceeds of which, including an additional cash investment not exceeding in the aggregate more than 10 percent of the fair value of the debt obligations being converted as part of such investment, are used to purchase the following investments:(i)Public-sector companies.A bank holding company may acquire up to and including 100 percent of the shares of (or other ownership interests in) any foreign company located in an eligible country, if the shares are acquired from the government of the eligible country or from its agencies or instrumentalities.(ii)Private-sector companies.A bank holding company may acquire up to and including 40 percent of the shares, including voting shares, of (or other ownership interests in) any other foreign company located in an eligible country subject to the following conditions:(A)A bank holding company may acquire more than 25 percent of the voting shares of the foreign company only if another shareholder or group of shareholders unaffiliated with the bank holding company holds a larger block of voting shares of the company;(B)The bank holding company and its affiliates may not lend or otherwise extend credit to the foreign company in amounts greater than 50 percent of the total loans and extensions of credit to the foreign company; and(C)The bank holding company's representation on the board of directors or on management committees of the foreign company may be no more than proportional to its shareholding in the foreign company. (2)Investments by bank subsidiary of bank holding company.Upon application, the Board may permit an indirect investment to be made pursuant to thisparagraph (g)through an insured bank subsidiary of the bank holding company, where the bank holding company demonstrates that such ownership is consistent with the purposes of the FRA. In granting its consent, the Board may impose such conditions as it deems necessary or appropriate to prevent adverse effects, including prohibiting loans from the bank to the company in which the investment is made. (3)Divestiture—(i)Time limits for divestiture.A bank holding company shall divest the shares of, or other ownership interests in, any company acquired pursuant to thisparagraph (g)within the longer of:(A)Ten years from the date of acquisition of the investment, except that the Board may extend such period if, in the Board's judgment, such an extension would not be detrimental to the public interest; or(B)Two years from the date on which the bank holding company is permitted to repatriate in full the investment in the foreign company.(ii)Maximum retention period.Notwithstanding the provisions ofparagraph (g)(3)(i)of this section:(A)Divestiture shall occur within 15 years of the date of acquisition of the shares of, or other ownership interests in, any company acquired pursuant to thisparagraph (g); and(B)A bank holding company may retain such shares or ownership interests if such retention is otherwise permissible at the time required for divestiture.(iii)Report to Board.The bank holding company shall report to the Board on its plans for divesting an investment made under thisparagraph (g)two years prior to the final date for divestiture, in a manner to be prescribed by the Board.(iv)Other conditions requiring divestiture.All investments made pursuant to thisparagraph (g)are subject toparagraph (e)of this section requiring prompt divestiture (unless the Board upon application authorizes retention), if the company invested in engages in impermissible business in the United States that exceeds in the aggregate 10 percent of the company's consolidated assets or revenues calculated on an annual basis; provided that such company may not engage in activities in the United States that consist of banking or financial operations (as defined in§ 211.23(f)(5)(iii)(B)) of this part, or types of activities permitted by regulation or order under section 4(c)(8) of the BHC Act (12 U.S.C. 1843(c)(8)), except under regulations of the Board or with the prior approval of the Board. (4)Investment procedures—(i)General consent.Subject to the other limitations of thisparagraph (g), the Board grants its general consent for investments made under thisparagraph (g)if the total amount invested does not exceed the greater of $25 million or 1 percent of the tier 1 capital of the investor.(ii)All other investments shall be made in accordance with the procedures of§ 211.9(f)and(g) of this part, requiring prior notice or specific consent. (5)Conditions—(i)Name.Any company acquired pursuant to thisparagraph (g)shall not bear a name similar to the name of the acquiring bank holding company or any of its affiliates.(ii)Confidentiality.Neither the bank holding company nor its affiliates shall provide to any company acquired pursuant to thisparagraph (g)any confidential business information or other information concerning customers that are engaged in the same or related lines of business as the company. Footnote: [4]For purposes of this section and§§ 211.9and211.10 of this part, a direct subsidiary of a member bank is deemed to be an investor.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.9",
+      "text": "§ 211.9 Investment procedures.",
+      "children": [
+        {
+          "id": "p-211.9(a)",
+          "text": "(a)General provisions.[1]Direct and indirect investments shall be made in accordance with the general consent, limited general consent, prior notice, or specific consent procedures contained in this section. (1)Minimum capital adequacy standards.Except as the Board may otherwise determine, in order for an investor to make investments pursuant to the procedures set out in this section, the investor, the bank holding company, and the member bank shall be in compliance with applicable minimum standards for capital adequacy set out in the capital rule; provided that, if the investor is an Edge or agreement corporation, the minimum capital required is total and tier 1 capital ratios of 8 percent and 4 percent, respectively. (2)Composite rating.Except as the Board may otherwise determine, in order for an investor to make investments under the general consent or limited general consent procedures ofparagraphs (b)and(c)of this section, at the most recent examination the investor and any parent insured bank must have either received a composite rating of at least 2 or be considered satisfactory under the applicable rating system. (3)Board's authority to modify or suspend procedures.The Board, at any time upon notice, may modify or suspend the procedures contained in this section with respect to any investor or with respect to the acquisition of shares of organizations engaged in particular kinds of activities. (4)Long-range investment plan.Any investor may submit to the Board for its specific consent a long-range investment plan. Any plan so approved shall be subject to the other procedures of this section only to the extent determined necessary by the Board to assure safety and soundness of the operations of the investor and its affiliates. (5)Prior specific consent for initial investment.An investor shall apply for and receive the prior specific consent of the Board for its initial investment under this subpart in its first subsidiary or joint venture, unless an affiliate previously has received approval to make such an investment. (6)Expiration of investment authority.Authority to make investments granted under prior notice or specific consent procedures shall expire one year from the earliest date on which the authority could have been exercised, unless the Board determines a longer period shall apply. (7)Conditional approval; Access to information.The Board may impose such conditions on authority granted by it under this section as it deems necessary, and may require termination of any activities conducted under authority of this subpart if an investor is unable to provide information on its activities or those of its affiliates that the Board deems necessary to determine and enforce compliance with U.S. banking laws. Footnote: [1]When necessary, the provisions of this section relating to general consent and prior notice constitute the Board's approval under section 25A(8) of the FRA (12 U.S.C. 615) for investments in excess of the limitations therein based on capital and surplus.",
+          "children": []
+        },
+        {
+          "id": "p-211.9(b)",
+          "text": "(b)General consent.The Board grants its general consent for a well capitalized and well managed investor to make investments, subject to the following: (1)Well capitalized and well managed investor.In order to qualify for making investments under authority of thisparagraph (b), both before and immediately after the proposed investment, the investor, any parent insured bank, and any parent bank holding company shall be well capitalized and well managed. (2)Individual limit for investment in subsidiary.In the case of an investment in a subsidiary, the total amount invested directly or indirectly in such subsidiary (in one transaction or a series of transactions) does not exceed:(i)10 percent of the investor's tier 1 capital, where the investor is a bank holding company; or(ii)2 percent of the investor's tier 1 capital, where the investor is a member bank; or(iii)The lesser of 2 percent of the tier 1 capital of any parent insured bank or 10 percent of the investor's tier 1 capital, for any other investor. (3)Individual limit for investment in joint venture.In the case of an investment in a joint venture, the total amount invested directly or indirectly in such joint venture (in one transaction or a series of transactions) does not exceed:(i)5 percent of the investor's tier 1 capital, where the investor is a bank holding company; or(ii)1 percent of the investor's tier 1 capital, where the investor is a member bank; or(iii)The lesser of 1 percent of the tier 1 capital of any parent insured bank or 5 percent of the investor's tier 1 capital, for any other investor. (4)Individual limit for portfolio investment.In the case of a portfolio investment, the total amount invested directly or indirectly in such company (in one transaction or a series of transactions) does not exceed the lesser of $25 million, or(i)5 percent of the investor's tier 1 capital in the case of a bank holding company or its subsidiary, or Edge corporation engaged in banking; or(ii)25 percent of the investor's tier 1 capital in the case of an Edge corporation not engaged in banking. (5)Investment in a general partnership or unlimited liability company.An investment in a general partnership or unlimited liability company may be made under authority ofparagraph (b)of this section, subject to the limits set out inparagraph (c)of this section. (6)Aggregate investment limits—(i)Investment limits.All investments made, directly or indirectly, during the previous 12-month period under authority of this section, when aggregated with the proposed investment, shall not exceed:(A)20 percent of the investor's tier 1 capital, where the investor is a bank holding company;(B)10 percent of the investor's tier 1 capital, where the investor is a member bank; or(C)The lesser of 10 percent of the tier 1 capital of any parent insured bank or 50 percent of the tier 1 capital of the investor, for any other investor.(ii)Downstream investments.In determining compliance with the aggregate limits set out in thisparagraph (b), an investment by an investor in a subsidiary shall be counted only once, notwithstanding that such subsidiary may, within 12 months of the date of making the investment, downstream all or any part of such investment to another subsidiary. (7)Application of limits.In determining compliance with the limits set out in thisparagraph (b), an investor is not required to combine the value of all shares of an organization held in trading or dealing accounts under§ 211.10(a)(15) of this partwith investments in the same organization. Footnote: [1]When necessary, the provisions of this section relating to general consent and prior notice constitute the Board's approval under section 25A(8) of the FRA (12 U.S.C. 615) for investments in excess of the limitations therein based on capital and surplus.",
+          "children": []
+        },
+        {
+          "id": "p-211.9(c)",
+          "text": "(c)Limited general consent— (1)Individual limit.The Board grants its general consent for an investor that is not well capitalized and well managed to make an investment in a subsidiary or joint venture, or to make a portfolio investment, if the total amount invested directly or indirectly (in one transaction or in a series of transactions) does not exceed the lesser of $25 million or:(i)5 percent of the investor's tier 1 capital, where the investor is a bank holding company;(ii)1 percent of the investor's tier 1 capital, where the investor is a member bank; or(iii)The lesser of 1 percent of any parent insured bank's tier 1 capital or 5 percent of the investor's tier 1 capital, for any other investor. (2)Aggregate limit.The amount of general consent investments made by any investor directly or indirectly under authority of thisparagraph (c)during the previous 12-month period, when aggregated with the proposed investment, shall not exceed:(i)10 percent of the investor's tier 1 capital, where the investor is a bank holding company;(ii)5 percent of the investor's tier 1 capital, where the investor is a member bank; and(iii)The lesser of 5 percent of any parent insured bank's tier 1 capital or 25 percent of the investor's tier 1 capital, for any other investor. (3)Application of limits.In calculating compliance with the limits of thisparagraph (c), the rules set forth inparagraphs (b)(6)(ii)and(b)(7)of this section shall apply. Footnote: [1]When necessary, the provisions of this section relating to general consent and prior notice constitute the Board's approval under section 25A(8) of the FRA (12 U.S.C. 615) for investments in excess of the limitations therein based on capital and surplus.",
+          "children": []
+        },
+        {
+          "id": "p-211.9(d)",
+          "text": "(d)Other eligible investments under general consent.In addition to the authority granted underparagraphs (b)and(c)of this section, the Board grants its general consent for any investor to make the following investments: (1)Investment in organization equal to cash dividends.Any investment in an organization in an amount equal to cash dividends received from that organization during the preceding 12 calendar months; and (2)Investment acquired from affiliate.Any investment that is acquired from an affiliate at net asset value or through a contribution of shares. Footnote: [1]When necessary, the provisions of this section relating to general consent and prior notice constitute the Board's approval under section 25A(8) of the FRA (12 U.S.C. 615) for investments in excess of the limitations therein based on capital and surplus.",
+          "children": []
+        },
+        {
+          "id": "p-211.9(e)",
+          "text": "(e)Investments ineligible for general consent.An investment in a foreign bank may not be made under authority ofparagraphs (b)or(c)of this section if: (1)After the investment, the foreign bank would be an affiliate of a member bank; and (2)The foreign bank is located in a country in which the member bank and its affiliates have no existing banking presence. Footnote: [1]When necessary, the provisions of this section relating to general consent and prior notice constitute the Board's approval under section 25A(8) of the FRA (12 U.S.C. 615) for investments in excess of the limitations therein based on capital and surplus.",
+          "children": []
+        },
+        {
+          "id": "p-211.9(f)",
+          "text": "(f)Prior notice.An investment that does not qualify for general consent underparagraph (b),(c), or(d)of this section may be made after the investor has given the Board 30 days' prior written notice, such notice period to commence at the time the notice is received, provided that: (1)The Board may waive the 30-day period if it finds the full period is not required for consideration of the proposed investment, or that immediate action is required by the circumstances presented; and (2)The Board may suspend the 30-day period or act on the investment under the Board's specific consent procedures. Footnote: [1]When necessary, the provisions of this section relating to general consent and prior notice constitute the Board's approval under section 25A(8) of the FRA (12 U.S.C. 615) for investments in excess of the limitations therein based on capital and surplus.",
+          "children": []
+        },
+        {
+          "id": "p-211.9(g)",
+          "text": "(g)Specific consent.Any investment that does not qualify for either the general consent or the prior notice procedure may not be consummated without the specific consent of the Board. Footnote: [1]When necessary, the provisions of this section relating to general consent and prior notice constitute the Board's approval under section 25A(8) of the FRA (12 U.S.C. 615) for investments in excess of the limitations therein based on capital and surplus.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.10",
+      "text": "§ 211.10 Permissible activities abroad.",
+      "children": [
+        {
+          "id": "p-211.10(a)",
+          "text": "(a)Activities usual in connection with banking.The Board has determined that the following activities are usual in connection with the transaction of banking or other financial operations abroad: (1)Commercial and other banking activities; (2)Financing, including commercial financing, consumer financing, mortgage banking, and factoring; (3)Leasing real or personal property, or acting as agent, broker, or advisor in leasing real or personal property consistent with the provisions of Regulation Y (12 CFR part 225); (4)Acting as fiduciary; (5)Underwriting credit life insurance and credit accident and health insurance; (6)Performing services for other direct or indirect operations of a U.S. banking organization, including representative functions, sale of long-term debt, name-saving, holding assets acquired to prevent loss on a debt previously contracted in good faith, and other activities that are permissible domestically for a bank holding company under sections 4(a)(2)(A) and 4(c)(1)(C) of the BHC Act (12 U.S.C. 1843(a)(2)(A), (c)(1)(C)); (7)Holding the premises of a branch of an Edge or agreement corporation or member bank or the premises of a direct or indirect subsidiary, or holding or leasing the residence of an officer or employee of a branch or subsidiary; (8)Providing investment, financial, or economic advisory services; (9)General insurance agency and brokerage; (10)Data processing; (11)Organizing, sponsoring, and managing a mutual fund, if the fund's shares are not sold or distributed in the United States or to U.S. residents and the fund does not exercise managerial control over the firms in which it invests; (12)Performing management consulting services, if such services, when rendered with respect to the U.S. market, shall be restricted to the initial entry; (13)Underwriting, distributing, and dealing in debt securities outside the United States; (14)Underwriting and distributing equity securities outside the United States as follows:(i)Limits for well-capitalized and well-managed investor—(A)General.After providing 30 days' prior written notice to the Board, an investor that is well capitalized and well managed may underwrite equity securities, provided that commitments by an investor and its subsidiaries for the shares of a single organization do not, in the aggregate, exceed:(1)15 percent of the bank holding company's tier 1 capital, where the investor is a bank holding company;(2)3 percent of the investor's tier 1 capital, where the investor is a member bank; or(3)The lesser of 3 percent of any parent insured bank's tier 1 capital or 15 percent of the investor's tier 1 capital, for any other investor;(B)Qualifying criteria.An investor will be considered well-capitalized and well-managed for purposes ofparagraph (a)(14)(i)of this section only if each of the bank holding company, member bank, and Edge or agreement corporation qualify as well-capitalized and well-managed.(ii)Limits for investor that is not well capitalized and well managed.After providing 30 days' prior written notice to the Board, an investor that is not well capitalized and well managed may underwrite equity securities, provided that commitments by the investor and its subsidiaries for the shares of an organization do not, in the aggregate, exceed $60 million; and(iii)Application of limits.For purposes of determining compliance with the limitations of thisparagraph (a)(14), the investor may subtract portions of an underwriting that are covered by binding commitments obtained by the investor or its affiliates from sub-underwriters or other purchasers; (15)Dealing in equity securities outside the United States as follows:(i)Grandfathered authority.By an investor, or an affiliate, that had commenced such activities prior to March 27, 1991, and subject to the limitations in effect at that time (See12 CFR part 211, revised January 1, 1991); or(ii)Limit on shares of a single issuer.After providing 30 days' prior written notice to the Board, an investor may deal in the shares of an organization where the shares held in the trading or dealing accounts of an investor and its affiliates under authority of thisparagraph (a)(15)do not in the aggregate exceed the lesser of:(A)$40 million; or(B)10 percent of the investor's tier 1 capital;(iii)Aggregate equity limit.The total shares held directly and indirectly by the investor and its affiliates under authority of thisparagraph (a)(15)and§ 211.8(c)(3) of this partin organizations engaged in activities that are not permissible for joint ventures do not exceed:(A)25 percent of the bank holding company's tier 1 capital, where the investor is a bank holding company;(B)20 percent of the investor's tier 1 capital, where the investor is a member bank;[6]and(C)The lesser of 20 percent of any parent insured bank's tier 1 capital or 100 percent of the investor's tier 1 capital, for any other investor;(iv)Determining compliance with limits—(A)General.For purposes of determining compliance with all limits set out in thisparagraph (a)(15):(1)Long and short positions in the same security may be netted; and(2)Except as provided inparagraph (a)(15)(iv)(B)(4)of this section, equity securities held in order to hedge bank permissible equity derivatives contracts shall not be included.(B)Use of internal hedging models.After providing 30 days' prior written notice to the Board the investor may use an internal hedging model that:(1)Nets long and short positions in the same security and offsets positions in a security by futures, forwards, options, and other similar instruments referenced to the same security, for purposes of determining compliance with the single issuer limits ofparagraph (a)(15)(ii)of this section;[7]and(2)Offsets its long positions in equity securities by futures, forwards, options, and similar instruments, on a portfolio basis, and for purposes of determining compliance with the aggregate equity limits ofparagraph (a)(15)(iii)of this section.(3)With respect to all equity securities held under authority ofparagraph (a)(15)of this section, no net long position in a security shall be deemed to have been reduced by more than 75 percent through use of internal hedging models under thisparagraph (a)(15)(iv)(B); and(4)With respect to equity securities acquired to hedge bank permissible equity derivatives contracts under authority ofparagraph (a)(1)of this section, any residual position that remains in the securities of a single issuer after netting and offsetting of positions relating to the security under the investor's internal hedging models shall be included in calculating compliance with the limits of thisparagraph (a)(15)(ii)and (iii).(C)Underwriting commitments.Any shares acquired pursuant to an underwriting commitment that are held for longer than 90 days after the payment date for such underwriting shall be subject to the limits set out inparagraph (a)(15)of this section and the investment provisions of§§ 211.8and211.9 of this part.(v)Authority to deal in shares of U.S. organization.The authority to deal in shares underparagraph (a)(15)of this section includes the authority to deal in the shares of a U.S. organization:(A)With respect to foreign persons only; and(B)Subject to the limitations on owning or controlling shares of a company in section 4(c)(6) of the BHC Act (12 U.S.C. 1843(c)(6)) and Regulation Y (12 CFR part 225).(vi)Report to senior management.Any shares held in trading or dealing accounts for longer than 90 days shall be reported to the senior management of the investor; (16)Operating a travel agency, but only in connection with financial services offered abroad by the investor or others; (17)Underwriting life, annuity, pension fund-related, and other types of insurance, where the associated risks have been previously determined by the Board to be actuarially predictable; provided that:(i)Investments in, and loans and extensions of credit (other than loans and extensions of credit fully secured in accordance with the requirements of section 23A of the FRA (12 U.S.C. 371c), or with such other standards as the Board may require) to, the company by the investor or its affiliates are deducted from the capital of the investor (with 50 percent of such capital deduction to be taken from tier 1 capital); and(ii)Activities conducted directly or indirectly by a subsidiary of a U.S. insured bank are excluded from the authority of thisparagraph (a)(17), unless authorized by the Board; (18)Providing futures commission merchant services (including clearing without executing and executing without clearing) for nonaffiliated persons with respect to futures and options on futures contracts for financial and nonfinancial commodities; provided that prior notice under§ 211.9(f) of this partshall be provided to the Board before any subsidiaries of a member bank operating pursuant to this subpart may join a mutual exchange or clearinghouse, unless the potential liability of the investor to the exchange, clearinghouse, or other members of the exchange, as the case may be, is legally limited by the rules of the exchange or clearinghouse to an amount that does not exceed applicable general consent limits under§ 211.9 of this part; (19)Acting as principal or agent in commodity-swap transactions in relation to:(i)Swaps on a cash-settled basis for any commodity, provided that the investor's portfolio of swaps contracts is hedged in a manner consistent with safe and sound banking practices; and(ii)Contracts that require physical delivery of a commodity, provided that:(A)Such contracts are entered into solely for the purpose of hedging the investor's positions in the underlying commodity or derivative contracts based on the commodity;(B)The contract allows for assignment, termination or offset prior to expiration; and(C)Reasonable efforts are made to avoid delivery. Footnote: [6]For this purpose, a direct subsidiary of a member bank is deemed to be an investor.[7]A basket of stocks, specifically segregated as an offset to a position in a stock index derivative product, as computed by the investor's internal model, may be offset against the stock index.",
+          "children": []
+        },
+        {
+          "id": "p-211.10(b)",
+          "text": "(b)Regulation Y activities.An investor may engage in activities that the Board has determined in§ 225.28(b)of Regulation Y (12 CFR 225.28(b)) are closely related to banking under section 4(c)(8) of the BHC Act (12 U.S.C. 1843(c)(8)). Footnote: [6]For this purpose, a direct subsidiary of a member bank is deemed to be an investor.[7]A basket of stocks, specifically segregated as an offset to a position in a stock index derivative product, as computed by the investor's internal model, may be offset against the stock index.",
+          "children": []
+        },
+        {
+          "id": "p-211.10(c)",
+          "text": "(c)Specific approval.With the Board's specific approval, an investor may engage in other activities that the Board determines are usual in connection with the transaction of the business of banking or other financial operations abroad and are consistent with the FRA or the BHC Act. Footnote: [6]For this purpose, a direct subsidiary of a member bank is deemed to be an investor.[7]A basket of stocks, specifically segregated as an offset to a position in a stock index derivative product, as computed by the investor's internal model, may be offset against the stock index.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.11",
+      "text": "§ 211.11 Advisory opinions under Regulation K.",
+      "children": [
+        {
+          "id": "p-211.11(a)",
+          "text": "(a)Request for advisory opinion.Any person may submit a request to the Board for an advisory opinion regarding the scope of activities permissible under any subpart of this part.",
+          "children": []
+        },
+        {
+          "id": "p-211.11(b)",
+          "text": "(b)Form and content of the request.Any request for an advisory opinion under this section shall be: (1)Submitted in writing to the Board; (2)Contain a clear description of the proposed parameters of the activity, or the service or product, at issue; and (3)Contain a concise explanation of the grounds on which the submitter contends the activity is or should be considered by the Board to be permissible under this part.",
+          "children": []
+        },
+        {
+          "id": "p-211.11(c)",
+          "text": "(c)Response to request.In response to a request received under this section, the Board shall: (1)Direct the submitter to provide such additional information as the Board may deem necessary to complete the record for a full consideration of the issue presented; and (2)Provide an advisory opinion within 45 days after the record on the request has been determined to be complete.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.12",
+      "text": "§ 211.12 Lending limits and capital requirements.",
+      "children": [
+        {
+          "id": "p-211.12(a)",
+          "text": "(a)Acceptances of Edge corporations. (1)Limitations. An Edge corporation shall be and remain fully secured for acceptances of the types described in section 13(7) of the FRA (12 U.S.C. 372), as follows:(i)All acceptances outstanding in excess of 200 percent of its tier 1 capital; and(ii)All acceptances outstanding for any one person in excess of 10 percent of its tier 1 capital. (2)Exceptions.These limitations do not apply if the excess represents the international shipment of goods, and the Edge corporation is:(i)Fully covered by primary obligations to reimburse it that are guaranteed by banks or bankers; or(ii)Covered by participation agreements from other banks, as described in12 CFR 250.165. Footnote: [8]In the case of a foreign government, these includes loans and extensions of credit to the foreign government's departments or agencies deriving their current funds principally from general tax revenues. In the case of a partnership or firm, these include loans and extensions of credit to its members and, in the case of a corporation, these include loans and extensions of credit to the corporation's affiliates, where the affiliate incurs the liability for the benefit of the corporation.[9]For purposes of thisparagraph (b),subsidiariesincludes subsidiaries controlled by the Edge corporation, but does not include companies otherwise controlled by affiliates of the Edge corporation.",
+          "children": []
+        },
+        {
+          "id": "p-211.12(b)",
+          "text": "(b)Loans and extensions of credit to one person— (1)Loans and extensions of credit defined. Loans and extensions of credithas the meaning set forth in§ 211.2(q) of this part[8]and, for purposes of thisparagraph (b), also include:(i)Acceptances outstanding that are not of the types described in section 13(7) of the FRA (12 U.S.C. 372);(ii)Any liability of the lender to advance funds to or on behalf of a person pursuant to a guarantee, standby letter of credit, or similar agreements;(iii)Investments in the securities of another organization other than a subsidiary; and(iv)Any underwriting commitments to an issuer of securities, where no binding commitments have been secured from subunderwriters or other purchasers. (2)Limitations.Except as the Board may otherwise specify:(i)The total loans and extensions of credit outstanding to any person by an Edge corporation engaged in banking, and its direct or indirect subsidiaries, may not exceed 15 percent of the Edge corporation's tier 1 capital;[9]and(ii)The total loans and extensions of credit to any person by a foreign bank or Edge corporation subsidiary of a member bank, and by majority-owned subsidiaries of a foreign bank or Edge corporation, when combined with the total loans and extensions of credit to the same person by the member bank and its majority-owned subsidiaries, may not exceed the member bank's limitation on loans and extensions of credit to one person. (3)Exceptions.The limitations ofparagraph (b)(2)of this section do not apply to:(i)Deposits with banks and federal funds sold;(ii)Bills or drafts drawn in good faith against actual goods and on which two or more unrelated parties are liable;(iii)Any banker's acceptance, of the kind described in section 13(7) of the FRA (12 U.S.C. 372), that is issued and outstanding;(iv)Obligations to the extent secured by cash collateral or by bonds, notes, certificates of indebtedness, or Treasury bills of the United States;(v)Loans and extensions of credit that are covered by bona fide participation agreements; and(vi)Obligations to the extent supported by the full faith and credit of the following:(A)The United States or any of its departments, agencies, establishments, or wholly owned corporations (including obligations, to the extent insured against foreign political and credit risks by the Export-Import Bank of the United States or the Foreign Credit Insurance Association), the International Bank for Reconstruction and Development, the International Finance Corporation, the International Development Association, the Inter-American Development Bank, the African Development Bank, the Asian Development Bank, or the European Bank for Reconstruction and Development;(B)Any organization, if at least 25 percent of such an obligation or of the total credit is also supported by the full faith and credit of, or participated in by, any institution designated inparagraph (b)(3)(vi)(A)of this section in such manner that default to the lender would necessarily include default to that entity. The total loans and extensions of credit under thisparagraph (b)(3)(vi)(B)to any person shall at no time exceed 100 percent of the tier 1 capital of the Edge corporation. Footnote: [8]In the case of a foreign government, these includes loans and extensions of credit to the foreign government's departments or agencies deriving their current funds principally from general tax revenues. In the case of a partnership or firm, these include loans and extensions of credit to its members and, in the case of a corporation, these include loans and extensions of credit to the corporation's affiliates, where the affiliate incurs the liability for the benefit of the corporation.[9]For purposes of thisparagraph (b),subsidiariesincludes subsidiaries controlled by the Edge corporation, but does not include companies otherwise controlled by affiliates of the Edge corporation.",
+          "children": []
+        },
+        {
+          "id": "p-211.12(c)",
+          "text": "(c)Capitalization. (1)An Edge corporation shall at all times be capitalized in an amount that is adequate in relation to the scope and character of its activities. (2)In the case of an Edge corporation engaged in banking, the minimum ratio of qualifying total capital to risk-weighted assets, as determined under the capital rule, shall not be less than 10 percent, of which at least 50 percent shall consist of tier 1 capital. (3)For purposes of thisparagraph (c), no limitation shall apply on the inclusion of subordinated debt that qualifies as tier 2 capital under the capital rule. Footnote: [8]In the case of a foreign government, these includes loans and extensions of credit to the foreign government's departments or agencies deriving their current funds principally from general tax revenues. In the case of a partnership or firm, these include loans and extensions of credit to its members and, in the case of a corporation, these include loans and extensions of credit to the corporation's affiliates, where the affiliate incurs the liability for the benefit of the corporation.[9]For purposes of thisparagraph (b),subsidiariesincludes subsidiaries controlled by the Edge corporation, but does not include companies otherwise controlled by affiliates of the Edge corporation.",
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "211.13",
+      "text": "§ 211.13 Supervision and reporting.",
+      "children": [
+        {
+          "id": "p-211.13(a)",
+          "text": "(a)Supervision— (1)Foreign branches and subsidiaries.U.S. banking organizations conducting international operations under this subpart shall supervise and administer their foreign branches and subsidiaries in such a manner as to ensure that their operations conform to high standards of banking and financial prudence.(i)Effective systems of records, controls, and reports shall be maintained to keep management informed of their activities and condition.(ii)Such systems shall provide, in particular, information on risk assets, exposure to market risk, liquidity management, operations, internal controls, legal and operational risk, and conformance to management policies.(iii)Reports on risk assets shall be sufficient to permit an appraisal of credit quality and assessment of exposure to loss, and, for this purpose, provide full information on the condition of material borrowers.(iv)Reports on operations and controls shall include internal and external audits of the branch or subsidiary. (2)Joint ventures.Investors shall maintain sufficient information with respect to joint ventures to keep informed of their activities and condition.(i)Such information shall include audits and other reports on financial performance, risk exposure, management policies, operations, and controls.(ii)Complete information shall be maintained on all transactions with the joint venture by the investor and its affiliates. (3)Availability of reports and information to examiners.The reports specified inparagraphs (a)(1)and(2)of this section and any other information deemed necessary to determine compliance with U.S. banking law shall be made available to examiners of the appropriate bank supervisory agencies.",
+          "children": []
+        },
+        {
+          "id": "p-211.13(b)",
+          "text": "(b)Examinations.Examiners appointed by the Board shall examine each Edge corporation once a year. An Edge or agreement corporation shall make available to examiners information sufficient to assess its condition and operations and the condition and activities of any organization whose shares it holds.",
+          "children": []
+        },
+        {
+          "id": "p-211.13(c)",
+          "text": "(c)Reports— (1)Reports of condition.Each Edge or agreement corporation shall make reports of condition to the Board at such times and in such form as the Board may prescribe. The Board may require that statements of condition or other reports be published or made available for public inspection. (2)Foreign operations.Edge and agreement corporations, member banks, and bank holding companies shall file such reports on their foreign operations as the Board may require. (3)Acquisition or disposition of shares.Member banks, Edge and agreement corporations, and bank holding companies shall report, in a manner prescribed by the Board, any acquisition or disposition of shares.",
+          "children": []
+        },
+        {
+          "id": "p-211.13(d)",
+          "text": "(d)Filing and processing procedures— (1)Place of filing.Unless otherwise directed by the Board, applications, notices, and reports required by this part shall be filed with the Federal Reserve Bank of the District in which the parent bank or bank holding company is located or, if none, the Reserve Bank of the District in which the applying or reporting institution is located. Instructions and forms for applications, notices, and reports are available from the Reserve Banks. (2)Timing.The Board shall act on an application under this subpart within 60 calendar days after the Reserve Bank has received the application, unless the Board notifies the investor that the 60-day period is being extended and states the reasons for the extension.",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
