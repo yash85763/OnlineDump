@@ -151,12 +151,22 @@ class ECFRAPIWrapper:
             referenced_section = soup.find('DIV8', attrs={'N': section})
             
             if referenced_section:
+                # Get the section title if available
+                section_title = referenced_section.find('HEAD').text.strip() if referenced_section.find('HEAD') else ''
+                
+                # Process paragraphs
                 paragraphs = []
                 for p in referenced_section.find_all(['P', 'FP']):
                     text = p.text.strip()
                     if text:
                         paragraphs.append(text)
-                return ' '.join(paragraphs)
+                
+                # Format the content with the title if available
+                content = ' '.join(paragraphs)
+                if section_title:
+                    content = f"{section_title}: {content}"
+                
+                return content
             
             return None
             
@@ -164,26 +174,32 @@ class ECFRAPIWrapper:
             print(f"Error fetching referenced content: {str(e)}")
             return None
 
-    def resolve_references(self, text: str, date: str, title: str) -> str:
+    def resolve_references(self, text: str, date: str, title: str, is_referenced_content: bool = False) -> str:
         """
-        Find and resolve references in the text.
+        Find and resolve references in the text. Only processes primary references.
         
         Args:
             text (str): Original text content
             date (str): Date for the regulation
             title (str): Title number
+            is_referenced_content (bool): Flag indicating if this is already referenced content
             
         Returns:
             str: Text with resolved references
         """
+        # If this is referenced content, return it as-is without processing references
+        if is_referenced_content:
+            return text
+            
         import re
         
         # Find all references in the text
         reference_pattern = r'(?:as defined in |see )?(?:§\s*\d+\.\d+\s*(?:of this chapter)?)'
-        references = re.finditer(reference_pattern, text)
+        references = list(re.finditer(reference_pattern, text))
         
+        # Process references in reverse order to maintain correct string positions
         resolved_text = text
-        for ref in references:
+        for ref in reversed(references):
             reference_text = ref.group(0)
             parsed_ref = self.parse_reference(reference_text)
             
@@ -196,11 +212,37 @@ class ECFRAPIWrapper:
                 )
                 
                 if referenced_content:
-                    replacement = f"{reference_text} [Referenced content: {referenced_content}]"
-                    resolved_text = resolved_text.replace(reference_text, replacement)
+                    # Keep a more concise format for the insertion
+                    replacement = f"{reference_text} [Reference: {referenced_content}]"
+                    start, end = ref.span()
+                    resolved_text = resolved_text[:start] + replacement + resolved_text[end:]
         
         return resolved_text
-    
+
+    def get_structured_regulation(self, **kwargs) -> List[Dict]:
+        """
+        Get regulation content in a structured format with resolved references.
+        Only processes primary references, not nested ones.
+        
+        Args:
+            **kwargs: Same arguments as get_regulation()
+            
+        Returns:
+            List[Dict]: List of dictionaries containing structured regulation data
+        """
+        response = self.get_regulation(**kwargs)
+        structured_data = self.parse_regulation_content(response['xml_content'])
+        
+        # Resolve references for each section (only primary references)
+        for entry in structured_data:
+            entry['section_text'] = self.resolve_references(
+                text=entry['section_text'],
+                date=kwargs['date'],
+                title=kwargs['title'],
+                is_referenced_content=False  # This is original content
+            )
+        
+        return structured_data    
     def parse_regulation_content(self, xml_content: str) -> List[Dict]:
         """
         Parse the XML content and return structured data, handling any level of the hierarchy.
@@ -378,28 +420,28 @@ class ECFRAPIWrapper:
         
         return metadata
 
-    def get_structured_regulation(self, **kwargs) -> List[Dict]:
-        """
-        Get regulation content in a structured format with resolved references.
+    # def get_structured_regulation(self, **kwargs) -> List[Dict]:
+    #     """
+    #     Get regulation content in a structured format with resolved references.
         
-        Args:
-            **kwargs: Same arguments as get_regulation()
+    #     Args:
+    #         **kwargs: Same arguments as get_regulation()
             
-        Returns:
-            List[Dict]: List of dictionaries containing structured regulation data
-        """
-        response = self.get_regulation(**kwargs)
-        structured_data = self.parse_regulation_content(response['xml_content'])
+    #     Returns:
+    #         List[Dict]: List of dictionaries containing structured regulation data
+    #     """
+    #     response = self.get_regulation(**kwargs)
+    #     structured_data = self.parse_regulation_content(response['xml_content'])
         
-        # Resolve references for each section
-        for entry in structured_data:
-            entry['section_text'] = self.resolve_references(
-                text=entry['section_text'],
-                date=kwargs['date'],
-                title=kwargs['title']
-            )
+    #     # Resolve references for each section
+    #     for entry in structured_data:
+    #         entry['section_text'] = self.resolve_references(
+    #             text=entry['section_text'],
+    #             date=kwargs['date'],
+    #             title=kwargs['title']
+    #         )
         
-        return structured_data
+    #     return structured_data
 
     def get_regulation_text(self, **kwargs) -> str:
         """
