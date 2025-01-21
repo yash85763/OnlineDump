@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 import re
 
 from utils import LLMProcessor, get_reference_context, parse_reference, write_regulation_to_file
+from utils.logger import logger
 
 class ECFRAPIWrapper:
     def __init__(self, base_url: str = "https://www.ecfr.gov/api/versioner/v1/", openai_api_key: Optional[str] = None):
@@ -24,16 +25,11 @@ class ECFRAPIWrapper:
     def resolve_references(self, text: str, date: str, title: str, is_referenced_content: bool = False) -> str:
         """
         Find and resolve references in the text.
-        
-        Args:
-            text (str): Original text content
-            date (str): Date for the regulation
-            title (str): Title number
-            is_referenced_content (bool): Flag indicating if this is referenced content
-            
-        Returns:
-            str: Text with resolved references
         """
+        logger.info(f"\nProcessing references for title {title} on date {date}")
+        if is_referenced_content:
+            logger.debug("Skipping nested reference processing")
+            return text
         if is_referenced_content:
             return text
 
@@ -58,11 +54,20 @@ class ECFRAPIWrapper:
                 
                 if referenced_content:
                     if self.llm_processor:
-                        relevant_content = self.llm_processor.process_reference(
-                            original_context=full_context,
-                            reference_text=reference_text,
-                            referenced_content=referenced_content
-                        )
+                        # Check content length and use appropriate processing method
+                        tokens = len(self.llm_processor.encoding.encode(referenced_content))
+                        if tokens > 15000:  # If content is very large
+                            relevant_content = self.llm_processor.split_and_process_large_content(
+                                original_context=full_context,
+                                reference_text=reference_text,
+                                referenced_content=referenced_content
+                            )
+                        else:
+                            relevant_content = self.llm_processor.process_reference(
+                                original_context=full_context,
+                                reference_text=reference_text,
+                                referenced_content=referenced_content
+                            )
                     else:
                         relevant_content = referenced_content
                     
