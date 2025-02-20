@@ -375,3 +375,262 @@ imbalanced-learn==0.11.0
 3. Run: `python main.py`.
 
 This structure provides a robust, extensible foundation for your BERT fine-tuning task, aligning with your article’s roadmap! Let me know if you’d like adjustments or additional features (e.g., early stopping, data augmentation).
+
+---
+---
+
+# Further Strategies we can employ:
+Industry professionals employ a variety of strategies when fine-tuning BERT for multi-class classification tasks to optimize performance, prevent overfitting, handle data limitations, and ensure efficient resource use. Below, I’ll list and explain these strategies in detail, focusing on their purpose, implementation, advantages, and relevance to your scenario (~300 samples per class, potentially imbalanced dataset). These strategies complement early stopping and align with the practical considerations you outlined in your article.
+
+---
+
+### 1. Early Stopping
+**Purpose**: Prevents overfitting by halting training when validation performance stops improving.  
+**How It Works**: Monitors a metric (e.g., validation loss) and stops if no improvement occurs after a set number of epochs (patience). Restores the best model weights.  
+**Implementation**: Track `best_val_loss`, increment a `patience_counter`, stop when patience is exceeded, and reload the best state (as shown in the previous `train.py`).  
+**Advantages**: 
+- Saves compute time.
+- Ensures the model generalizes rather than memorizes.
+**Challenges**: Requires a well-defined validation set and patience tuning.  
+**Relevance to Your Scenario**: Critical with ~1500 samples and BERT’s 110M parameters, as overfitting is a risk.  
+
+---
+
+### 2. Learning Rate Scheduling
+**Purpose**: Adjusts the learning rate dynamically during training to balance convergence speed and stability.  
+**How It Works**: Gradually reduces the learning rate (e.g., linearly or exponentially) after an initial warmup phase to fine-tune weights more precisely.  
+**Implementation**: Use `get_linear_schedule_with_warmup` from Hugging Face (already in your `train.py`):
+```python
+scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=100, num_training_steps=total_steps)
+scheduler.step()  # Called after each optimizer step
+```
+**Variants**: 
+- Linear decay (common for BERT).
+- Cosine annealing.
+- Step decay (reduce LR by a factor every few epochs).  
+**Advantages**: 
+- Warmup prevents instability with small datasets.
+- Decay improves fine-tuning of later layers.  
+**Challenges**: Requires tuning warmup steps and total steps.  
+**Relevance**: Helps stabilize training with your small dataset and default LR of 2e-5.  
+
+---
+
+### 3. Gradient Clipping
+**Purpose**: Prevents exploding gradients, which can destabilize training in deep models like BERT.  
+**How It Works**: Caps the gradient norm to a threshold (e.g., 1.0) before applying updates.  
+**Implementation**: Add to the training loop in `train.py`:
+```python
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+optimizer.step()
+```
+**Advantages**: 
+- Stabilizes training, especially with small batch sizes or imbalanced data.
+- Simple to implement.  
+**Challenges**: Threshold may need tuning (1.0 is a safe default).  
+**Relevance**: Useful if your questions vary widely in length or complexity, potentially causing gradient spikes.  
+
+---
+
+### 4. Dropout Regularization
+**Purpose**: Reduces overfitting by randomly deactivating neurons during training.  
+**How It Works**: BERT already includes dropout (default 0.1) in its architecture (e.g., attention and feed-forward layers). You can adjust it.  
+**Implementation**: Modify dropout in `BertForSequenceClassification` config:
+```python
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5, hidden_dropout_prob=0.2, attention_probs_dropout_prob=0.2)
+```
+**Advantages**: 
+- Built-in regularization, no extra code needed.
+- Effective with small datasets like yours.  
+**Challenges**: Higher dropout (e.g., 0.3) may slow convergence.  
+**Relevance**: Default dropout suffices, but increase to 0.2–0.3 if overfitting persists after early stopping.  
+
+---
+
+### 5. Class Weighting
+**Purpose**: Mitigates class imbalance by penalizing misclassification of minority classes more heavily.  
+**How It Works**: Assigns higher weights to underrepresented classes in the loss function (already in your `train.py`).  
+**Implementation**: 
+```python
+class_weights = compute_class_weight('balanced', classes=range(num_classes), y=train_labels)
+loss_fn = torch.nn.CrossEntropyLoss(weight=torch.tensor(class_weights).to(device))
+```
+**Advantages**: 
+- Simple and effective for imbalance.
+- No data modification needed.  
+**Challenges**: May overemphasize minorities if weights are too extreme.  
+**Relevance**: Ideal for your potentially imbalanced dataset, ensuring fair performance across classes.  
+
+---
+
+### 6. Data Augmentation
+**Purpose**: Increases dataset size and diversity, especially for minority classes, to improve generalization.  
+**How It Works**: Generates synthetic samples via techniques like synonym replacement, back-translation, or noise injection.  
+**Implementation**: Use `nlpaug` or similar before tokenization in `data_processing.py`:
+```python
+import nlpaug.augmenter.word as naw
+aug = naw.SynonymAug()
+augmented_texts = [aug.augment(text)[0] for text in minority_texts]
+```
+**Variants**: 
+- Synonym replacement (e.g., WordNet).
+- Back-translation (translate to another language and back).
+- Contextual word embeddings (e.g., BERT-based augmentation).  
+**Advantages**: 
+- Boosts minority class representation.
+- Reduces overfitting with small datasets.  
+**Challenges**: Risk of introducing noise or altering meaning.  
+**Relevance**: Useful if your imbalance is severe (e.g., Class C: 200 vs. Class A: 500); apply selectively to minority classes.  
+
+---
+
+### 7. Focal Loss
+**Purpose**: Focuses training on hard-to-classify examples (often minority classes) by down-weighting easy ones.  
+**How It Works**: Modifies cross-entropy loss with a focusing parameter (gamma) and optional class weights.  
+**Implementation**: Replace `CrossEntropyLoss` in `train.py`:
+```python
+from torch import nn
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2.0, weight=None):
+        super().__init__()
+        self.gamma = gamma
+        self.weight = weight
+    def forward(self, logits, targets):
+        ce_loss = nn.functional.cross_entropy(logits, targets, weight=self.weight, reduction='none')
+        pt = torch.exp(-ce_loss)
+        return ((1 - pt) ** self.gamma * ce_loss).mean()
+
+loss_fn = FocalLoss(gamma=2.0, weight=class_weights.to(device))
+```
+**Advantages**: 
+- Addresses imbalance and hard examples.
+- Complements class weighting.  
+**Challenges**: Requires tuning gamma (2.0 is typical).  
+**Relevance**: Switch to this if class weights alone don’t improve minority class performance.  
+
+---
+
+### 8. Layer-wise Learning Rate Decay (LLRD)
+**Purpose**: Assigns different learning rates to BERT layers, with lower rates for early layers and higher rates for later layers/classifier.  
+**How It Works**: Fine-tunes upper layers more aggressively while preserving pre-trained knowledge in lower layers.  
+**Implementation**: Customize optimizer in `train.py`:
+```python
+from transformers import AdamW
+param_groups = [
+    {"params": model.bert.encoder.layer[:6].parameters(), "lr": LEARNING_RATE * 0.1},
+    {"params": model.bert.encoder.layer[6:].parameters(), "lr": LEARNING_RATE * 0.5},
+    {"params": model.classifier.parameters(), "lr": LEARNING_RATE}
+]
+optimizer = AdamW(param_groups, weight_decay=WEIGHT_DECAY)
+```
+**Advantages**: 
+- Balances adaptation and preservation.
+- Reduces overfitting risk with small data.  
+**Challenges**: Requires layer-specific tuning.  
+**Relevance**: Try if full fine-tuning overfits despite early stopping; good for your 300-sample-per-class size.  
+
+---
+
+### 9. Freezing Lower Layers (Partial Fine-Tuning)
+**Purpose**: Reduces the number of trainable parameters to prevent overfitting and speed up training.  
+**How It Works**: Freezes early BERT layers (e.g., first 6 of 12) and trains only upper layers + classifier.  
+**Implementation**: Add to `model.py`:
+```python
+def load_model():
+    model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5)
+    for param in model.bert.encoder.layer[:6].parameters():
+        param.requires_grad = False  # Freeze lower layers
+    return model
+```
+**Advantages**: 
+- Faster training, less memory use.
+- Preserves pre-trained features.  
+**Challenges**: Less task-specific adaptation.  
+**Relevance**: Alternative if full fine-tuning is too slow or overfits with your ~1500 samples.  
+
+---
+
+### 10. Mixed Precision Training
+**Purpose**: Speeds up training and reduces memory usage by using 16-bit precision instead of 32-bit.  
+**How It Works**: Leverages NVIDIA’s AMP (Automatic Mixed Precision) with PyTorch.  
+**Implementation**: Wrap training in `train.py`:
+```python
+from torch.cuda.amp import GradScaler, autocast
+scaler = GradScaler()
+for batch in train_loader:
+    optimizer.zero_grad()
+    with autocast():
+        outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+        loss = loss_fn(outputs.logits, labels)
+    scaler.scale(loss).backward()
+    scaler.step(optimizer)
+    scaler.update()
+```
+**Advantages**: 
+- Faster training on GPUs.
+- Fits larger batch sizes (e.g., 32 instead of 16).  
+**Challenges**: Requires compatible hardware (e.g., NVIDIA Volta/Turing).  
+**Relevance**: Use if training is slow on your GPU or you want to experiment with larger batches.  
+
+---
+
+### 11. Cross-Validation
+**Purpose**: Provides a robust estimate of model performance by training on multiple data splits.  
+**How It Works**: Splits data into k-folds (e.g., 5), trains on k-1 folds, validates on the remaining fold, and averages results.  
+**Implementation**: Modify `main.py` to loop over folds (using `sklearn.model_selection.StratifiedKFold`).  
+**Advantages**: 
+- Reduces variance in performance metrics.
+- Maximizes use of small datasets.  
+**Challenges**: Increases training time k-fold.  
+**Relevance**: Optional for your ~1500 samples; use if you need reliable metric estimates beyond a single split.  
+
+---
+
+### 12. Hyperparameter Tuning
+**Purpose**: Optimizes model performance by testing different configurations (e.g., learning rate, batch size).  
+**How It Works**: Uses grid search, random search, or tools like Optuna/Ray Tune to explore parameter space.  
+**Implementation**: Use Optuna to wrap `train.py`:
+```python
+import optuna
+def objective(trial):
+    lr = trial.suggest_loguniform('lr', 1e-5, 5e-5)
+    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32])
+    # Train and return validation metric
+study = optuna.create_study()
+study.optimize(objective, n_trials=10)
+```
+**Advantages**: 
+- Finds optimal settings systematically.
+- Improves performance.  
+**Challenges**: Computationally expensive.  
+**Relevance**: Apply after initial runs if base settings (2e-5 LR, 16 batch) underperform.  
+
+---
+
+### Summary Table
+
+| Strategy                  | Goal                     | Key Benefit                  | Relevance to Your Task       |
+|---------------------------|--------------------------|------------------------------|------------------------------|
+| Early Stopping            | Prevent overfitting      | Saves time, restores best    | High (small data, big model) |
+| Learning Rate Scheduling  | Stabilize training       | Better convergence           | High (default in BERT)       |
+| Gradient Clipping         | Stabilize gradients      | Prevents instability         | Moderate (if gradients spike)|
+| Dropout                   | Regularization           | Built-in, Reduces overfitting| High (default sufficient)    |
+| Class Weighting           | Handle imbalance         | Fair class performance       | High (your chosen approach)  |
+| Data Augmentation         | Increase data diversity  | Boosts minority classes      | Moderate (if imbalance severe)|
+| Focal Loss                | Focus on hard examples   | Improves minority recall     | Moderate (alternative to weights)|
+| Layer-wise LR Decay       | Balance adaptation       | Reduces overfitting          | Moderate (if overfitting)    |
+| Freezing Layers           | Reduce parameters        | Faster, less overfitting     | Moderate (resource-limited)  |
+| Mixed Precision           | Speed/memory efficiency  | Faster training              | Moderate (GPU optimization)  |
+| Cross-Validation          | Robust evaluation        | Reliable metrics             | Low (time-intensive)         |
+| Hyperparameter Tuning     | Optimize settings        | Best performance             | Moderate (post-initial run)  |
+
+---
+
+### Applying to Your Scenario
+Given your dataset (~300 samples/class, ~1500 total, potential imbalance):
+- **Must-Haves**: Early stopping, class weighting, learning rate scheduling (already in your code).
+- **Try Next**: Gradient clipping and dropout tweaking if instability/overfitting occurs.
+- **If Needed**: Data augmentation or focal loss for severe imbalance; mixed precision for speed.
+- **Advanced**: LLRD or freezing layers if full fine-tuning overfits; hyperparameter tuning for optimization.
+
+These strategies collectively ensure robust, efficient, and balanced fine-tuning, tailored to industry standards and your specific constraints. Let me know if you’d like code for any additional strategy!
