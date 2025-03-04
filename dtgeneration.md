@@ -1,60 +1,68 @@
-Since you already have a function that takes a context and questions and calls the LLM (e.g., ChatGPT API) to get responses, I’ll build a complete codebase around that assumption. The "best strategy combo" I suggested was:
+Got it! Since your function only takes a single `template` parameter to generate a response from the LLM (e.g., ChatGPT API), I’ll modify the codebase to create a `create_template` function that combines LLM instructions, context, and questions into a single string. This template will then be passed to your LLM-calling function (which I’ll assume is named `call_llm(template)` and returns a string response).
 
-1. **Context-Driven Freeform Generation (Strategy 2)**: Generate initial diverse data.
-2. **Augmentation with Paraphrasing (Strategy 4)**: Scale up the dataset.
-3. **Noise Injection for Robustness (Strategy 5)**: Add realistic variations.
-
-Below is a Python codebase that implements this combo to generate synthetic data for your intent classifier. I’ll assume your LLM-calling function is named `call_llm(context, question)` and returns a string response. You can tweak the code to match your function’s exact signature if needed.
+I’ll rework the previous codebase to integrate this approach while keeping the "best strategy combo" (Context-Driven Freeform Generation + Augmentation with Paraphrasing + Noise Injection). Here’s the updated complete codebase:
 
 ### Assumptions
-- Your intents: `Positive Feedback`, `Negative Feedback`, `Inquiry`, `Request` (customizable).
+- Your LLM function: `call_llm(template: str) -> str`.
 - Context: "customer support for an online shopping platform" (customizable).
-- Your `call_llm` function handles API authentication and returns the LLM’s response as a string.
+- Intents: `Positive Feedback`, `Negative Feedback`, `Inquiry`, `Request` (customizable).
 
-### Complete Codebase
-
+### Updated Codebase
 ```python
-
 import json
 import random
 import re
 from typing import List, Dict
 
 # Simulated LLM call function (replace with your actual function)
-# def call_llm(context: str, question: str) -> str:
+# def call_llm(template: str) -> str:
 #     # Example: return "Generated response from LLM"
 #     pass
+
+# Template creation function
+def create_template(context: str, question: str) -> str:
+    """Create a single template string with instructions, context, and question."""
+    template = (
+        "You are an AI tasked with generating synthetic data for an intent classifier.\n"
+        "Follow these instructions carefully:\n"
+        "- Generate responses based on the provided context and question.\n"
+        "- Ensure the output matches the intent specified in the question, if any.\n"
+        "- Return results as a numbered list (e.g., 1. text, 2. text) unless specified otherwise.\n"
+        f"Context: {context}\n"
+        f"Question: {question}"
+    )
+    return template
 
 # Step 1: Context-Driven Freeform Generation
 def generate_initial_data(context: str, intent: str, num_examples: int) -> List[str]:
     """Generate initial synthetic data for a given intent using the LLM."""
-    prompt = (
-        f"Context: {context}\n"
+    question = (
         f"Generate {num_examples} unique user questions or statements with the intent '{intent}'. "
         f"Intent definitions:\n"
         f"- Positive Feedback: User expresses satisfaction.\n"
         f"- Negative Feedback: User expresses dissatisfaction.\n"
         f"- Inquiry: User asks a question.\n"
         f"- Request: User asks for an action.\n"
-        f"Return as a numbered list (e.g., 1. text, 2. text)."
+        f"Return as a numbered list."
     )
-    response = call_llm(context, prompt)
+    template = create_template(context, question)
+    response = call_llm(template)
     # Parse numbered list into a clean list of strings
     examples = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
     examples = [re.sub(r"^\d+\.\s", "", ex) for ex in examples]  # Remove "1. " prefix
-    return examples[:num_examples]  # Ensure we get exact number requested
+    return examples[:num_examples]  # Ensure exact number requested
 
 # Step 2: Augmentation with Paraphrasing
 def augment_with_paraphrasing(context: str, examples: List[str], num_paraphrases: int) -> List[str]:
     """Augment data by generating paraphrases for each example."""
     augmented_data = examples.copy()
     for example in examples:
-        prompt = (
-            f"Context: {context}\n"
+        question = (
             f"Generate {num_paraphrases} paraphrased versions of this sentence: '{example}'. "
             f"Keep the same intent. Return as a numbered list."
         )
-        response = call_llm(context, prompt)
+        template = create_template(context, question)
+        response = call_llm(template)
         paraphrases = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
         paraphrases = [re.sub(r"^\d+\.\s", "", para) for para in paraphrases]
         augmented_data.extend(paraphrases[:num_paraphrases])
@@ -66,12 +74,12 @@ def inject_noise(context: str, examples: List[str], num_noisy: int) -> List[str]
     noisy_data = examples.copy()
     sampled_examples = random.sample(examples, min(num_noisy, len(examples)))
     for example in sampled_examples:
-        prompt = (
-            f"Context: {context}\n"
+        question = (
             f"Rewrite this sentence with typos, slang, or casual phrasing: '{example}'. "
             f"Keep the same intent. Return one version."
         )
-        response = call_llm(context, prompt)
+        template = create_template(context, question)
+        response = call_llm(template)
         noisy_data.append(response.strip())
     return noisy_data
 
@@ -134,44 +142,51 @@ if __name__ == "__main__":
     print("\nSample of generated data:")
     for entry in dataset[:5]:
         print(f"Text: {entry['text']}, Intent: {entry['intent']}")
-        
 ```
 
+### Key Changes
+1. **Template Creation Function (`create_template`)**:
+   - Combines fixed LLM instructions, the context, and the specific question into a single string.
+   - Instructions ensure the LLM understands the task and returns a numbered list (adjust if your LLM prefers a different format).
+
+2. **Integration with Existing Functions**:
+   - Each step (`generate_initial_data`, `augment_with_paraphrasing`, `inject_noise`) now uses `create_template` to build the input for `call_llm`.
+   - The `question` parameter varies depending on the step (e.g., generating initial data, paraphrasing, or adding noise).
+
+3. **LLM Call**:
+   - Replaced direct `call_llm(context, question)` with `call_llm(template)` where `template` is the output of `create_template`.
+
 ### How It Works
-1. **Step 1: Context-Driven Freeform Generation** (`generate_initial_data`):
-   - Calls your `call_llm` function with a prompt to generate `initial_per_intent` examples per intent.
-   - Parses the LLM’s response into a list of clean examples.
+- **`create_template`**:
+  - Takes `context` and `question`, wraps them with instructions, and returns a single string.
+  - Example output:
+    ```
+    You are an AI tasked with generating synthetic data for an intent classifier.
+    Follow these instructions carefully:
+    - Generate responses based on the provided context and question.
+    - Ensure the output matches the intent specified in the question, if any.
+    - Return results as a numbered list (e.g., 1. text, 2. text) unless specified otherwise.
+    Context: customer support for an online shopping platform
+    Question: Generate 50 unique user questions or statements with the intent 'Inquiry'. Intent definitions:
+    - Positive Feedback: User expresses satisfaction.
+    - Negative Feedback: User expresses dissatisfaction.
+    - Inquiry: User asks a question.
+    - Request: User asks for an action.
+    Return as a numbered list.
+    ```
 
-2. **Step 2: Augmentation with Paraphrasing** (`augment_with_paraphrasing`):
-   - Takes the initial data and generates `paraphrases_per_example` variations for each example.
-   - Combines original and paraphrased data.
-
-3. **Step 3: Noise Injection** (`inject_noise`):
-   - Randomly selects `noisy_per_intent` examples and adds noise (typos, slang) to them.
-   - Appends noisy versions to the dataset.
-
-4. **Main Function** (`generate_synthetic_dataset`):
-   - Orchestrates the three steps for each intent.
-   - Returns a list of dictionaries with `text` and `intent` keys.
-
-5. **Saving** (`save_dataset`):
-   - Exports the dataset to a JSON file for later use with BERT.
-
-### Expected Output Size
-- For each intent:
-  - Initial: 50 examples.
-  - After paraphrasing: 50 + (50 * 3) = 200 examples.
-  - After noise: 200 + 20 = 220 examples.
-- Total for 4 intents: ~880 examples (exact size may vary slightly due to LLM response parsing).
+- **Dataset Generation**:
+  - The process remains the same: initial generation → paraphrasing → noise injection.
+  - Each step constructs a `question`, passes it to `create_template`, and sends the result to `call_llm`.
 
 ### Customization
-- **Adjust Numbers**: Modify `initial_per_intent`, `paraphrases_per_example`, and `noisy_per_intent` to control dataset size.
-- **Change Context/Intents**: Update the `context` and `intents` variables in the `if __name__ == "__main__":` block.
-- **LLM Response Parsing**: If your `call_llm` returns data in a different format (e.g., JSON instead of a numbered list), adjust the parsing logic in `generate_initial_data` and other functions.
+- **Adjust Template**: Modify `create_template` if your LLM needs different instructions or output formatting (e.g., JSON instead of a numbered list).
+- **Intent Definitions**: Update the definitions in `generate_initial_data` to match your specific intents.
+- **Parameters**: Tweak `initial_per_intent`, `paraphrases_per_example`, and `noisy_per_intent` for desired dataset size.
 
 ### Next Steps
-1. Replace the placeholder `call_llm` with your actual function.
-2. Run the code and check the output JSON file.
-3. Use the dataset with a BERT training pipeline (e.g., Hugging Face Transformers) by tokenizing the `text` field and mapping `intent` to numeric labels.
+1. Replace the placeholder `call_llm` with your actual function that takes a `template` string.
+2. Test the code and verify the output in `synthetic_dataset.json`.
+3. Adjust parsing logic (e.g., `re.match(r"^\d+\.\s", line)`) if your LLM returns responses in a different format.
 
-Let me know if your `call_llm` function has a different signature or if you need help integrating this with BERT! What’s your specific context and intent definitions? I can refine the prompts further if you share them.
+If you share your specific context and intent definitions, I can fine-tune the `question` strings in each step to better suit your needs! How does this look for your setup?
