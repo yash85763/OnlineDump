@@ -1,33 +1,27 @@
+Thanks for the additional context! That’s a fascinating use case—building a BERT-based router to classify which database to use based on user queries. Since your intents represent database choices, the synthetic data needs to reflect realistic queries that imply a specific database, and the classifier will learn to route them accordingly. Let’s refine the previous "three-body solution" to fit this scenario.
 
+### Updated Context and Intents
+- **Context**: "A data retrieval system with multiple databases."
+- **Intents (Databases)**: Let’s assume you have four databases as your intents (you can adjust these):
+  - `CustomerDB`: For customer-related data (e.g., "Who bought the most last month?").
+  - `ProductDB`: For product-related data (e.g., "What’s the stock level of item X?").
+  - `OrderDB`: For order-related data (e.g., "When did order 123 ship?").
+  - `AnalyticsDB`: For analytical queries (e.g., "What’s the average sales trend?").
 
-### Three-Body Solution Overview
-1. **Curiosity LLM**:
-   - Role: Generates questions or statements based on the provided context.
-   - Output: A list of questions/statements (e.g., "When will my order arrive?").
-2. **Intent LLM**:
-   - Role: Analyzes each question and assigns one of the predefined intents (e.g., Inquiry, Request).
-   - Output: Intent label for each question (e.g., "Inquiry").
-3. **Supervisor LLM**:
-   - Role: Validates (1) if the question fits the context and (2) if the intent classification is correct, providing reasoning.
-   - Output: Approved question-intent pairs with reasoning, or rejection with feedback.
+### Goal
+Generate synthetic queries that a user might ask, labeled with the appropriate database intent, to train your BERT classifier to route queries to the correct database.
 
-### Process Flow
-- **Step 1**: Curiosity LLM generates a batch of questions.
-- **Step 2**: Intent LLM classifies the intent of each question.
-- **Step 3**: Supervisor LLM reviews each question-intent pair, approves or rejects it, and provides reasoning.
-- **Step 4**: Collect approved pairs into the dataset; optionally recycle rejected ones for refinement.
+### Adapted Three-Body Solution
+- **Curiosity LLM**: Generates queries related to the data retrieval system.
+- **Intent LLM**: Classifies which database each query should route to.
+- **Supervisor LLM**: Ensures the query fits the context and the database classification makes sense.
 
-### Assumptions
-- Context: "customer support for an online shopping platform."
-- Intents: `Positive Feedback`, `Negative Feedback`, `Inquiry`, `Request`.
-- Your `call_llm(template: str) -> str` function returns a string response.
+Below is the updated codebase tailored to your database router use case.
 
 ---
 
 ### Complete Codebase
-
 ```python
-
 import json
 import random
 import re
@@ -42,45 +36,46 @@ from typing import List, Dict, Tuple
 def create_template(context: str, question: str) -> str:
     """Create a single template string with instructions, context, and question."""
     template = (
-        "You are an AI tasked with generating or analyzing synthetic data for an intent classifier.\n"
+        "You are an AI tasked with generating or analyzing synthetic data for a database router classifier.\n"
         "Follow these instructions carefully:\n"
         "- Generate or analyze responses based on the provided context and question.\n"
-        "- Ensure outputs align with the specified intent definitions, if applicable.\n"
+        "- Ensure outputs align with the specified database intents, if applicable.\n"
         "- Return results in the requested format.\n"
         f"Context: {context}\n"
         f"Question: {question}"
     )
     return template
 
-# Curiosity LLM: Generate questions
-def curiosity_llm(context: str, num_questions: int) -> List[str]:
-    """Generate questions/statements based on the context."""
+# Curiosity LLM: Generate queries
+def curiosity_llm(context: str, num_queries: int) -> List[str]:
+    """Generate queries based on the context of a data retrieval system."""
     question = (
-        f"Generate {num_questions} unique user questions or statements related to the context. "
-        f"These should reflect realistic interactions a customer might have. "
+        f"Generate {num_queries} unique user queries related to the context. "
+        f"These should reflect realistic questions a user might ask about customers, products, orders, or analytics. "
+        f"Examples might include 'Who are my top customers?' or 'What’s the stock status of product X?'. "
         f"Return as a numbered list (e.g., 1. text, 2. text)."
     )
     template = create_template(context, question)
     response = call_llm(template)
-    questions = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
-    questions = [re.sub(r"^\d+\.\s", "", q) for q in questions]
-    return questions[:num_questions]
+    queries = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
+    queries = [re.sub(r"^\d+\.\s", "", q) for q in queries]
+    return queries[:num_queries]
 
-# Intent LLM: Classify intents
-def intent_llm(context: str, questions: List[str]) -> List[Tuple[str, str]]:
-    """Classify the intent of each question."""
+# Intent LLM: Classify database intents
+def intent_llm(context: str, queries: List[str]) -> List[Tuple[str, str]]:
+    """Classify which database each query should route to."""
     intent_definitions = (
-        "Intent definitions:\n"
-        "- Positive Feedback: User expresses satisfaction.\n"
-        "- Negative Feedback: User expresses dissatisfaction.\n"
-        "- Inquiry: User asks a question.\n"
-        "- Request: User asks for an action."
+        "Database intents:\n"
+        "- CustomerDB: Queries about customer data (e.g., 'Who bought the most last month?').\n"
+        "- ProductDB: Queries about product data (e.g., 'What’s the stock level of item X?').\n"
+        "- OrderDB: Queries about order data (e.g., 'When did order 123 ship?').\n"
+        "- AnalyticsDB: Queries about analytical data (e.g., 'What’s the average sales trend?')."
     )
     question = (
         f"{intent_definitions}\n"
-        f"Classify the intent of each of the following questions/statements. "
-        f"Return as a numbered list with the format: '1. [Intent] - text'.\n"
-        f"Questions:\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
+        f"Classify which database each of the following queries should route to. "
+        f"Return as a numbered list with the format: '1. [Database] - text'.\n"
+        f"Queries:\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)])
     )
     template = create_template(context, question)
     response = call_llm(template)
@@ -91,95 +86,95 @@ def intent_llm(context: str, questions: List[str]) -> List[Tuple[str, str]]:
             if match:
                 intent, text = match.groups()
                 pairs.append((text, intent))
-    return pairs[:len(questions)]
+    return pairs[:len(queries)]
 
-# Supervisor LLM: Validate questions and intents
-def supervisor_llm(context: str, question_intent_pairs: List[Tuple[str, str]]) -> List[Dict[str, str]]:
-    """Validate context alignment and intent classification with reasoning."""
+# Supervisor LLM: Validate queries and database intents
+def supervisor_llm(context: str, query_intent_pairs: List[Tuple[str, str]]) -> List[Dict[str, str]]:
+    """Validate context alignment and database classification with reasoning."""
     intent_definitions = (
-        "Intent definitions:\n"
-        "- Positive Feedback: User expresses satisfaction.\n"
-        "- Negative Feedback: User expresses dissatisfaction.\n"
-        "- Inquiry: User asks a question.\n"
-        "- Request: User asks for an action."
+        "Database intents:\n"
+        "- CustomerDB: Queries about customer data (e.g., 'Who bought the most last month?').\n"
+        "- ProductDB: Queries about product data (e.g., 'What’s the stock level of item X?').\n"
+        "- OrderDB: Queries about order data (e.g., 'When did order 123 ship?').\n"
+        "- AnalyticsDB: Queries about analytical data (e.g., 'What’s the average sales trend?')."
     )
     question = (
         f"{intent_definitions}\n"
-        f"For each question-intent pair, determine:\n"
-        f"1. Does the question fit the context? (Yes/No)\n"
-        f"2. Is the intent classification correct? (Yes/No)\n"
+        f"For each query-database pair, determine:\n"
+        f"1. Does the query fit the context of a data retrieval system? (Yes/No)\n"
+        f"2. Is the database classification correct? (Yes/No)\n"
         f"3. Provide reasoning for your decisions.\n"
         f"Return as a numbered list with format: "
         f"'1. [Yes/No, Yes/No] - Reasoning: <reason>'.\n"
-        f"Pairs:\n" + "\n".join([f"{i+1}. '{q}' - {intent}" for i, (q, intent) in enumerate(question_intent_pairs)])
+        f"Pairs:\n" + "\n".join([f"{i+1}. '{q}' - {intent}" for i, (q, intent) in enumerate(query_intent_pairs)])
     )
     template = create_template(context, question)
     response = call_llm(template)
     validated_data = []
-    for line, (question, intent) in zip(response.split("\n"), question_intent_pairs):
+    for line, (query, intent) in zip(response.split("\n"), query_intent_pairs):
         if re.match(r"^\d+\.\s\[.*\]\s-\sReasoning:", line):
             match = re.match(r"^\d+\.\s\[(Yes|No),\s(Yes|No)\]\s-\sReasoning:\s(.*)$", line.strip())
             if match:
                 context_ok, intent_ok, reasoning = match.groups()
                 if context_ok == "Yes" and intent_ok == "Yes":
                     validated_data.append({
-                        "text": question,
+                        "text": query,
                         "intent": intent,
                         "reasoning": reasoning
                     })
     return validated_data
 
-# Main function to generate dataset using three-body system
-def generate_three_body_dataset(
+# Main function to generate dataset for database router
+def generate_database_router_dataset(
     context: str,
     intents: List[str],
-    num_questions: int = 200
+    num_queries: int = 200
 ) -> List[Dict[str, str]]:
-    """Generate synthetic dataset using the three-body LLM system."""
+    """Generate synthetic dataset for a database router using the three-body system."""
     dataset = []
 
-    # Step 1: Curiosity LLM generates questions
-    print("Generating questions...")
-    questions = curiosity_llm(context, num_questions)
-    print(f"Generated {len(questions)} questions.")
+    # Step 1: Curiosity LLM generates queries
+    print("Generating queries...")
+    queries = curiosity_llm(context, num_queries)
+    print(f"Generated {len(queries)} queries.")
 
-    # Step 2: Intent LLM classifies intents
-    print("Classifying intents...")
-    question_intent_pairs = intent_llm(context, questions)
-    print(f"Classified {len(question_intent_pairs)} pairs.")
+    # Step 2: Intent LLM classifies database intents
+    print("Classifying database intents...")
+    query_intent_pairs = intent_llm(context, queries)
+    print(f"Classified {len(query_intent_pairs)} pairs.")
 
     # Step 3: Supervisor LLM validates
     print("Validating with supervisor...")
-    validated_data = supervisor_llm(context, question_intent_pairs)
+    validated_data = supervisor_llm(context, query_intent_pairs)
     print(f"Validated {len(validated_data)} pairs.")
 
-    # Filter to ensure balanced intents (optional)
+    # Collect validated data with intent filtering
     intent_counts = {intent: 0 for intent in intents}
     for entry in validated_data:
         if entry["intent"] in intents:
             intent_counts[entry["intent"]] += 1
             dataset.append({"text": entry["text"], "intent": entry["intent"]})
 
-    print("Intent distribution:", intent_counts)
+    print("Database intent distribution:", intent_counts)
     return dataset
 
 # Save dataset to JSON file
-def save_dataset(dataset: List[Dict[str, str]], filename: str = "three_body_dataset.json"):
+def save_dataset(dataset: List[Dict[str, str]], filename: str = "database_router_dataset.json"):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(dataset, f, indent=2)
     print(f"Dataset saved to {filename} with {len(dataset)} examples.")
 
 # Example usage
 if __name__ == "__main__":
-    # Define context and intents
-    context = "customer support for an online shopping platform"
-    intents = ["Positive Feedback", "Negative Feedback", "Inquiry", "Request"]
+    # Define context and database intents
+    context = "A data retrieval system with multiple databases"
+    intents = ["CustomerDB", "ProductDB", "OrderDB", "AnalyticsDB"]
 
     # Generate dataset
-    dataset = generate_three_body_dataset(
+    dataset = generate_database_router_dataset(
         context=context,
         intents=intents,
-        num_questions=200  # Total questions to generate initially
+        num_queries=200  # Total queries to generate initially
     )
 
     # Save to file
@@ -189,61 +184,60 @@ if __name__ == "__main__":
     print("\nSample of generated data:")
     for entry in dataset[:5]:
         print(f"Text: {entry['text']}, Intent: {entry['intent']}")
-        
 ```
 
 ---
 
-### How It Works
-1. **Curiosity LLM (`curiosity_llm`)**:
-   - Generates `num_questions` questions/statements based on the context.
-   - Example output: 
-     ```
-     1. When will my order arrive?
-     2. I love the quick delivery!
-     ```
+### Key Updates
+1. **Context and Intents**:
+   - Changed to reflect a data retrieval system with database-specific intents.
+   - Intent definitions now describe which type of data each database handles.
 
-2. **Intent LLM (`intent_llm`)**:
-   - Takes the questions and assigns an intent to each.
-   - Example output:
-     ```
-     1. [Inquiry] - When will my order arrive?
-     2. [Positive Feedback] - I love the quick delivery!
-     ```
+2. **Curiosity LLM**:
+   - Generates queries like "What’s the stock level of product X?" or "Who are my top customers?" to match the database use case.
 
-3. **Supervisor LLM (`supervisor_llm`)**:
-   - Validates each question-intent pair for context fit and intent accuracy.
-   - Example output:
-     ```
-     1. [Yes, Yes] - Reasoning: Question is relevant to shipping in an online shopping context; intent matches a query.
-     2. [Yes, Yes] - Reasoning: Statement reflects satisfaction with delivery, correctly classified as positive feedback.
-     ```
-   - Only pairs with `[Yes, Yes]` are added to the dataset.
+3. **Intent LLM**:
+   - Classifies queries into `CustomerDB`, `ProductDB`, `OrderDB`, or `AnalyticsDB` based on their content.
 
-4. **Main Function (`generate_three_body_dataset`)**:
-   - Chains the three LLMs together.
-   - Ensures the final dataset only includes validated entries.
+4. **Supervisor LLM**:
+   - Validates that queries fit the data retrieval system context and that the database intent aligns with the query’s purpose.
+
+### Example Workflow
+- **Curiosity LLM Output**:
+  ```
+  1. Who are my top customers this year?
+  2. What’s the stock level of item XYZ?
+  ```
+- **Intent LLM Output**:
+  ```
+  1. [CustomerDB] - Who are my top customers this year?
+  2. [ProductDB] - What’s the stock level of item XYZ?
+  ```
+- **Supervisor LLM Output**:
+  ```
+  1. [Yes, Yes] - Reasoning: Query seeks customer data, correctly routed to CustomerDB.
+  2. [Yes, Yes] - Reasoning: Query asks about product stock, correctly routed to ProductDB.
+  ```
+- **Dataset Entry**:
+  ```json
+  [
+    {"text": "Who are my top customers this year?", "intent": "CustomerDB"},
+    {"text": "What’s the stock level of item XYZ?", "intent": "ProductDB"}
+  ]
+  ```
 
 ### Dataset Size
-- Starting with `num_questions = 200`, the final size depends on how many pairs the Supervisor LLM approves.
-- Typically, you’d get fewer than 200 validated entries due to rejections, so adjust `num_questions` higher if you need a specific size (e.g., 800 total, ~200 per intent).
+- Starting with `num_queries = 200`, you’ll get a subset after validation (e.g., 150–180 entries), depending on Supervisor approvals.
+- For a balanced dataset (~200 per intent, 800 total), increase `num_queries` to 1000 and add balancing logic if needed.
 
 ### Customization
-- **Intent Balancing**: The current code doesn’t enforce balance across intents. You could add a post-processing step to cap or boost specific intents.
-- **Rejection Handling**: Add logic to recycle rejected questions (e.g., prompt Curiosity LLM to refine them based on Supervisor feedback).
-- **Output Format**: Adjust parsing in each function if your LLM returns JSON or a different structure.
-
-### Pros and Cons
-- **Pros**:
-  - High-quality data with validated context and intent.
-  - Reasoning provides transparency and debugging insights.
-- **Cons**:
-  - Slower due to three LLM calls per batch.
-  - Dataset size may be unpredictable without additional balancing.
+- **Your Databases**: Replace `CustomerDB`, `ProductDB`, etc., with your actual database names and update their definitions.
+- **Balancing**: Add a step to ensure roughly equal distribution across intents (e.g., cap at 200 per intent or regenerate for underrepresented ones).
+- **Query Variety**: Tweak the Curiosity LLM prompt to include specific keywords or patterns your users might use.
 
 ### Next Steps
-1. Replace the placeholder `call_llm` with your actual function.
-2. Run and check the output in `three_body_dataset.json`.
-3. If you want more control over intent distribution or handling of rejected pairs, let me know—I can extend the code!
+1. Replace `call_llm` with your actual function.
+2. Run the code and inspect `database_router_dataset.json`.
+3. Use the dataset with BERT (e.g., via Hugging Face) by tokenizing `text` and mapping `intent` to numeric labels.
 
-What do you think of this approach? Want to tweak the context, intents, or add features like intent balancing?
+What are your actual database names and their purposes? I can fine-tune the intent definitions and prompts further. Also, do you want to add balancing or refine the query generation process?
