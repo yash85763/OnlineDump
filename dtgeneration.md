@@ -1,13 +1,23 @@
-Got it! Since your function only takes a single `template` parameter to generate a response from the LLM (e.g., ChatGPT API), I’ll modify the codebase to create a `create_template` function that combines LLM instructions, context, and questions into a single string. This template will then be passed to your LLM-calling function (which I’ll assume is named `call_llm(template)` and returns a string response).
+Since your intent is now clarified as routing queries to specific databases for a BERT-based classifier, I’ll update the "combo approach" solution (Context-Driven Freeform Generation + Augmentation with Paraphrasing + Noise Injection) to align with this use case. The updated codebase will generate synthetic queries for a data retrieval system, labeled with database intents (`CustomerDB`, `ProductDB`, `OrderDB`, `AnalyticsDB`), using the single-template LLM call function you specified.
 
-I’ll rework the previous codebase to integrate this approach while keeping the "best strategy combo" (Context-Driven Freeform Generation + Augmentation with Paraphrasing + Noise Injection). Here’s the updated complete codebase:
+### Updated Context and Intents
+- **Context**: "A data retrieval system with multiple databases."
+- **Intents (Databases)**:
+  - `CustomerDB`: Customer-related queries.
+  - `ProductDB`: Product-related queries.
+  - `OrderDB`: Order-related queries.
+  - `AnalyticsDB`: Analytical queries.
 
-### Assumptions
-- Your LLM function: `call_llm(template: str) -> str`.
-- Context: "customer support for an online shopping platform" (customizable).
-- Intents: `Positive Feedback`, `Negative Feedback`, `Inquiry`, `Request` (customizable).
+### Updated Combo Approach
+1. **Context-Driven Freeform Generation**: Generate initial queries for each database intent.
+2. **Augmentation with Paraphrasing**: Expand the dataset with paraphrased versions.
+3. **Noise Injection**: Add realistic variations (typos, slang) for robustness.
 
-### Updated Codebase
+Here’s the updated codebase:
+
+---
+
+### Complete Codebase for Combo Approach
 ```python
 import json
 import random
@@ -23,10 +33,10 @@ from typing import List, Dict
 def create_template(context: str, question: str) -> str:
     """Create a single template string with instructions, context, and question."""
     template = (
-        "You are an AI tasked with generating synthetic data for an intent classifier.\n"
+        "You are an AI tasked with generating synthetic data for a database router classifier.\n"
         "Follow these instructions carefully:\n"
         "- Generate responses based on the provided context and question.\n"
-        "- Ensure the output matches the intent specified in the question, if any.\n"
+        "- Ensure outputs align with the specified database intents, if applicable.\n"
         "- Return results as a numbered list (e.g., 1. text, 2. text) unless specified otherwise.\n"
         f"Context: {context}\n"
         f"Question: {question}"
@@ -35,31 +45,34 @@ def create_template(context: str, question: str) -> str:
 
 # Step 1: Context-Driven Freeform Generation
 def generate_initial_data(context: str, intent: str, num_examples: int) -> List[str]:
-    """Generate initial synthetic data for a given intent using the LLM."""
+    """Generate initial synthetic queries for a given database intent."""
+    intent_definitions = (
+        "Database intents:\n"
+        "- CustomerDB: Queries about customer data (e.g., 'Who bought the most last month?').\n"
+        "- ProductDB: Queries about product data (e.g., 'What’s the stock level of item X?').\n"
+        "- OrderDB: Queries about order data (e.g., 'When did order 123 ship?').\n"
+        "- AnalyticsDB: Queries about analytical data (e.g., 'What’s the average sales trend?')."
+    )
     question = (
-        f"Generate {num_examples} unique user questions or statements with the intent '{intent}'. "
-        f"Intent definitions:\n"
-        f"- Positive Feedback: User expresses satisfaction.\n"
-        f"- Negative Feedback: User expresses dissatisfaction.\n"
-        f"- Inquiry: User asks a question.\n"
-        f"- Request: User asks for an action.\n"
+        f"{intent_definitions}\n"
+        f"Generate {num_examples} unique user queries with the intent '{intent}'. "
+        f"These should reflect realistic questions a user might ask in a data retrieval system. "
         f"Return as a numbered list."
     )
     template = create_template(context, question)
     response = call_llm(template)
-    # Parse numbered list into a clean list of strings
     examples = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
-    examples = [re.sub(r"^\d+\.\s", "", ex) for ex in examples]  # Remove "1. " prefix
-    return examples[:num_examples]  # Ensure exact number requested
+    examples = [re.sub(r"^\d+\.\s", "", ex) for ex in examples]
+    return examples[:num_examples]
 
 # Step 2: Augmentation with Paraphrasing
 def augment_with_paraphrasing(context: str, examples: List[str], num_paraphrases: int) -> List[str]:
-    """Augment data by generating paraphrases for each example."""
+    """Augment data by generating paraphrases for each query."""
     augmented_data = examples.copy()
     for example in examples:
         question = (
-            f"Generate {num_paraphrases} paraphrased versions of this sentence: '{example}'. "
-            f"Keep the same intent. Return as a numbered list."
+            f"Generate {num_paraphrases} paraphrased versions of this query: '{example}'. "
+            f"Keep the same database intent. Return as a numbered list."
         )
         template = create_template(context, question)
         response = call_llm(template)
@@ -70,13 +83,13 @@ def augment_with_paraphrasing(context: str, examples: List[str], num_paraphrases
 
 # Step 3: Noise Injection for Robustness
 def inject_noise(context: str, examples: List[str], num_noisy: int) -> List[str]:
-    """Add noise (typos, slang) to some examples for robustness."""
+    """Add noise (typos, slang) to some queries for robustness."""
     noisy_data = examples.copy()
     sampled_examples = random.sample(examples, min(num_noisy, len(examples)))
     for example in sampled_examples:
         question = (
-            f"Rewrite this sentence with typos, slang, or casual phrasing: '{example}'. "
-            f"Keep the same intent. Return one version."
+            f"Rewrite this query with typos, slang, or casual phrasing: '{example}'. "
+            f"Keep the same database intent. Return one version."
         )
         template = create_template(context, question)
         response = call_llm(template)
@@ -95,11 +108,11 @@ def generate_synthetic_dataset(
     dataset = []
 
     for intent in intents:
-        print(f"Generating data for intent: {intent}")
+        print(f"Generating data for database intent: {intent}")
         
         # Step 1: Generate initial data
         initial_data = generate_initial_data(context, intent, initial_per_intent)
-        print(f"Initial examples generated: {len(initial_data)}")
+        print(f"Initial queries generated: {len(initial_data)}")
 
         # Step 2: Augment with paraphrasing
         augmented_data = augment_with_paraphrasing(context, initial_data, paraphrases_per_example)
@@ -115,23 +128,23 @@ def generate_synthetic_dataset(
     return dataset
 
 # Save dataset to JSON file
-def save_dataset(dataset: List[Dict[str, str]], filename: str = "synthetic_dataset.json"):
+def save_dataset(dataset: List[Dict[str, str]], filename: str = "database_router_combo_dataset.json"):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(dataset, f, indent=2)
     print(f"Dataset saved to {filename} with {len(dataset)} examples.")
 
 # Example usage
 if __name__ == "__main__":
-    # Define context and intents
-    context = "customer support for an online shopping platform"
-    intents = ["Positive Feedback", "Negative Feedback", "Inquiry", "Request"]
+    # Define context and database intents
+    context = "A data retrieval system with multiple databases"
+    intents = ["CustomerDB", "ProductDB", "OrderDB", "AnalyticsDB"]
 
     # Generate dataset
     dataset = generate_synthetic_dataset(
         context=context,
         intents=intents,
-        initial_per_intent=50,      # 50 initial examples per intent
-        paraphrases_per_example=3,  # 3 paraphrases per initial example
+        initial_per_intent=50,      # 50 initial queries per intent
+        paraphrases_per_example=3,  # 3 paraphrases per initial query
         noisy_per_intent=20         # 20 noisy versions per intent
     )
 
@@ -144,49 +157,56 @@ if __name__ == "__main__":
         print(f"Text: {entry['text']}, Intent: {entry['intent']}")
 ```
 
-### Key Changes
-1. **Template Creation Function (`create_template`)**:
-   - Combines fixed LLM instructions, the context, and the specific question into a single string.
-   - Instructions ensure the LLM understands the task and returns a numbered list (adjust if your LLM prefers a different format).
+---
 
-2. **Integration with Existing Functions**:
-   - Each step (`generate_initial_data`, `augment_with_paraphrasing`, `inject_noise`) now uses `create_template` to build the input for `call_llm`.
-   - The `question` parameter varies depending on the step (e.g., generating initial data, paraphrasing, or adding noise).
+### Key Updates
+1. **Context and Intents**:
+   - Updated to reflect a data retrieval system with database-specific intents.
+   - Intent definitions now guide the LLM to generate queries aligned with `CustomerDB`, `ProductDB`, `OrderDB`, or `AnalyticsDB`.
 
-3. **LLM Call**:
-   - Replaced direct `call_llm(context, question)` with `call_llm(template)` where `template` is the output of `create_template`.
+2. **Generate Initial Data**:
+   - Prompts the LLM to create queries specific to each database intent (e.g., "Who are my top customers?" for `CustomerDB`).
 
-### How It Works
-- **`create_template`**:
-  - Takes `context` and `question`, wraps them with instructions, and returns a single string.
-  - Example output:
-    ```
-    You are an AI tasked with generating synthetic data for an intent classifier.
-    Follow these instructions carefully:
-    - Generate responses based on the provided context and question.
-    - Ensure the output matches the intent specified in the question, if any.
-    - Return results as a numbered list (e.g., 1. text, 2. text) unless specified otherwise.
-    Context: customer support for an online shopping platform
-    Question: Generate 50 unique user questions or statements with the intent 'Inquiry'. Intent definitions:
-    - Positive Feedback: User expresses satisfaction.
-    - Negative Feedback: User expresses dissatisfaction.
-    - Inquiry: User asks a question.
-    - Request: User asks for an action.
-    Return as a numbered list.
-    ```
+3. **Paraphrasing**:
+   - Ensures paraphrased queries retain the same database intent (e.g., "What’s the stock level of item X?" → "How much of product X is in stock?").
 
-- **Dataset Generation**:
-  - The process remains the same: initial generation → paraphrasing → noise injection.
-  - Each step constructs a `question`, passes it to `create_template`, and sends the result to `call_llm`.
+4. **Noise Injection**:
+   - Adds realistic variations (e.g., "When did order 123 ship?" → "Wen did ord 123 go out?") while preserving the intent.
+
+### Example Workflow
+- **Initial Data (CustomerDB)**:
+  ```
+  1. Who are my top customers this year?
+  2. What’s the email of customer ID 456?
+  ```
+- **After Paraphrasing**:
+  ```
+  1. Who are my top customers this year?
+  2. Which customers spent the most in 2023?
+  3. Who’s leading in purchases this year?
+  4. What’s the email of customer ID 456?
+  5. Can you get me the email for customer 456?
+  ```
+- **After Noise Injection**:
+  ```
+  1. Who r my top custmers this yr?
+  ```
+
+### Dataset Size
+- Per intent:
+  - Initial: 50 queries.
+  - After paraphrasing: 50 + (50 * 3) = 200 queries.
+  - After noise: 200 + 20 = 220 queries.
+- Total for 4 intents: ~880 queries.
 
 ### Customization
-- **Adjust Template**: Modify `create_template` if your LLM needs different instructions or output formatting (e.g., JSON instead of a numbered list).
-- **Intent Definitions**: Update the definitions in `generate_initial_data` to match your specific intents.
-- **Parameters**: Tweak `initial_per_intent`, `paraphrases_per_example`, and `noisy_per_intent` for desired dataset size.
+- **Your Databases**: Replace `CustomerDB`, etc., with your actual database names and update their definitions in `intent_definitions`.
+- **Size**: Adjust `initial_per_intent`, `paraphrases_per_example`, and `noisy_per_intent` to scale the dataset (e.g., 1000+ per intent).
+- **Query Style**: Modify the prompts in `generate_initial_data` to match your users’ query patterns.
 
 ### Next Steps
-1. Replace the placeholder `call_llm` with your actual function that takes a `template` string.
-2. Test the code and verify the output in `synthetic_dataset.json`.
-3. Adjust parsing logic (e.g., `re.match(r"^\d+\.\s", line)`) if your LLM returns responses in a different format.
+1. Replace `call_llm` with your actual function.
+2. Run and check `database_router_combo_dataset.json`.
+3. Tokenize the `text` field and train your BERT classifier (e.g., using Hugging Face).
 
-If you share your specific context and intent definitions, I can fine-tune the `question` strings in each step to better suit your needs! How does this look for your setup?
+What are your specific database names and their purposes? I can refine the intent definitions and prompts further. Also, do you want to adjust the dataset size or add any specific query patterns?
