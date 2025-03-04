@@ -1,28 +1,40 @@
-Since your intent is now clarified as routing queries to specific databases for a BERT-based classifier, I’ll update the "combo approach" solution (Context-Driven Freeform Generation + Augmentation with Paraphrasing + Noise Injection) to align with this use case. The updated codebase will generate synthetic queries for a data retrieval system, labeled with database intents (`CustomerDB`, `ProductDB`, `OrderDB`, `AnalyticsDB`), using the single-template LLM call function you specified.
+Your idea of generating a batch of 10 questions from a given context and then validating them fits well with your database router use case. Since you’re building a BERT-based classifier to route queries to specific databases, I’ll adapt the combo approach to generate batches of 10 queries at a time and propose a validation strategy tailored to your needs. I’ll assume your LLM function still takes a single `template` string (`call_llm(template)`), and I’ll update the codebase accordingly.
 
 ### Updated Context and Intents
 - **Context**: "A data retrieval system with multiple databases."
-- **Intents (Databases)**:
+- **Intents (Databases)**: 
   - `CustomerDB`: Customer-related queries.
   - `ProductDB`: Product-related queries.
   - `OrderDB`: Order-related queries.
   - `AnalyticsDB`: Analytical queries.
 
-### Updated Combo Approach
-1. **Context-Driven Freeform Generation**: Generate initial queries for each database intent.
-2. **Augmentation with Paraphrasing**: Expand the dataset with paraphrased versions.
-3. **Noise Injection**: Add realistic variations (typos, slang) for robustness.
+### Batch Generation Strategy
+- Generate 10 queries per batch, each tied to a specific database intent.
+- Use the combo approach (initial generation + paraphrasing + noise) to scale up after validation.
+- Validate each batch to ensure quality before adding to the dataset.
+
+### Validation Strategy
+Since the three-body solution might be overkill for your needs (and requires three LLM calls per batch), I’ll propose a simpler yet effective validation method using a single LLM call per batch:
+- **Validation LLM**: 
+  - Checks two things for each query:
+    1. **Context Fit**: Does the query align with the data retrieval system context?
+    2. **Intent Accuracy**: Does the query match the assigned database intent?
+  - Provides reasoning for approval or rejection.
+- **Process**:
+  - Generate a batch of 10 queries for a specific intent.
+  - Validate the batch, keeping only approved queries.
+  - Augment and inject noise on validated queries to scale the dataset.
 
 Here’s the updated codebase:
 
 ---
 
-### Complete Codebase for Combo Approach
+### Complete Codebase with Batch Generation and Validation
 ```python
 import json
 import random
 import re
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 # Simulated LLM call function (replace with your actual function)
 # def call_llm(template: str) -> str:
@@ -33,9 +45,9 @@ from typing import List, Dict
 def create_template(context: str, question: str) -> str:
     """Create a single template string with instructions, context, and question."""
     template = (
-        "You are an AI tasked with generating synthetic data for a database router classifier.\n"
+        "You are an AI tasked with generating or validating synthetic data for a database router classifier.\n"
         "Follow these instructions carefully:\n"
-        "- Generate responses based on the provided context and question.\n"
+        "- Generate or analyze responses based on the provided context and question.\n"
         "- Ensure outputs align with the specified database intents, if applicable.\n"
         "- Return results as a numbered list (e.g., 1. text, 2. text) unless specified otherwise.\n"
         f"Context: {context}\n"
@@ -43,9 +55,9 @@ def create_template(context: str, question: str) -> str:
     )
     return template
 
-# Step 1: Context-Driven Freeform Generation
-def generate_initial_data(context: str, intent: str, num_examples: int) -> List[str]:
-    """Generate initial synthetic queries for a given database intent."""
+# Step 1: Generate a batch of 10 queries
+def generate_batch(context: str, intent: str, batch_size: int = 10) -> List[str]:
+    """Generate a batch of queries for a given database intent."""
     intent_definitions = (
         "Database intents:\n"
         "- CustomerDB: Queries about customer data (e.g., 'Who bought the most last month?').\n"
@@ -55,80 +67,126 @@ def generate_initial_data(context: str, intent: str, num_examples: int) -> List[
     )
     question = (
         f"{intent_definitions}\n"
-        f"Generate {num_examples} unique user queries with the intent '{intent}'. "
+        f"Generate {batch_size} unique user queries with the intent '{intent}'. "
         f"These should reflect realistic questions a user might ask in a data retrieval system. "
         f"Return as a numbered list."
     )
     template = create_template(context, question)
     response = call_llm(template)
-    examples = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
-    examples = [re.sub(r"^\d+\.\s", "", ex) for ex in examples]
-    return examples[:num_examples]
+    queries = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
+    queries = [re.sub(r"^\d+\.\s", "", q) for q in queries]
+    return queries[:batch_size]
+
+# Validation: Validate the batch
+def validate_batch(context: str, intent: str, queries: List[str]) -> List[Dict[str, str]]:
+    """Validate a batch of queries for context fit and intent accuracy."""
+    intent_definitions = (
+        "Database intents:\n"
+        "- CustomerDB: Queries about customer data (e.g., 'Who bought the most last month?').\n"
+        "- ProductDB: Queries about product data (e.g., 'What’s the stock level of item X?').\n"
+        "- OrderDB: Queries about order data (e.g., 'When did order 123 ship?').\n"
+        "- AnalyticsDB: Queries about analytical data (e.g., 'What’s the average sales trend?')."
+    )
+    question = (
+        f"{intent_definitions}\n"
+        f"For each query, determine:\n"
+        f"1. Does the query fit the context of a data retrieval system? (Yes/No)\n"
+        f"2. Does the query match the intent '{intent}'? (Yes/No)\n"
+        f"3. Provide reasoning for your decisions.\n"
+        f"Return as a numbered list with format: "
+        f"'1. [Yes/No, Yes/No] - Reasoning: <reason>'.\n"
+        f"Queries:\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)])
+    )
+    template = create_template(context, question)
+    response = call_llm(template)
+    validated_data = []
+    for line, query in zip(response.split("\n"), queries):
+        if re.match(r"^\d+\.\s\[.*\]\s-\sReasoning:", line):
+            match = re.match(r"^\d+\.\s\[(Yes|No),\s(Yes|No)\]\s-\sReasoning:\s(.*)$", line.strip())
+            if match:
+                context_ok, intent_ok, reasoning = match.groups()
+                if context_ok == "Yes" and intent_ok == "Yes":
+                    validated_data.append({
+                        "text": query,
+                        "intent": intent,
+                        "reasoning": reasoning
+                    })
+    return validated_data
 
 # Step 2: Augmentation with Paraphrasing
-def augment_with_paraphrasing(context: str, examples: List[str], num_paraphrases: int) -> List[str]:
-    """Augment data by generating paraphrases for each query."""
+def augment_with_paraphrasing(context: str, examples: List[Dict[str, str]], num_paraphrases: int) -> List[Dict[str, str]]:
+    """Augment validated queries with paraphrases."""
     augmented_data = examples.copy()
     for example in examples:
         question = (
-            f"Generate {num_paraphrases} paraphrased versions of this query: '{example}'. "
-            f"Keep the same database intent. Return as a numbered list."
+            f"Generate {num_paraphrases} paraphrased versions of this query: '{example['text']}'. "
+            f"Keep the same database intent '{example['intent']}'. Return as a numbered list."
         )
         template = create_template(context, question)
         response = call_llm(template)
         paraphrases = [line.strip() for line in response.split("\n") if re.match(r"^\d+\.\s", line)]
         paraphrases = [re.sub(r"^\d+\.\s", "", para) for para in paraphrases]
-        augmented_data.extend(paraphrases[:num_paraphrases])
+        augmented_data.extend([{"text": para, "intent": example["intent"]} for para in paraphrases[:num_paraphrases]])
     return augmented_data
 
 # Step 3: Noise Injection for Robustness
-def inject_noise(context: str, examples: List[str], num_noisy: int) -> List[str]:
-    """Add noise (typos, slang) to some queries for robustness."""
+def inject_noise(context: str, examples: List[Dict[str, str]], num_noisy: int) -> List[Dict[str, str]]:
+    """Add noise to some queries for robustness."""
     noisy_data = examples.copy()
     sampled_examples = random.sample(examples, min(num_noisy, len(examples)))
     for example in sampled_examples:
         question = (
-            f"Rewrite this query with typos, slang, or casual phrasing: '{example}'. "
-            f"Keep the same database intent. Return one version."
+            f"Rewrite this query with typos, slang, or casual phrasing: '{example['text']}'. "
+            f"Keep the same database intent '{example['intent']}'. Return one version."
         )
         template = create_template(context, question)
         response = call_llm(template)
-        noisy_data.append(response.strip())
+        noisy_data.append({"text": response.strip(), "intent": example["intent"]})
     return noisy_data
 
-# Main function to generate the full dataset
+# Main function to generate the dataset with batches
 def generate_synthetic_dataset(
     context: str,
     intents: List[str],
-    initial_per_intent: int = 50,
-    paraphrases_per_example: int = 3,
-    noisy_per_intent: int = 20
+    batches_per_intent: int = 5,
+    batch_size: int = 10,
+    paraphrases_per_query: int = 3,
+    noisy_per_batch: int = 2
 ) -> List[Dict[str, str]]:
-    """Generate a complete synthetic dataset using the combo strategy."""
+    """Generate synthetic dataset using batches with validation."""
     dataset = []
 
     for intent in intents:
         print(f"Generating data for database intent: {intent}")
-        
-        # Step 1: Generate initial data
-        initial_data = generate_initial_data(context, intent, initial_per_intent)
-        print(f"Initial queries generated: {len(initial_data)}")
+        intent_data = []
 
-        # Step 2: Augment with paraphrasing
-        augmented_data = augment_with_paraphrasing(context, initial_data, paraphrases_per_example)
-        print(f"After paraphrasing: {len(augmented_data)}")
+        # Generate and validate batches
+        for batch_num in range(batches_per_intent):
+            print(f"Batch {batch_num + 1}/{batches_per_intent}")
+            # Generate batch
+            batch_queries = generate_batch(context, intent, batch_size)
+            print(f"Generated {len(batch_queries)} queries in batch.")
+
+            # Validate batch
+            validated_queries = validate_batch(context, intent, batch_queries)
+            print(f"Validated {len(validated_queries)} queries.")
+            intent_data.extend(validated_queries)
+
+        # Step 2: Augment validated queries
+        augmented_data = augment_with_paraphrasing(context, intent_data, paraphrases_per_query)
+        print(f"After paraphrasing: {len(augmented_data)} queries.")
 
         # Step 3: Inject noise
-        final_data = inject_noise(context, augmented_data, noisy_per_intent)
-        print(f"After noise injection: {len(final_data)}")
+        final_data = inject_noise(context, augmented_data, noisy_per_batch * batches_per_intent)
+        print(f"After noise injection: {len(final_data)} queries.")
 
-        # Add to dataset with labels
-        dataset.extend([{"text": text, "intent": intent} for text in final_data])
+        # Add to dataset
+        dataset.extend(final_data)
 
     return dataset
 
 # Save dataset to JSON file
-def save_dataset(dataset: List[Dict[str, str]], filename: str = "database_router_combo_dataset.json"):
+def save_dataset(dataset: List[Dict[str, str]], filename: str = "database_router_batch_dataset.json"):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(dataset, f, indent=2)
     print(f"Dataset saved to {filename} with {len(dataset)} examples.")
@@ -143,9 +201,10 @@ if __name__ == "__main__":
     dataset = generate_synthetic_dataset(
         context=context,
         intents=intents,
-        initial_per_intent=50,      # 50 initial queries per intent
-        paraphrases_per_example=3,  # 3 paraphrases per initial query
-        noisy_per_intent=20         # 20 noisy versions per intent
+        batches_per_intent=5,       # 5 batches per intent
+        batch_size=10,              # 10 queries per batch
+        paraphrases_per_query=3,    # 3 paraphrases per validated query
+        noisy_per_batch=2           # 2 noisy versions per batch
     )
 
     # Save to file
@@ -159,54 +218,51 @@ if __name__ == "__main__":
 
 ---
 
-### Key Updates
-1. **Context and Intents**:
-   - Updated to reflect a data retrieval system with database-specific intents.
-   - Intent definitions now guide the LLM to generate queries aligned with `CustomerDB`, `ProductDB`, `OrderDB`, or `AnalyticsDB`.
+### How It Works
+1. **Batch Generation (`generate_batch`)**:
+   - Generates 10 queries per batch for a specific intent (e.g., "Who are my top customers?" for `CustomerDB`).
 
-2. **Generate Initial Data**:
-   - Prompts the LLM to create queries specific to each database intent (e.g., "Who are my top customers?" for `CustomerDB`).
+2. **Validation (`validate_batch`)**:
+   - For each query in the batch:
+     - Checks if it fits the context ("A data retrieval system").
+     - Confirms it matches the intended database intent.
+     - Provides reasoning (e.g., "Yes, Yes - Reasoning: Query seeks customer data, matches CustomerDB").
+   - Only queries with `[Yes, Yes]` are kept.
 
-3. **Paraphrasing**:
-   - Ensures paraphrased queries retain the same database intent (e.g., "What’s the stock level of item X?" → "How much of product X is in stock?").
+3. **Augmentation (`augment_with_paraphrasing`)**:
+   - Takes validated queries and generates 3 paraphrases each (e.g., "Who are my top customers?" → "Which customers spent the most?").
 
-4. **Noise Injection**:
-   - Adds realistic variations (e.g., "When did order 123 ship?" → "Wen did ord 123 go out?") while preserving the intent.
+4. **Noise Injection (`inject_noise`)**:
+   - Adds 2 noisy versions per batch (e.g., "When did order 123 ship?" → "Wen did ord 123 go out?").
 
-### Example Workflow
-- **Initial Data (CustomerDB)**:
-  ```
-  1. Who are my top customers this year?
-  2. What’s the email of customer ID 456?
-  ```
-- **After Paraphrasing**:
-  ```
-  1. Who are my top customers this year?
-  2. Which customers spent the most in 2023?
-  3. Who’s leading in purchases this year?
-  4. What’s the email of customer ID 456?
-  5. Can you get me the email for customer 456?
-  ```
-- **After Noise Injection**:
-  ```
-  1. Who r my top custmers this yr?
-  ```
+5. **Main Function (`generate_synthetic_dataset`)**:
+   - Loops through intents, generating 5 batches of 10 queries each (50 initial queries per intent).
+   - Validates, augments, and injects noise to build the final dataset.
 
-### Dataset Size
-- Per intent:
-  - Initial: 50 queries.
-  - After paraphrasing: 50 + (50 * 3) = 200 queries.
-  - After noise: 200 + 20 = 220 queries.
-- Total for 4 intents: ~880 queries.
+### Dataset Size (Per Intent)
+- Initial: 5 batches * 10 queries = 50 queries.
+- After validation: ~40–50 queries (assuming 80–100% pass rate).
+- After paraphrasing: 40–50 * (1 + 3) = 160–200 queries.
+- After noise: 160–200 + (5 * 2) = 170–210 queries.
+- Total for 4 intents: ~680–840 queries.
+
+### Validation Details
+- **Why This Approach**: A single LLM validation step is efficient (one call per batch) and ensures quality without the complexity of the three-body system.
+- **Output Format**: 
+  ```
+  1. [Yes, Yes] - Reasoning: Query seeks customer data, matches CustomerDB intent.
+  2. [No, Yes] - Reasoning: Query is about weather, not data retrieval system.
+  ```
+- **Filtering**: Only `[Yes, Yes]` queries proceed to augmentation.
 
 ### Customization
-- **Your Databases**: Replace `CustomerDB`, etc., with your actual database names and update their definitions in `intent_definitions`.
-- **Size**: Adjust `initial_per_intent`, `paraphrases_per_example`, and `noisy_per_intent` to scale the dataset (e.g., 1000+ per intent).
-- **Query Style**: Modify the prompts in `generate_initial_data` to match your users’ query patterns.
+- **Your Databases**: Update `intents` and `intent_definitions` with your actual database names and purposes.
+- **Batch Size**: Change `batch_size` or `batches_per_intent` to adjust the initial query count.
+- **Validation Strictness**: Modify the validation prompt if you want stricter or looser criteria.
 
 ### Next Steps
 1. Replace `call_llm` with your actual function.
-2. Run and check `database_router_combo_dataset.json`.
-3. Tokenize the `text` field and train your BERT classifier (e.g., using Hugging Face).
+2. Run and inspect `database_router_batch_dataset.json`.
+3. Adjust `batches_per_intent` or `batch_size` if you need a larger dataset (e.g., 1000+ queries total).
 
-What are your specific database names and their purposes? I can refine the intent definitions and prompts further. Also, do you want to adjust the dataset size or add any specific query patterns?
+What are your specific database names and their purposes? I can tailor the intent definitions further. Also, do you want a different batch size or validation tweak?
