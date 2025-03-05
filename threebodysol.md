@@ -114,7 +114,8 @@ def create_template(context: str, question: str) -> str:
         "Follow these instructions carefully:\n"
         "- Generate or analyze responses based on the provided context and question.\n"
         "- Ensure outputs align with the specified database intents, if applicable.\n"
-        "- Return results in JSON format.\n"
+        "- Return results ONLY in the exact JSON format requested in the question.\n"
+        "- Do not wrap your JSON in markdown code blocks, provide explanatory text, or any content outside the JSON.\n"
         f"Context: {context}\n"
         f"Question: {question}"
     )
@@ -158,15 +159,19 @@ def intent_llm(context: str, queries: List[str]) -> List[Tuple[str, str]]:
         "- AnalyticsDB: Queries about analytical data (e.g., 'What's the average sales trend?')."
     )
     question = (
-        f"{intent_definitions}\n"
-        f"Classify which database each of the following queries should route to. "
-        f"Return as a JSON array with the format: "
-        f"{{\"classifications\": [{{"
-        f"\"query\": \"query text\", "
-        f"\"intent\": \"DatabaseName\""
-        f"}}]}}\n"
-        f"Queries:\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)])
+        f"{intent_definitions}\n\n"
+        f"Classify which database each of the following queries should route to.\n\n"
+        f"IMPORTANT: Your response must be ONLY a valid JSON object (not an array) with exactly this structure:\n"
+        f"{{\"classifications\": [\n"
+        f"  {{\"query\": \"first query text\", \"intent\": \"DatabaseName\"}},\n"
+        f"  {{\"query\": \"second query text\", \"intent\": \"DatabaseName\"}},\n"
+        f"  ... and so on for each query\n"
+        f"]}}\n\n"
+        f"Do not include any explanations, markdown formatting, or surrounding text. "
+        f"Return only the JSON object.\n\n"
+        f"Queries to classify:\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries)])
     )
+    
     template = create_template(context, question)
     response = call_llm(template)
     
@@ -208,20 +213,19 @@ def supervisor_llm(context: str, query_intent_pairs: List[Tuple[str, str]]) -> L
     pairs_for_prompt = [{"query": q, "intent": i} for q, i in query_intent_pairs]
     
     question = (
-        f"{intent_definitions}\n"
+        f"{intent_definitions}\n\n"
         f"For each query-database pair, determine:\n"
         f"1. Does the query fit the context of a data retrieval system? (true/false)\n"
         f"2. Is the database classification correct? (true/false)\n"
-        f"3. Provide reasoning for your decisions.\n"
-        f"Return as a JSON object with the format: "
-        f"{{\"validations\": [{{"
-        f"\"query\": \"query text\", "
-        f"\"intent\": \"DatabaseName\", "
-        f"\"context_fit\": true/false, "
-        f"\"intent_correct\": true/false, "
-        f"\"reasoning\": \"explanation\""
-        f"}}]}}\n"
-        f"Pairs: {json.dumps(pairs_for_prompt)}"
+        f"3. Provide reasoning for your decisions.\n\n"
+        f"IMPORTANT: Your response must be ONLY a valid JSON object (not an array) with exactly this structure:\n"
+        f"{{\"validations\": [\n"
+        f"  {{\"query\": \"query text\", \"intent\": \"DatabaseName\", \"context_fit\": true/false, \"intent_correct\": true/false, \"reasoning\": \"explanation\"}},\n"
+        f"  ... and so on for each pair\n"
+        f"]}}\n\n"
+        f"Do not include any explanations, markdown formatting, or surrounding text. "
+        f"Return only the JSON object.\n\n"
+        f"Pairs to validate: {json.dumps(pairs_for_prompt, indent=2)}"
     )
     template = create_template(context, question)
     response = call_llm(template)
