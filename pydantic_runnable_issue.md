@@ -299,3 +299,302 @@ print(json.dumps(response, indent=2))
 Since you’re already using LangChain’s `PromptTemplate`, I’d lean toward **Option 1**. It keeps your code future-proof and aligns with your existing setup. However, if you’re not planning to use more LangChain features, **Option 2** is perfectly fine and simpler to start with.
 
 Let me know your server’s API details (e.g., endpoints, expected payload) if you need help tailoring either option further!
+
+
+
+
+## Inline citations like cross references:
+
+If the final answer (`combined_answer`) from your LLM includes citations as cross-references (e.g., "The weather is sunny [1] and warm [2]"), and you also want a separate `citations` list in the JSON linking back to those references (e.g., `[1]` maps to a specific section), we need to ensure the LLM generates both consistently and that your code can handle them. This introduces a new layer of complexity, but it’s manageable with the right approach.
+
+Let’s break this down and figure out how to handle inline citations/cross-references effectively.
+
+---
+
+### What’s Happening
+- **Current Setup**: The LLM combines answers into a `combined_answer` and provides a `citations` list, but there’s no explicit connection between the text in `combined_answer` and the `citations` entries.
+- **New Requirement**: You want inline citations (e.g., "[1]", "[2]") in the `combined_answer` that correspond to specific entries in the `citations` list, acting as cross-references to the original sections.
+
+For example, you might want:
+```json
+{
+  "question": "What is the weather like?",
+  "combined_answer": "The weather is sunny [1] and warm [2] today.",
+  "citations": [
+    {"source": "Section1", "text": "It’s sunny today."},
+    {"source": "Section2", "text": "The weather is clear and warm."}
+  ]
+}
+```
+Here, `[1]` refers to `Section1`, and `[2]` refers to `Section2`.
+
+---
+
+### Challenges
+1. **Consistency**: The LLM must number the citations in `combined_answer` and match them to the `citations` list order.
+2. **Parsing**: Your code needs to trust or validate that the cross-references align with the `citations` list.
+3. **Flexibility**: Should the LLM decide the citation numbers, or should you predefine them based on input?
+
+---
+
+### Approaches to Handle Inline Citations
+I’ll propose two strategies:
+1. **Ask for Inline Citations in the Prompt**: Instruct the LLM to include numbered cross-references in `combined_answer` and align them with the `citations` list.
+2. **Predefine Citations with Numbers**: Pass the answers with pre-assigned numbers to the LLM, ensuring it uses those in the response.
+
+#### Option 1: Ask for Inline Citations in the Prompt
+This relies on the LLM to assign numbers and maintain consistency.
+
+##### Updated Prompt
+Modify the `combine_prompt` to explicitly request inline citations:
+```python
+combine_prompt = PromptTemplate(
+    input_variables=["question", "answers"],
+    template="""
+    Consolidate the following answers for the question "{question}" into a single coherent response. Include inline citations as numbered cross-references (e.g., [1], [2]) in the combined answer, corresponding to the order of citations listed below:
+
+    {answers}
+
+    Return your response as a JSON object with this structure:
+    {
+        "question": "{question}",
+        "combined_answer": "your consolidated answer with [1], [2], etc.",
+        "citations": [
+            {"source": "section_name", "text": "original answer text"},
+            {"source": "section_name", "text": "original answer text"}
+        ]
+    }
+    Ensure the JSON is valid, the inline citations match the citations list order (e.g., [1] refers to the first citation), and there’s no extra text outside the JSON object.
+    """
+)
+```
+
+##### Code (Using Option 1 from Previous Answer)
+Here’s how it fits with the custom LangChain `Runnable` approach:
+```python
+import json
+import requests
+from pydantic import BaseModel, Field, ValidationError
+from langchain.prompts import PromptTemplate
+from langchain_core.messages import AIMessage
+
+# Pydantic schemas (unchanged)
+class Citation(BaseModel):
+    source: str = Field(description="Section or source of the answer")
+    text: str = Field(description="The original answer from that section")
+
+class QuestionResponse(BaseModel):
+    question: str = Field(description="The question being answered")
+    combined_answer: str = Field(description="The consolidated answer with inline citations")
+    citations: list[Citation] = Field(description="List of citations for this question")
+
+# Get access token
+def get_access_token(api_id: str, api_key: str) -> str:
+    token_url = "https://your-server.com/auth/token"
+    payload = {"id": api_id, "key": api_key}
+    response = requests.post(token_url, json=payload)
+    if response.status_code == 200:
+        return response.json()["access_token"]
+    raise Exception(f"Failed to get token: {response.text}")
+
+# Custom LLM
+class CustomServerLLM:
+    def __init__(self, api_id: str, api_key: str, api_url: str):
+        self.api_id = api_id
+        self.api_key = api_key
+        self.api_url = api_url
+        self.token = get_access_token(api_id, api_key)
+
+    def invoke(self, input: str, config=None) -> AIMessage:
+        headers = {"Authorization": f"Bearer {self.token}"}
+        payload = {"prompt": input}
+        response = requests.post(self.api_url, json=payload, headers=headers)
+        if response.status_code == 200:
+            json_response = response.json()
+            return AIMessage(content=json.dumps(json_response["response"]))
+        raise Exception(f"API call failed: {response.text}")
+
+# Prompt
+combine_prompt = PromptTemplate(
+    input_variables=["question", "answers"],
+    template="""
+    Consolidate the following answers for the question "{question}" into a single coherent response. Include inline citations as numbered cross-references (e.g., [1], [2]) in the combined answer, corresponding to the order of citations listed below:
+
+    {answers}
+
+    Return your response as a JSON object with this structure:
+    {
+        "question": "{question}",
+        "combined_answer": "your consolidated answer with [1], [2], etc.",
+        "citations": [
+            {"source": "section_name", "text": "original answer text"}
+        ]
+    }
+    Ensure the JSON is valid, the inline citations match the citations list order (e.g., [1] refers to the first citation), and there’s no extra text outside the JSON object.
+    """
+)
+
+# Configuration
+api_id = "your-api-id-here"
+api_key = "your-api-key-here"
+api_url = "https://your-server.com/v1/chat"
+llm = CustomServerLLM(api_id=api_id, api_key=api_key, api_url=api_url)
+llm_chain = combine_prompt | llm
+
+# Combine answers
+def combine_answers_for_question(question: str, answer_list: list, max_retries: int = 3) -> dict:
+    answers_str = "\n".join([f"Section: {section}, Answer: {answer}" for section, answer in answer_list])
+    
+    for attempt in range(max_retries):
+        try:
+            raw_response = llm_chain.invoke({"question": question, "answers": answers_str})
+            json_data = json.loads(raw_response.content)
+            validated_response = QuestionResponse(**json_data)
+            return validated_response.dict()
+        except (json.JSONDecodeError, ValidationError) as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                return {
+                    "question": question,
+                    "combined_answer": f"Failed to combine answers for '{question}'",
+                    "citations": []
+                }
+
+# Test
+question = "What is the weather like?"
+answer_list = [
+    ("Section1", "It’s sunny today."),
+    ("Section2", "The weather is clear and warm.")
+]
+response = combine_answers_for_question(question, answer_list)
+print(json.dumps(response, indent=2))
+```
+
+##### Pros
+- Simple for the LLM: It decides the numbering and order.
+- Flexible: Works with any number of answers.
+
+##### Cons
+- Relies on LLM accuracy: If it messes up the numbering (e.g., skips [2] or mismatches), you’ll need to validate or retry.
+- No predefined control: You can’t dictate which section gets which number.
+
+##### Validation (Optional)
+To ensure the `combined_answer` citations match the `citations` list:
+- Parse `combined_answer` for `[n]` references using regex (e.g., `re.findall(r'\[\d+\]', combined_answer)`).
+- Check that the numbers align with the `citations` list length and order.
+
+---
+
+#### Option 2: Predefine Citations with Numbers
+This approach assigns numbers to the answers before sending them to the LLM, ensuring exact control over cross-references.
+
+##### Updated Prompt
+```python
+combine_prompt = PromptTemplate(
+    input_variables=["question", "answers"],
+    template="""
+    Consolidate the following answers for the question "{question}" into a single coherent response. Use the provided citation numbers (e.g., [1], [2]) as inline cross-references in the combined answer, matching the order below:
+
+    {answers}
+
+    Return your response as a JSON object with this structure:
+    {
+        "question": "{question}",
+        "combined_answer": "your consolidated answer with [1], [2], etc.",
+        "citations": [
+            {"source": "section_name", "text": "original answer text"}
+        ]
+    }
+    Ensure the JSON is valid, the inline citations use the numbers provided, and there’s no extra text outside the JSON object.
+    """
+)
+```
+
+##### Modified Function
+```python
+def combine_answers_for_question(question: str, answer_list: list, max_retries: int = 3) -> dict:
+    # Assign numbers to answers
+    numbered_answers = [(i + 1, section, answer) for i, (section, answer) in enumerate(answer_list)]
+    answers_str = "\n".join([f"Citation [{num}], Section: {section}, Answer: {answer}" for num, section, answer in numbered_answers])
+    
+    for attempt in range(max_retries):
+        try:
+            raw_response = llm_chain.invoke({"question": question, "answers": answers_str})
+            json_data = json.loads(raw_response.content)
+            validated_response = QuestionResponse(**json_data)
+            return validated_response.dict()
+        except (json.JSONDecodeError, ValidationError) as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                return {
+                    "question": question,
+                    "combined_answer": f"Failed to combine answers for '{question}'",
+                    "citations": []
+                }
+```
+
+##### Example Output
+Input `answer_list`:
+```python
+[("Section1", "It’s sunny today."), ("Section2", "The weather is clear and warm.")]
+```
+
+`answers_str` becomes:
+```
+Citation [1], Section: Section1, Answer: It’s sunny today.
+Citation [2], Section: Section2, Answer: The weather is clear and warm.
+```
+
+Output:
+```json
+{
+  "question": "What is the weather like?",
+  "combined_answer": "The weather is sunny [1] and warm [2] today.",
+  "citations": [
+    {"source": "Section1", "text": "It’s sunny today."},
+    {"source": "Section2", "text": "The weather is clear and warm."}
+  ]
+}
+```
+
+##### Pros
+- Exact Control: You dictate the numbers, reducing LLM errors.
+- Easier Validation: Numbers are predefined, so you can check if `[1]`, `[2]`, etc., appear correctly.
+
+##### Cons
+- More Prep Work: You need to number the answers before sending them.
+- Less LLM Flexibility: It must follow your numbering, which might limit its creativity.
+
+---
+
+### Which Should You Use?
+- **Option 1 (Inline Citations)**:
+  - Use if your LLM is reliable at numbering and you want it to handle the citation logic.
+  - Add validation if you’re worried about mismatches.
+- **Option 2 (Predefined Numbers)**:
+  - Use if you want guaranteed alignment between `combined_answer` and `citations`, or if your LLM struggles with consistent numbering.
+  - Preferred for precision and control.
+
+---
+
+### Handling Cross-References in Practice
+- **Displaying**: In a UI, `[1]` could link to the first citation in the list (e.g., via HTML `<sup>[1]</sup>` with a tooltip).
+- **Validation**: If critical, add a check:
+  ```python
+  import re
+  def validate_citations(response: dict) -> bool:
+      refs = re.findall(r'\[\d+\]', response["combined_answer"])
+      max_ref = max([int(r.strip("[]")) for r in refs], default=0)
+      return max_ref <= len(response["citations"]) and all(r in response["combined_answer"] for r in [f"[{i+1}]" for i in range(len(response["citations"]))])
+  ```
+  Call this after `validated_response.dict()` to ensure all citations are referenced.
+
+---
+
+### Recommendation
+Start with **Option 2** (predefined numbers) because:
+- It aligns your input (`answer_list`) directly with the output, minimizing LLM mistakes.
+- It’s easier to debug and validate.
+- You can switch to Option 1 later if the LLM proves reliable.
+
+Try the Option 2 code with your server, and let me know how it goes or if you need tweaks (e.g., API specifics, citation format)!
