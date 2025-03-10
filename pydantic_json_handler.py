@@ -1,164 +1,115 @@
-import os
-from typing import List, Optional
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
-from langchain.output_parsers.openai_functions import JsonOutputFunctionsParser
-from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
+import json
+from pydantic import BaseModel, Field, ValidationError
+from langchain_openai import ChatOpenAI  # Replace with your LLM provider
+from langchain.prompts import PromptTemplate
 
-# Environment variables for API credentials
-# USR_ID = os.getenv("USR_ID")
-# USR_KEY = os.getenv("USR_KEY")
+# Define Pydantic schemas
+class Citation(BaseModel):
+    source: str = Field(description="Section or source of the answer")
+    text: str = Field(description="The original answer from that section")
 
-# Define your Pydantic models for structured output
-class ProductFeature(BaseModel):
-    name: str = Field(description="Name of the product feature")
-    description: str = Field(description="Detailed description of the feature")
-    importance: int = Field(description="Importance rating from 1-10", ge=1, le=10)
+class QuestionResponse(BaseModel):
+    question: str = Field(description="The question being answered")
+    combined_answer: str = Field(description="The consolidated answer for this question")
+    citations: list[Citation] = Field(description="List of citations for this question")
 
-class ProductAnalysis(BaseModel):
-    product_name: str = Field(description="Name of the product being analyzed")
-    overall_rating: int = Field(description="Overall rating from 1-10", ge=1, le=10)
-    summary: str = Field(description="Brief summary of the product analysis")
-    features: List[ProductFeature] = Field(description="List of product features and their analyses")
-    target_audience: List[str] = Field(description="List of target audience segments for this product")
-    price_estimate: Optional[float] = Field(None, description="Estimated price point in USD if applicable")
-
-# Method 1: Using JsonOutputParser with explicit formatting instructions
-def get_json_with_output_parser(model_name="anthropic/claude-3-opus-20240229", usr_id=None, usr_key=None):
-    # Initialize LLM
-    if "anthropic" in model_name:
-        llm = ChatAnthropic(
-            model_name=model_name, 
-            anthropic_api_key=usr_key,
-            anthropic_user_id=usr_id,
-            temperature=0
-        )
-    else:
-        llm = ChatOpenAI(
-            model_name=model_name, 
-            openai_api_key=usr_key,
-            openai_organization=usr_id,  # Using organization ID as the user ID
-            temperature=0
-        )
-    
-    # Create the parser
-    parser = JsonOutputParser(pydantic_object=ProductAnalysis)
-    
-    # Create the prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a product analysis expert. Analyze the product and provide a structured response."),
-        ("human", "Analyze the following product: {product}. {format_instructions}")
-    ])
-    
-    # Add format instructions to the prompt
-    prompt_with_parser = prompt.partial(format_instructions=parser.get_format_instructions())
-    
-    # Create the chain
-    chain = prompt_with_parser | llm | parser
-    
-    # Run the chain
-    result = chain.invoke({"product": "Electric standing desk with programmable height settings"})
-    return result
-
-# Method 2: Using Function Calling (more reliable for consistent JSON output)
-def get_json_with_function_calling(model_name="anthropic/claude-3-opus-20240229", usr_id=None, usr_key=None):
-    # Initialize LLM with function calling capability
-    if "anthropic" in model_name:
-        llm = ChatAnthropic(
-            model_name=model_name, 
-            anthropic_api_key=usr_key,
-            anthropic_user_id=usr_id,
-            temperature=0
-        )
-    else:
-        llm = ChatOpenAI(
-            model_name=model_name, 
-            openai_api_key=usr_key,
-            openai_organization=usr_id,  # Using organization ID as the user ID
-            temperature=0
-        )
-    
-    # Create function schema from Pydantic model
-    functions = [
-        {
-            "name": "analyze_product",
-            "description": "Analyze a product and return structured information",
-            "parameters": ProductAnalysis.model_json_schema()
-        }
+# Mock function to simulate answering questions (replace with your actual implementation)
+def answer_questions(content: str, questions: list) -> list:
+    # Placeholder—replace with your LLM call or logic
+    return [
+        f"{q} Based on '{content}'" for q in questions
     ]
-    
-    # Function to add function calling capability to the LLM
-    if "anthropic" in model_name:
-        llm_with_tools = llm.bind(tools=functions)
-    else:
-        llm_with_tools = llm.bind(functions=functions)
-    
-    # Create a parser to extract the function call
-    parser = JsonOutputFunctionsParser()
-    
-    # Create the prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a product analysis expert. Analyze the product and provide a structured response."),
-        ("human", "Analyze the following product: {product}")
-    ])
-    
-    # Create the chain
-    chain = prompt | llm_with_tools | parser
-    
-    # Run the chain
-    result = chain.invoke({"product": "Electric standing desk with programmable height settings"})
-    return result
 
-# Method 3: Using Structured Output with function calling (LangChain 0.2.0+)
-def get_json_with_structured_output(model_name="anthropic/claude-3-opus-20240229", usr_id=None, usr_key=None):
-    # Initialize LLM
-    if "anthropic" in model_name:
-        llm = ChatAnthropic(
-            model_name=model_name, 
-            anthropic_api_key=usr_key,
-            anthropic_user_id=usr_id,
-            temperature=0
-        )
-    else:
-        llm = ChatOpenAI(
-            model_name=model_name, 
-            openai_api_key=usr_key,
-            openai_organization=usr_id,  # Using organization ID as the user ID
-            temperature=0
-        )
-    
-    # Create the prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a product analysis expert. Analyze the product and provide a structured response."),
-        ("human", "Analyze the following product: {product}")
-    ])
-    
-    # Create the chain with structured output
-    chain = prompt | llm.with_structured_output(ProductAnalysis)
-    
-    # Run the chain
-    result = chain.invoke({"product": "Electric standing desk with programmable height settings"})
-    return result
+# LLM configuration
+api_key = "your-api-key-here"
+api_id = "your-api-id-here"
+base_url = "https://api.your-llm-provider.com/v1"
 
-# Example usage:
-if __name__ == "__main__":
-    # Set your user ID and key
-    usr_id = "your_user_id_here"  # Replace with your actual user ID
-    usr_key = "your_user_key_here"  # Replace with your actual user key
+llm = ChatOpenAI(
+    api_key=api_key,
+    model="your-model-name",
+    base_url=base_url,
+    model_kwargs={"user_id": api_id}
+)
+
+# Prompt to combine answers for a single question
+combine_prompt = PromptTemplate(
+    input_variables=["question", "answers"],
+    template="""
+    Consolidate the following answers for the question "{question}" into a single coherent response and include citations in valid JSON format:
+
+    {answers}
+
+    Return your response as a JSON object with this structure:
+    {
+        "question": "{question}",
+        "combined_answer": "your consolidated answer here",
+        "citations": [
+            {"source": "section_name", "text": "original answer text"}
+        ]
+    }
+    Ensure the JSON is valid and contains no extra text outside the JSON object.
+    """
+)
+
+llm_chain = combine_prompt | llm
+
+# Function to combine answers for a single question
+def combine_answers_for_question(question: str, answer_list: list, max_retries: int = 3) -> dict:
+    # Format answers for the prompt
+    answers_str = "\n".join([f"Section: {section}, Answer: {answer}" for section, answer in answer_list])
     
-    # Choose one of the methods
-    # result = get_json_with_output_parser(usr_id=usr_id, usr_key=usr_key)
-    # result = get_json_with_function_calling(usr_id=usr_id, usr_key=usr_key)
-    result = get_json_with_structured_output(usr_id=usr_id, usr_key=usr_key)
-    
-    print(f"Result type: {type(result)}")
-    print(f"Result: {result}")
-    
-    # If you're using the structured output method, you can access fields directly
-    if hasattr(result, "product_name"):
-        print(f"Product name: {result.product_name}")
-        print(f"Features:")
-        for feature in result.features:
-            print(f"- {feature.name}: {feature.importance}/10")
+    for attempt in range(max_retries):
+        try:
+            raw_response = llm_chain.invoke({"question": question, "answers": answers_str})
+            if hasattr(raw_response, "content"):
+                raw_response = raw_response.content
+            
+            json_data = json.loads(raw_response)
+            validated_response = QuestionResponse(**json_data)
+            return validated_response.dict()
+        
+        except (json.JSONDecodeError, ValidationError) as e:
+            print(f"Attempt {attempt + 1} failed for '{question}': {e}")
+            if attempt == max_retries - 1:
+                return {
+                    "question": question,
+                    "combined_answer": f"Failed to combine answers for '{question}'",
+                    "citations": []
+                }
+        except Exception as e:
+            print(f"Unexpected error on attempt {attempt + 1} for '{question}': {e}")
+            if attempt == max_retries - 1:
+                return {
+                    "question": question,
+                    "combined_answer": f"Unexpected error: {str(e)}",
+                    "citations": []
+                }
+
+# Main function to process all questions
+def get_all_combined_responses(answers_dict: dict) -> list:
+    combined_responses = []
+    for question, answer_list in answers_dict.items():
+        if answer_list:  # Only process if there are answers
+            response = combine_answers_for_question(question, answer_list)
+            combined_responses.append(response)
+    return combined_responses
+
+# Main execution
+questions = ["What is the weather like?", "What is the temperature?", "Is it sunny?"]
+answers = {question: [] for question in questions}
+
+context = {
+    "Section1": "The weather is sunny with a temperature of 72°F.",
+    "Section2": "It’s clear and warm today."
+}
+
+# Populate the answers dictionary
+for section, content in context.items():
+    section_answers = answer_questions(content, questions)
+    for i, answer in enumerate(section_answers):
+        answers[questions[i]].append((section, answer))
+
+# Get combined responses
+combined_responses = get_all_combined_responses(answers)
+print(json.dumps(combined_responses, indent=2))
