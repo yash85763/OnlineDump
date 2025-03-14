@@ -39,9 +39,20 @@ consolidated_data_file = os.path.join(consolidated_ans_json_file_path, 'consolid
 if not os.path.exists(consolidated_data_file):
     with open(consolidated_data_file, 'w') as f:
         json.dump([], f)
+    consolidated_data = []
 else:
     with open(consolidated_data_file, 'r') as f:
         consolidated_data = json.load(f)
+
+# Load the QA data
+qa_data_file = os.path.join(DATA_PATH, 'qa_new_data.json')
+if not os.path.exists(qa_data_file):
+    with open(qa_data_file, 'w') as f:
+        json.dump([], f)
+    qa_data = []
+else:
+    with open(qa_data_file, 'r') as f:
+        qa_data = json.load(f)
 
 # Create a Streamlit app
 st.title(f"Regulation Assistant: As of 2025-03-06")  # This is the last eCFR updated version, currently not using the API.
@@ -110,23 +121,4 @@ if st.button("Submit", key="submit_button"):
                 'role': 'assistant',
                 'content': answer
             })
-            st.session_state.chat_history = chat_history
-
-            # Save the QA data
-            qa_data.append({
-                'question': question,
-                'section': section_option,
-                'answer': answer
-            })
-
-        # Save the QA data to file
-        with open(consolidated_data_file, 'w') as f:
-            json.dump(qa_data, f)
-
-# Display the chat history
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        if message["role"] == "assistant":
-            st.write(message["content"])
-        else:
-            st.write(message["content"])
+            st.session_state.chat_history =
