@@ -34,15 +34,22 @@ api = ECFRAPIWrapper(
 with open(os.path.join(context_json_file_path, 'context.json'), 'r') as f:
     context = json.load(f)
 
-# Load the Consolidated data
+# Load the Consolidated data (Fixed JSON handling)
 consolidated_data_file = os.path.join(consolidated_ans_json_file_path, 'consolidated_data.json')
+
 if not os.path.exists(consolidated_data_file):
     with open(consolidated_data_file, 'w') as f:
-        json.dump([], f)
+        json.dump([], f)  # Ensure it's an empty list
     consolidated_data = []
 else:
-    with open(consolidated_data_file, 'r') as f:
-        consolidated_data = json.load(f) or []  # Handle empty file case
+    try:
+        with open(consolidated_data_file, 'r') as f:
+            consolidated_data = json.load(f)
+            if not isinstance(consolidated_data, list):  # Ensure it's a list
+                raise ValueError("Invalid JSON format: Root element must be a list")
+    except (json.JSONDecodeError, ValueError) as e:
+        st.error(f"Error loading consolidated data: {e}")
+        consolidated_data = []  # Reset to empty list
 
 # Load the QA data
 qa_data_file = os.path.join(DATA_PATH, 'qa_new_data.json')
@@ -51,8 +58,14 @@ if not os.path.exists(qa_data_file):
         json.dump([], f)
     qa_data = []
 else:
-    with open(qa_data_file, 'r') as f:
-        qa_data = json.load(f) or []  # Handle empty file case
+    try:
+        with open(qa_data_file, 'r') as f:
+            qa_data = json.load(f)
+            if not isinstance(qa_data, list):  # Ensure it's a list
+                raise ValueError("Invalid JSON format: Root element must be a list")
+    except (json.JSONDecodeError, ValueError) as e:
+        st.error(f"Error loading QA data: {e}")
+        qa_data = []  # Reset to empty list
 
 # Create a Streamlit app
 st.title(f"Regulation Assistant: As of 2025-03-06")  # This is the last eCFR updated version, currently not using the API.
@@ -71,7 +84,7 @@ question = st.text_input("Ask a question")
 # Function to find the best-matching question in consolidated_data
 def find_best_match(user_question, consolidated_data):
     for qa in consolidated_data:
-        if qa["question"].lower() == user_question.lower():
+        if qa["question"].strip().lower() == user_question.strip().lower():
             return qa["answer"]
     return None  # Return None if no exact match is found
 
@@ -125,7 +138,4 @@ if st.button("Submit", key="submit_button"):
 # Display the chat history
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
-        if message["role"] == "assistant":
-            st.write(message["content"])
-        else:
-            st.write(message["content"])
+        st.write(message["content"])
