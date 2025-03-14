@@ -42,7 +42,7 @@ if not os.path.exists(consolidated_data_file):
     consolidated_data = []
 else:
     with open(consolidated_data_file, 'r') as f:
-        consolidated_data = json.load(f)
+        consolidated_data = json.load(f) or []  # Handle empty file case
 
 # Load the QA data
 qa_data_file = os.path.join(DATA_PATH, 'qa_new_data.json')
@@ -52,7 +52,7 @@ if not os.path.exists(qa_data_file):
     qa_data = []
 else:
     with open(qa_data_file, 'r') as f:
-        qa_data = json.load(f)
+        qa_data = json.load(f) or []  # Handle empty file case
 
 # Create a Streamlit app
 st.title(f"Regulation Assistant: As of 2025-03-06")  # This is the last eCFR updated version, currently not using the API.
@@ -83,18 +83,12 @@ if st.button("Submit", key="submit_button"):
         if section_option == "All Sections":
             answer = find_best_match(question, consolidated_data)
             if answer:
-                st.write(f"Answer: {answer}")
+                st.write(f"**Answer:** {answer}")
                 st.write("=" * 80)
 
                 chat_history = st.session_state.chat_history
-                chat_history.append({
-                    'role': 'user',
-                    'content': question
-                })
-                chat_history.append({
-                    'role': 'assistant',
-                    'content': answer
-                })
+                chat_history.append({'role': 'user', 'content': question})
+                chat_history.append({'role': 'assistant', 'content': answer})
                 st.session_state.chat_history = chat_history
 
                 # Save the QA data
@@ -109,16 +103,29 @@ if st.button("Submit", key="submit_button"):
         else:
             # If a specific section is selected, use the existing approach
             answer = llm_processor.answer_from_sections(context[section_option], [question])[0]
-            st.write(f"Section: {section_option}")
-            st.write(f"Answer: {answer}")
+            st.write(f"**Section:** {section_option}")
+            st.write(f"**Answer:** {answer}")
 
             chat_history = st.session_state.chat_history
-            chat_history.append({
-                'role': 'user',
-                'content': question
+            chat_history.append({'role': 'user', 'content': question})
+            chat_history.append({'role': 'assistant', 'content': answer})
+            st.session_state.chat_history = chat_history
+
+            # Save the QA data
+            qa_data.append({
+                'question': question,
+                'section': section_option,
+                'answer': answer
             })
-            chat_history.append({
-                'role': 'assistant',
-                'content': answer
-            })
-            st.session_state.chat_history =
+
+        # Save the QA data to file
+        with open(qa_data_file, 'w') as f:
+            json.dump(qa_data, f, indent=4)
+
+# Display the chat history
+for message in st.session_state.chat_history:
+    with st.chat_message(message["role"]):
+        if message["role"] == "assistant":
+            st.write(message["content"])
+        else:
+            st.write(message["content"])
