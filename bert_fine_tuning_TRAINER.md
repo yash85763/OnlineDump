@@ -1,26 +1,12 @@
-Thank you for providing the example of how links are handled in your Streamlit app! Based on your input, it seems you're using a specific Markdown link syntax where the URL is formatted with `%s` in a string, and `st.write()` or `st.markdown()` is used to render it. The example you gave:
+I understand your request: you're currently outputting the answer from the LLM (`llm_format_answer_with_links()`), but if the LLM-generated links don't match the expected format or if the regex formatter (`regex_format_answer_with_links()`) fails to find citations, you want to fall back to a default eCFR link (e.g., the homepage or a generic section). This will ensure that the app always provides some form of clickable link even if the citation parsing fails.
 
-```python
-url = "https://www.streamlit.io"
-st.write("checkout this [link](%s)" % url)
-st.markdown("checkout this [link](%s)" % url)
-```
-
-This approach works in Streamlit, where:
-- `st.write()` renders the string as plain text with the link embedded (clickable if formatted correctly).
-- `st.markdown()` renders the string as Markdown, ensuring the link is clickable, especially with `unsafe_allow_html=True` if needed for complex formatting.
-
-Given this, it appears the issue with links not appearing might be due to:
-- The Markdown syntax not being correctly applied or rendered in the current implementation.
-- The citations in your `final_answer` not being properly transformed into the expected `[text](url)` format.
-
-Since you’ve confirmed the desired link format, let’s update the code to:
-1. Align the link generation with your preferred syntax (e.g., `[Section 211.1](https://www.ecfr.gov/current/title-12/part-211/section-211.1)`).
-2. Use `st.markdown()` consistently to ensure links are clickable, as it’s more reliable for Markdown rendering.
-3. Debug why links aren’t appearing and ensure the LLM or regex approach generates the correct format.
+Let’s modify the code to:
+1. Compare the LLM-formatted answer with the regex-formatted answer.
+2. If the LLM output doesn’t contain the expected `[text](url)` links (or if the regex finds no citations), use a default eCFR link (e.g., `https://www.ecfr.gov`).
+3. Ensure the final output is rendered correctly in Streamlit using your preferred `[text](url)` format.
 
 ### Updated Streamlit Code
-Below is the revised code incorporating your link format preference and addressing the citation parsing for `[Section 211.1]` or `[Content 211.4(a)]` formats:
+Below is the revised code with the fallback logic for a default eCFR link:
 
 ```python
 import streamlit as st
@@ -98,8 +84,7 @@ else:
 def llm_format_answer_with_links(answer, title="12", part="211"):
     """
     Use the LLM to identify citations in the answer and convert them to eCFR Markdown links.
-    Citations can be in the format [Section 211.1] or [Content 211.4(a)], where the prefix
-    (e.g., 'Section', 'Content') should be ignored for the URL, and the full text is used as the link text.
+    Citations can be in the format [Section 211.1] or [Content 211.4(a)].
     
     Args:
         answer (str): The answer string containing citations.
@@ -297,11 +282,25 @@ if st.button("Submit", key="submit_button", disabled=st.session_state.submit_but
         st.write(f"Debug: Raw answer: {final_answer}")
 
         # Format the answer with clickable eCFR links using LLM
-        formatted_answer = llm_format_answer_with_links(final_answer, title="12", part="211")
+        llm_formatted_answer = llm_format_answer_with_links(final_answer, title="12", part="211")
 
-        # Fallback to regex if LLM fails or for comparison
+        # Fallback to regex
         regex_formatted_answer = regex_format_answer_with_links(final_answer, title="12", part="211")
         st.write(f"Debug: Regex formatted answer: {regex_formatted_answer}")
+
+        # Check if LLM formatted answer contains links, fallback to regex or default link
+        import re
+        link_pattern = r'\[.*?\]\(https?://[^\s]+?\)'  # Matches [text](url) format
+        if not re.search(link_pattern, llm_formatted_answer) and not re.findall(citation_pattern, final_answer):
+            # If LLM didn't generate links and no citations were found, use a default link
+            default_url = "https://www.ecfr.gov"
+            formatted_answer = f"{final_answer} [Default eCFR Link]({default_url})"
+        elif not re.search(link_pattern, llm_formatted_answer):
+            # If LLM failed but citations were found, use regex formatted answer
+            formatted_answer = regex_formatted_answer
+        else:
+            # Use LLM formatted answer if it contains links
+            formatted_answer = llm_formatted_answer
 
         # Display the answer using st.markdown to render links
         st.markdown(f"**Answer:** {formatted_answer}", unsafe_allow_html=True)
@@ -331,60 +330,60 @@ for message in st.session_state.chat_history:
 ```
 
 ### Key Changes
-1. **Alignment with Your Link Format**:
-   - The `llm_format_answer_with_links()` and `regex_format_answer_with_links()` functions now generate links in the format `[text](url)`, matching your example `checkout this [link](%s)` % url.
-   - The LLM prompt and regex logic ensure that the full citation text (e.g., `[Section 211.1]`) is preserved as the link text, while the URL is constructed from the section number (e.g., `211.1`).
+1. **Fallback Logic**:
+   - Added a check using a `link_pattern` (`r'\[.*?\]\(https?://[^\s]+?\)`) to detect if the `llm_formatted_answer` contains Markdown links in the `[text](url)` format.
+   - Conditions for selecting the final `formatted_answer`:
+     - **If no links in LLM output and no citations found in the raw answer**: Uses a default eCFR link (`https://www.ecfr.gov`) appended to the original answer (e.g., "No answers found from any section. [Default eCFR Link](https://www.ecfr.gov)").
+     - **If no links in LLM output but citations are found**: Falls back to the `regex_formatted_answer`.
+     - **If LLM output contains links**: Uses the `llm_formatted_answer`.
 
-2. **Rendering with `st.markdown()`**:
-   - The final answer and chat history assistant responses are rendered using `st.markdown()` with `unsafe_allow_html=True` to ensure the `[text](url)` syntax is interpreted as clickable links.
-   - This aligns with your example where `st.markdown("checkout this [link](%s)" % url)` works.
+2. **Debugging**:
+   - Retained the debug prints to help identify the issue:
+     - `Debug: Raw answer` to check the input.
+     - `Debug: Regex formatted answer` to verify the regex output.
 
-3. **Citation Parsing**:
-   - Both functions handle citations like `[Section 211.1]` or `[Content 211.4(a)]` by ignoring the prefix before the first digit and using the section number for the URL.
-   - The regex pattern and LLM prompt are designed to extract `211.1` or `211.4(a)` for URL construction while keeping the original citation text (e.g., `[Section 211.1]`) as the link text.
+3. **Rendering**:
+   - Continues to use `st.markdown()` with `unsafe_allow_html=True` to render the links, matching your example syntax (`[link](%s)` % url).
 
 ### Example
-Suppose `final_answer` is:
-```
-The regulation requires compliance as per [Section 211.1] and [Content 211.4(a)].
-```
+- **Raw Answer**: `"The regulation requires compliance as per [Section 211.1] and [Content 211.4(a)]."`
+- **LLM Formatted Answer**: If the LLM correctly formats it:
+  ```
+  "The regulation requires compliance as per [Section 211.1](https://www.ecfr.gov/current/title-12/part-211/section-211.1) and [Content 211.4(a)](https://www.ecfr.gov/current/title-12/part-211/section-211.4#p-211.4(a))."
+  ```
+- **Regex Formatted Answer**: If LLM fails:
+  ```
+  "The regulation requires compliance as per [Section 211.1](https://www.ecfr.gov/current/title-12/part-211/section-211.1) and [Content 211.4(a)](https://www.ecfr.gov/current/title-12/part-211/section-211.4#p-211.4(a))."
+  ```
+- **If No Citations or LLM Fails**: 
+  ```
+  "No answers found from any section. [Default eCFR Link](https://www.ecfr.gov)"
+  ```
 
-- **LLM Output** (`formatted_answer`):
-  ```
-  The regulation requires compliance as per [Section 211.1](https://www.ecfr.gov/current/title-12/part-211/section-211.1) and [Content 211.4(a)](https://www.ecfr.gov/current/title-12/part-211/section-211.4#p-211.4(a)).
-  ```
-- **Regex Output** (`regex_formatted_answer`):
-  ```
-  The regulation requires compliance as per [Section 211.1](https://www.ecfr.gov/current/title-12/part-211/section-211.1) and [Content 211.4(a)](https://www.ecfr.gov/current/title-12/part-211/section-211.4#p-211.4(a)).
-  ```
-- **Displayed in Streamlit**:
-  **Answer:** The regulation requires compliance as per [Section 211.1](https://www.ecfr.gov/current/title-12/part-211/section-211.1) and [Content 211.4(a)](https://www.ecfr.gov/current/title-12/part-211/section-211.4#p-211.4(a)).
+### Testing
+1. **Run the App**:
+   - Submit a question (e.g., "What are the reporting requirements?").
+   - Check the debug outputs:
+     - `Debug: Raw answer`: Does it contain `[Section 211.1]` or similar?
+     - `Debug: Regex formatted answer`: Does it show the expected `[text](url)` links?
 
-The citations should now be clickable links in the Streamlit app.
+2. **Verify Links**:
+   - Ensure the final answer under `**Answer:**` has clickable links if citations are present, or the default link if not.
+   - Check the chat history for the same.
+
+3. **Fallback Behavior**:
+   - If you intentionally break the LLM (e.g., by passing an invalid prompt), verify that the regex fallback or default link appears.
 
 ### Debugging Why Links Aren’t Appearing
-If you’re still not seeing links, let’s troubleshoot:
-1. **Check the Raw Answer**:
-   - Look at `Debug: Raw answer: {final_answer}` to confirm if citations like `[Section 211.1]` are present. If not, the issue is with `llm_processor.consolidator()` or `answer_from_sections()` not including citations.
-
-2. **Check Citation Detection**:
-   - Look at `Debug: Citations found in answer: {citations_found}` to see if the regex is detecting the citations. If it’s empty, the format might not match (e.g., missing brackets or different spacing).
-
-3. **Check Formatted Output**:
-   - Look at `Debug: Regex formatted answer: {regex_formatted_answer}` to verify the Markdown links are being generated correctly (e.g., `[Section 211.1](https://...)`).
-
-4. **Test Manual Link**:
-   - Add this line after `st.title()` to test if links render:
-     ```python
-     url = "https://www.ecfr.gov/current/title-12/part-211/section-211.1"
-     st.markdown("Test [link](%s)" % url, unsafe_allow_html=True)
-     ```
-   - If this doesn’t render as a clickable link, there might be a Streamlit configuration or version issue.
+If links still don’t appear:
+- **Check Citation Format**: Share the `Debug: Raw answer` output to confirm the citation format (e.g., `[Section 211.1]`).
+- **Check LLM Output**: Add `st.write(f"Debug: LLM formatted answer: {llm_formatted_answer}")` after the LLM call to see what the LLM returns.
+- **Test Manual Link**: Add `st.markdown("Test [link](https://www.ecfr.gov)", unsafe_allow_html=True)` after `st.title()` to verify Streamlit can render links. If this doesn’t work, there might be a Streamlit issue.
 
 ### Request for Debugging Output
-To resolve this:
-1. Share the output of the debug prints (`Debug: Raw answer`, `Debug: Citations found in answer`, `Debug: Regex formatted answer`) after submitting a question.
-2. Share an example of the `final_answer` string generated by your app.
-3. Confirm if the test manual link (`Test [link](https://...)`) renders as clickable in your Streamlit app.
+Please provide:
+1. The `Debug: Raw answer`, `Debug: Regex formatted answer`, and (optionally) `Debug: LLM formatted answer` outputs after submitting a question.
+2. Confirmation if the test manual link renders as clickable.
+3. An example of the `final_answer` string if the debug prints don’t suffice.
 
-With this information, I can pinpoint why the links aren’t appearing and adjust the code accordingly!
+This will help me ensure the links are correctly generated and displayed!
