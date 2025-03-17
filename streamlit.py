@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import os
+import re
 from utils.llm_processor import LLMProcessor
 from ecfr_api_wrapper import ECFRAPIWrapper
 from utils.configuration import (
@@ -67,6 +68,51 @@ else:
     except (json.JSONDecodeError, ValueError) as e:
         st.error(f"Error loading QA data: {e}")
         qa_data = []
+
+# Function to parse citations and convert them to eCFR links
+def format_answer_with_links(answer, title="12", part="211"):
+    """
+    Parse citations like [211.1] or [211.2(a)] in the answer and replace them with eCFR links.
+    
+    Args:
+        answer (str): The answer string containing citations.
+        title (str): The eCFR title (default: "12").
+        part (str): The eCFR part (default: "211").
+    
+    Returns:
+        str: The answer with citations replaced by Markdown links.
+    """
+    # Regular expression to match citations like [211.1] or [211.2(a)]
+    citation_pattern = r'\[(\d+\.\d+(?:\([a-zA-Z0-9]+\))?(?:,\s*\d+\.\d+(?:\([a-zA-Z0-9]+\))?)*)\]'
+    
+    def create_link(match):
+        # Extract the citation text (e.g., "211.1" or "211.2(a)")
+        citation_group = match.group(1)
+        citations = citation_group.split(", ")  # Handle multiple citations like [211.1, 211.2]
+        
+        links = []
+        for citation in citations:
+            # Split into section and subsection (if any)
+            if "(" in citation:
+                section, subsection = citation.split("(")
+                subsection = subsection.rstrip(")")
+                section_url = f"{section}#{section}({subsection})"
+            else:
+                section = citation
+                section_url = section
+            
+            # Construct the eCFR URL
+            ecfr_url = f"https://www.ecfr.gov/current/title-{title}/part-{part}/section-{section_url}"
+            # Create a Markdown link
+            link = f"[{citation}]({ecfr_url})"
+            links.append(link)
+        
+        # Join multiple links with commas
+        return ", ".join(links)
+    
+    # Replace all citations with links
+    formatted_answer = re.sub(citation_pattern, create_link, answer)
+    return formatted_answer
 
 # Create a Streamlit app
 st.title("Regulation Assistant: As of 2025-03-06")
@@ -141,10 +187,9 @@ if st.button("Submit", key="submit_button", disabled=st.session_state.submit_but
                 # Process each section individually to avoid context length issues
                 section_answers = []
                 for section, section_content in context.items():
-                    # Pass only the content of the current section to answer_from_sections
                     answers_for_section = llm_processor.answer_from_sections(section_content, [question])
-                    if answers_for_section:  # Ensure the answer list isn't empty
-                        section_answers.append(answers_for_section[0])  # Take the first answer (since we passed a single question)
+                    if answers_for_section:
+                        section_answers.append(answers_for_section[0])
                 
                 # Consolidate the answers from all sections
                 if section_answers:
@@ -163,20 +208,23 @@ if st.button("Submit", key="submit_button", disabled=st.session_state.submit_but
             # Use answer_from_sections for the specific section
             final_answer = llm_processor.answer_from_sections(context[selected_section], [question])[0]
 
-        # Display the answer
-        st.write(f"***Answer:*** {final_answer}")
+        # Format the answer with clickable eCFR links
+        formatted_answer = format_answer_with_links(final_answer, title="12", part="211")
 
-        # Update chat history
+        # Display the answer using st.markdown to render links
+        st.markdown(f"**Answer:** {formatted_answer}", unsafe_allow_html=True)
+
+        # Update chat history (store the formatted answer)
         chat_history = st.session_state.chat_history
         chat_history.append({"role": "user", "content": question})
-        chat_history.append({"role": "assistant", "content": final_answer})
+        chat_history.append({"role": "assistant", "content": formatted_answer})
         st.session_state.chat_history = chat_history
 
-        # Save the QA data
+        # Save the QA data (store the original answer without Markdown links)
         qa_data.append({
             "question": question,
             "section": selected_section,
-            "answer": final_answer
+            "answer": final_answer  # Store the raw answer, not the formatted one
         })
         with open(qa_data_file, 'w') as f:
             json.dump(qa_data, f, indent=4)
@@ -184,4 +232,7 @@ if st.button("Submit", key="submit_button", disabled=st.session_state.submit_but
 # Display the chat history
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
-        st.write(message["content"])
+        if message["role"] == "assistant":
+            st.markdown(message["content"], unsafe_allow_html=True)
+        else:
+            st.write(message["content"])
