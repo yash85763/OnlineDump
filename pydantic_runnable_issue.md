@@ -20,6 +20,7 @@ The updated code is structured as follows, ensuring a conversational UI and impr
 Data Loading and Initialization
 The application begins by loading context, consolidated, and QA data from JSON files, ensuring robust error handling for file operations. Session state is initialized for chat_history, custom_question, and submit_button_disabled, maintaining state across interactions.
 # Load context data
+'''python
 with open(os.path.join(context_json_file_path, 'context.json'), 'r') as f:
     context = json.load(f)
 
@@ -68,6 +69,9 @@ The chat history is displayed at the start using st.chat_message, ensuring each 
 for msg in st.session_state['chat_history']:
     with st.chat_message(msg['role']):
         st.write(msg['content'])
+
+'''
+
 This replaces the previous st.write(message['content']), providing a visual distinction between user and assistant messages, enhancing user experience.
 User Interface and Input Handling
 The UI includes selecting a regulation, section, and question. For questions, users can choose from predefined options or enter a custom one if “Other…” is selected:
