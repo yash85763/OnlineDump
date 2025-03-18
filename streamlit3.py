@@ -89,12 +89,25 @@ st.markdown("""
         display: flex;
         flex-direction: row;
     }
-    .left-column {
-        width: 30%;
-        padding-right: 20px;
+    .stButton {
+        margin-bottom: 5px;
+    }
+    .stButton button {
+        width: 100%;
+        text-align: left;
+        padding: 8px;
+        border-radius: 4px;
+        background-color: #f8f9fa;
+        border: 1px solid #eee;
+    }
+    .stButton button:hover {
+        background-color: #f0f0f0;
+    }
+    .stButton button[data-active="true"] {
+        background-color: #e6f3ff;
+        border-left: 3px solid #2e74b5;
     }
     .right-column {
-        width: 70%;
         height: 80vh;
         overflow-y: auto;
         padding: 15px;
@@ -102,24 +115,11 @@ st.markdown("""
         border-radius: 5px;
         background-color: white;
     }
-    .history-item {
-        padding: 8px;
-        margin-bottom: 5px;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background-color 0.2s;
-    }
-    .history-item:hover {
-        background-color: #f0f0f0;
-    }
-    .history-item.active {
-        background-color: #e6f3ff;
-        border-left: 3px solid #2e74b5;
-    }
     .date-display {
         font-size: 0.8rem;
         color: #666;
         margin-top: 5px;
+        margin-bottom: 15px;
     }
     .user-message {
         background-color: #f1f1f1;
@@ -133,6 +133,11 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 20px;
     }
+    .section-info {
+        font-style: italic;
+        margin: 5px 0;
+        color: #555;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -143,16 +148,19 @@ st.title("Regulation K Interpreter")
 col1, col2 = st.columns([3, 7])
 
 # Function to handle question click
-def handle_question_click(question):
-    if question in st.session_state['previous_qa_pairs']:
-        qa_pair = st.session_state['previous_qa_pairs'][question]
-        st.session_state['current_qa'] = {
-            "question": question,
-            "answer": qa_pair['answer'],
-            "section": qa_pair['section']
-        }
-        # Force rerun to update the display
-        st.experimental_rerun()
+def handle_question_click(question_key):
+    if st.session_state.get(question_key):
+        # Get the actual question text
+        question = question_key.replace("question_", "")
+        
+        if question in st.session_state['previous_qa_pairs']:
+            qa_pair = st.session_state['previous_qa_pairs'][question]
+            st.session_state['current_qa'] = {
+                "question": question,
+                "answer": qa_pair['answer'],
+                "section": qa_pair['section']
+            }
+            # Don't use rerun here - we'll update the display directly
 
 # Left column for selections and history
 with col1:
@@ -188,18 +196,39 @@ with col1:
     st.markdown("### Previous Questions")
     
     # Display previous questions as clickable items
-    for prev_q in st.session_state['previous_questions']:
+    for i, prev_q in enumerate(st.session_state['previous_questions']):
         # Check if this is the current question being displayed
         is_active = st.session_state['current_qa'].get('question') == prev_q
         active_class = "active" if is_active else ""
         
-        # Create a clickable div for each question
-        if st.markdown(f'<div class="history-item {active_class}" id="{prev_q}">{prev_q}</div>', unsafe_allow_html=True):
-            handle_question_click(prev_q)
+        # Create a unique key for each question button
+        question_key = f"question_{prev_q}"
+        
+        # Use a button styled to look like a div
+        if question_key not in st.session_state:
+            st.session_state[question_key] = False
+            
+        if st.button(
+            prev_q, 
+            key=question_key,
+            help="Click to view this previous question and answer",
+            use_container_width=True
+        ):
+            # This will set the session state value to True when clicked
+            pass
+            
+        # Handle the click if the button was pressed
+        if st.session_state[question_key]:
+            handle_question_click(question_key)
+            # Reset the button state to avoid multiple triggers
+            st.session_state[question_key] = False
 
 # Right column for displaying the current Q&A
 with col2:
-    # Custom scrollable container
+    # Create a container for the right column content
+    right_col_container = st.container()
+    
+    # Add a CSS class to make it scrollable
     st.markdown('<div class="right-column">', unsafe_allow_html=True)
     
     # If there's a current question and answer to display
@@ -211,7 +240,7 @@ with col2:
         if st.session_state['current_qa']['section'] and st.session_state['current_qa']['section'] != "All Sections":
             section = st.session_state['current_qa']['section']
             section_description = section_mapping.get(section, "")
-            st.markdown(f'<div><em>Section: {section} {section_description}</em></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
         
         # Display the answer
         st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> {st.session_state["current_qa"]["answer"]}</div>', unsafe_allow_html=True)
@@ -274,24 +303,24 @@ if submit_clicked:
     if selected_question == "Other...":
         st.session_state['custom_question'] = ''
     
-    # Force a rerun to update the UI
-    st.experimental_rerun()
+    # Force a rerun to update the UI - using st.rerun() instead of experimental_rerun()
+    st.rerun()
 
-# Add JavaScript for handling question clicks
-st.markdown("""
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const historyItems = document.querySelectorAll('.history-item');
-        historyItems.forEach(item => {
-            item.addEventListener('click', function() {
-                const questionId = this.id;
-                // Use Streamlit's postMessage to communicate with Python
-                window.parent.postMessage({
-                    type: 'streamlit:setComponentValue',
-                    value: questionId
-                }, '*');
-            });
-        });
-    });
-</script>
-""", unsafe_allow_html=True)
+# Remove JavaScript which is not needed with the new button approach
+# st.markdown("""
+# <script>
+#     document.addEventListener('DOMContentLoaded', function() {
+#         const historyItems = document.querySelectorAll('.history-item');
+#         historyItems.forEach(item => {
+#             item.addEventListener('click', function() {
+#                 const questionId = this.id;
+#                 // Use Streamlit's postMessage to communicate with Python
+#                 window.parent.postMessage({
+#                     type: 'streamlit:setComponentValue',
+#                     value: questionId
+#                 }, '*');
+#             });
+#         });
+#     });
+# </script>
+# """, unsafe_allow_html=True)
