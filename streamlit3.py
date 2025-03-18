@@ -220,24 +220,25 @@ with col1:
 
 # Right column for displaying the current Q&A
 with col2:
-    # Create a container for the right column content
-    right_col_container = st.container()
+    # Clear any previous content
+    right_col_container = st.empty()
     
-    # If there's a current question and answer to display
-    if st.session_state['current_qa']['question']:
-        # Display the question
-        st.markdown(f'<div class="user-message"><strong>Question:</strong> {st.session_state["current_qa"]["question"]}</div>', unsafe_allow_html=True)
-        
-        # Display the section info if available
-        if st.session_state['current_qa']['section'] and st.session_state['current_qa']['section'] != "All Sections":
-            section = st.session_state['current_qa']['section']
-            section_description = section_mapping.get(section, "")
-            st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
-        
-        # Display the answer
-        st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> {st.session_state["current_qa"]["answer"]}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="assistant-message">Select a question and click Submit, or click on a previous question from the list.</div>', unsafe_allow_html=True)
+    # Display only the current Q&A
+    with right_col_container.container():
+        if st.session_state['current_qa']['question']:
+            # Display the question
+            st.markdown(f'<div class="user-message"><strong>Question:</strong> {st.session_state["current_qa"]["question"]}</div>', unsafe_allow_html=True)
+            
+            # Display the section info if available
+            if st.session_state['current_qa']['section'] and st.session_state['current_qa']['section'] != "All Sections":
+                section = st.session_state['current_qa']['section']
+                section_description = section_mapping.get(section, "")
+                st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
+            
+            # Display the answer
+            st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> {st.session_state["current_qa"]["answer"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="assistant-message">Select a question and click Submit, or click on a previous question from the list.</div>', unsafe_allow_html=True)
 
 # Process new submission
 if submit_clicked:
@@ -293,18 +294,22 @@ if submit_clicked:
     if selected_question == "Other...":
         st.session_state['custom_question'] = ''
     
-    # Display the answer in col2 immediately
+    # Display the answer in col2 immediately after submission
     with col2:
-        # Display the question
-        st.markdown(f'<div class="user-message"><strong>Question:</strong> {question}</div>', unsafe_allow_html=True)
+        # Clear any previous content and create a fresh container
+        right_col_container = st.empty()
         
-        # Display the section info if available
-        if selected_section and selected_section != "All Sections":
-            section_description = section_mapping.get(selected_section, "")
-            st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
-        
-        # Display the answer
-        st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> {final_answer}</div>', unsafe_allow_html=True)
+        with right_col_container.container():
+            # Display the question
+            st.markdown(f'<div class="user-message"><strong>Question:</strong> {question}</div>', unsafe_allow_html=True)
+            
+            # Display the section info if available
+            if selected_section and selected_section != "All Sections":
+                section_description = section_mapping.get(selected_section, "")
+                st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
+            
+            # Display the answer
+            st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> {final_answer}</div>', unsafe_allow_html=True)
         
     # Use rerun only if we need to update the UI elements outside of col2
     # st.rerun()
