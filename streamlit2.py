@@ -1,12 +1,18 @@
 import streamlit as st
 import json
 import os
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 # File paths
 DATA_PATH = "path/to/data"  # Adjust as needed
 context_json_file_path = os.path.join(DATA_PATH, "context")
 consolidated_ans_json_file_path = os.path.join(DATA_PATH, "consolidated")
+
+# Function to get latest regulation data (placeholder - implement your actual function)
+def get_latest_regulation_data():
+    # Your implementation here
+    return datetime.now().strftime("%Y-%m-%d")
 
 # Load section mapping (assuming this function is defined elsewhere)
 # section_mapping = build_ecfr_section_mapping(ecfr_data)
@@ -58,8 +64,12 @@ if 'previous_questions' not in st.session_state:
     st.session_state['previous_questions'] = []
 if 'previous_qa_pairs' not in st.session_state:
     st.session_state['previous_qa_pairs'] = {}  # Dictionary to store question-answer pairs
-if 'last_selected_question' not in st.session_state:
-    st.session_state['last_selected_question'] = None
+if 'current_qa' not in st.session_state:
+    st.session_state['current_qa'] = {"question": "", "answer": "", "section": "", "is_previous": False}
+if 'regulation_date' not in st.session_state:
+    st.session_state['regulation_date'] = "2025-03-06"  # Default date
+if 'streaming' not in st.session_state:
+    st.session_state['streaming'] = False
 
 # Add default questions to the list of available questions
 default_question_options = [
@@ -74,41 +84,125 @@ def find_best_match(question, data):
     # Implement your matching logic here
     return None
 
+# Custom CSS for the layout
+st.markdown("""
+<style>
+    .main-container {
+        display: flex;
+        flex-direction: row;
+    }
+    .stButton {
+        margin-bottom: 5px;
+    }
+    .stButton button {
+        width: 100%;
+        text-align: left;
+        padding: 8px;
+        border-radius: 4px;
+        background-color: #f8f9fa;
+        border: 1px solid #eee;
+    }
+    .stButton button:hover {
+        background-color: #f0f0f0;
+    }
+    .stButton button[data-active="true"] {
+        background-color: #e6f3ff;
+        border-left: 3px solid #2e74b5;
+    }
+    .scrollable-column {
+        height: 80vh;
+        overflow-y: auto;
+    }
+    .date-display {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 5px;
+        margin-bottom: 15px;
+    }
+    .user-message {
+        background-color: #f1f1f1;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 10px;
+    }
+    .assistant-message {
+        background-color: #e6f7ff;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+    .assistant-message-previous {
+        background-color: #e6f7ff;
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        opacity: 0.7;
+    }
+    .section-info {
+        font-style: italic;
+        margin: 5px 0;
+        color: #555;
+    }
+    @keyframes typing {
+        from { width: 0 }
+        to { width: 100% }
+    }
+    .typing-animation {
+        display: inline-block;
+        overflow: hidden;
+        white-space: nowrap;
+        animation: typing 1.5s steps(40, end);
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Main UI
-st.title("Regulation As of 2025-03-06")
+st.title("Regulation K Interpreter")
 
-# Create two columns
-col1, col2 = st.columns([1, 2])
+# Create two columns with custom widths
+col1, col2 = st.columns([3, 7])
 
-# Left column for selection and inputs
+# Add scrolling to col2
+st.markdown("""
+<style>
+    [data-testid="column"]:nth-of-type(2) {
+        height: 80vh;
+        overflow-y: auto;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Function to handle question click
+def handle_question_click(idx):
+    if idx < len(st.session_state['previous_questions']):
+        question = st.session_state['previous_questions'][idx]
+        if question in st.session_state['previous_qa_pairs']:
+            qa_pair = st.session_state['previous_qa_pairs'][question]
+            st.session_state['current_qa'] = {
+                "question": question,
+                "answer": qa_pair['answer'],
+                "section": qa_pair['section'],
+                "is_previous": True  # Mark this as a previous answer
+            }
+
+# Left column for selections and history
 with col1:
-    selected_regulation = st.selectbox("Select a regulation", ["Regulation k"], index=0)
-
+    selected_regulation = st.selectbox("Select a regulation", ["Regulation K"], index=0)
+    
+    # Button to get latest regulation data
+    if st.button("Get Latest Data"):
+        st.session_state['regulation_date'] = get_latest_regulation_data()
+    
+    # Display regulation date
+    st.markdown(f'<div class="date-display">As of: {st.session_state["regulation_date"]}</div>', unsafe_allow_html=True)
+    
     sections = list(context.keys())
     selected_section = st.selectbox("Select query scope", ["All Sections"] + sections, index=0)
     
     # Combine default questions with previous questions from this session
-    # Make sure we don't have duplicates
     all_questions = default_question_options.copy()
-    for prev_q in st.session_state['previous_questions']:
-        if prev_q not in all_questions and prev_q != "Other...":
-            all_questions.insert(-1, prev_q)  # Insert before "Other..."
     
-    # Question selection with callback
-    def on_question_select():
-        # Update the last selected question to detect changes
-        st.session_state['last_selected_question'] = selected_question
-        
-    selected_question = st.selectbox(
-        "Select a question", 
-        all_questions, 
-        index=0,
-        on_change=on_question_select,
-        key="question_selector"
-    )
-    
-    # Check if user selected a previously asked question
-    is_previous_question = selected_question in st.session_state['previous_qa_pairs']
+    selected_question = st.selectbox("Select a question", all_questions, index=0)
     
     if selected_question == "Other...":
         st.session_state['custom_question'] = st.text_input("Enter your question", value=st.session_state['custom_question'])
@@ -121,126 +215,133 @@ with col1:
     # Submit button
     submit_clicked = st.button("Submit", key="submit_button", disabled=submit_button_disabled)
     
-    # Show additional info for previous questions
-    if is_previous_question and not submit_clicked:
-        st.info("This question has been answered before. You can view the previous answer in the chat history or submit again for a fresh response.")
-
-# Right column for chat history and answers
-with col2:
-    # Create two containers: one for current Q&A and one for history
-    current_qa_container = st.container()
+    # History section
+    st.markdown("### Previous Questions")
     
-    st.markdown("### Previous Conversations")
-    # Create a container with fixed height and scrolling for chat history
-    chat_history_container = st.container()
-    
-    # Apply custom CSS for the scrollable container
-    st.markdown("""
-        <style>
-        .history-container {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #f0f0f0;
-            border-radius: 5px;
-            padding: 10px;
-            margin-bottom: 20px;
-            background-color: #f9f9f9;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-    
-    # Wrap the history container in a div with the custom class
-    st.markdown('<div class="history-container">', unsafe_allow_html=True)
-    
-    # Display chat history in reverse order (most recent last)
-    # We'll skip the most recent Q&A pair if it's not marked as previous
-    history_to_display = []
-    i = 0
-    while i < len(st.session_state['chat_history']):
-        if i < len(st.session_state['chat_history']) - 2:  # Check if we're not at the last pair
-            history_to_display.append(st.session_state['chat_history'][i])
-            history_to_display.append(st.session_state['chat_history'][i+1])
-        i += 2  # Move to the next Q&A pair
-    
-    for msg in history_to_display:
-        with st.chat_message(msg['role']):
-            st.write(msg['content'])
-    
-    # Close the container div
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# Check if a previously answered question was selected
-if selected_question in st.session_state['previous_qa_pairs'] and selected_question != st.session_state.get('last_selected_question'):
-    # Retrieve previous answer
-    previous_pair = st.session_state['previous_qa_pairs'][selected_question]
-    question = selected_question
-    
-    with col2:
-        with current_qa_container:
-            st.markdown("### Current Question & Answer")
-            with st.chat_message("user"):
-                st.write(question)
+    # Display previous questions as clickable items
+    if st.session_state['previous_questions']:
+        st.markdown("### Previous Questions")
+        
+        for i, prev_q in enumerate(st.session_state['previous_questions']):
+            # Check if this is the current question being displayed
+            is_active = st.session_state['current_qa'].get('question') == prev_q
             
-            with st.chat_message("assistant"):
-                st.write(previous_pair['answer'])
-                st.caption("Previous answer - Select the question and press Submit to regenerate")
+            # Create a unique key for each question button using index
+            question_key = f"question_btn_{i}"
+            
+            # Use a button with the question text
+            if st.button(
+                prev_q, 
+                key=question_key,
+                help="Click to view this previous question and answer",
+                use_container_width=True
+            ):
+                handle_question_click(i)
+
+# Right column for displaying the current Q&A
+with col2:
+    # Clear any previous content
+    right_col_container = st.empty()
     
-    # Add to chat history without duplicating in QA data
-    st.session_state['chat_history'].append({"role": "user", "content": question})
-    st.session_state['chat_history'].append({
-        "role": "assistant", 
-        "content": previous_pair['answer'],
-        "is_previous": True
-    })
-    
-    # Update last selected question to prevent retriggering
-    st.session_state['last_selected_question'] = selected_question
+    # Display only the current Q&A
+    with right_col_container.container():
+        if st.session_state['current_qa']['question']:
+            # Display the question
+            st.markdown(f'<div class="user-message"><strong>Question:</strong> {st.session_state["current_qa"]["question"]}</div>', unsafe_allow_html=True)
+            
+            # Display the section info if available
+            if st.session_state['current_qa']['section'] and st.session_state['current_qa']['section'] != "All Sections":
+                section = st.session_state['current_qa']['section']
+                section_description = section_mapping.get(section, "")
+                st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
+            
+            # Display the answer with appropriate styling based on whether it's a previous answer
+            is_previous = st.session_state['current_qa'].get('is_previous', False)
+            answer_class = "assistant-message-previous" if is_previous else "assistant-message"
+            
+            if is_previous:
+                # For previous answers, show with translucent styling
+                st.markdown(f'<div class="{answer_class}"><strong>Answer:</strong> {st.session_state["current_qa"]["answer"]}</div>', unsafe_allow_html=True)
+            else:
+                # For new answers, show with typing animation
+                st.markdown(f'<div class="{answer_class}"><strong>Answer:</strong> <span class="typing-animation">{st.session_state["current_qa"]["answer"]}</span></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="assistant-message">Select a question and click Submit, or click on a previous question from the list.</div>', unsafe_allow_html=True)
 
 # Process new submission
-elif submit_clicked:
+if submit_clicked:
+    # Set streaming flag to true
+    st.session_state['streaming'] = True
+    
+    # First show the question and a placeholder for the answer
+    with col2:
+        # Clear any previous content and create a fresh container
+        right_col_container = st.empty()
+        
+        with right_col_container.container():
+            # Display the question
+            st.markdown(f'<div class="user-message"><strong>Question:</strong> {question}</div>', unsafe_allow_html=True)
+            
+            # Display the section info if available
+            if selected_section and selected_section != "All Sections":
+                section_description = section_mapping.get(selected_section, "")
+                st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
+            
+            # Show a placeholder for the incoming answer
+            answer_placeholder = st.empty()
+            answer_placeholder.markdown('<div class="assistant-message"><strong>Answer:</strong> <span class="typing-animation">Generating answer...</span></div>', unsafe_allow_html=True)
+    
+    # Show a spinner while generating the answer
+    with st.spinner(f"Interpreting section: {selected_section} {section_mapping.get(selected_section, '') if selected_section != 'All Sections' else ''} of eCFR"):
+        if selected_section == "All Sections":
+            answer = find_best_match(question, consolidated_data)
+            if answer:
+                final_answer = answer
+            else:
+                section_answers = []
+                for section, section_content in context.items():
+                    # Get section description
+                    section_description = section_mapping.get(section, "")
+                    with st.spinner(f"Interpreting section: {section} {section_description} of eCFR"):
+                        answers_for_section = llm_processor.answer_from_sections(section_content, [question])
+                        if answers_for_section:
+                            section_answers.append(answers_for_section[0])
+                if section_answers:
+                    final_answer = llm_processor.consolidator(question, section_answers)
+                else:
+                    final_answer = "No answers found from any section."
+        else:
+            final_answer = llm_processor.answer_from_sections(context[selected_section], [question])[0]
+    
+    # Update the answer with the final result
+    with right_col_container.container():
+        # Display the question again
+        st.markdown(f'<div class="user-message"><strong>Question:</strong> {question}</div>', unsafe_allow_html=True)
+        
+        # Display the section info if available
+        if selected_section and selected_section != "All Sections":
+            section_description = section_mapping.get(selected_section, "")
+            st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
+        
+        # Display the answer with typing animation
+        st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> <span class="typing-animation">{final_answer}</span></div>', unsafe_allow_html=True)
+    
     # Add question to the previous questions list if it's not already there and not "Other..."
     if question and question != "Other..." and question not in st.session_state['previous_questions']:
         st.session_state['previous_questions'].append(question)
-    
-    with col2:
-        with current_qa_container:
-            st.markdown("### Current Question & Answer")
-            with st.chat_message("user"):
-                st.write(question)
-            
-            # Show a spinner while generating the answer
-            with st.spinner(f"Interpreting section: {selected_section} {section_mapping.get(selected_section, '') if selected_section != 'All Sections' else ''} of eCFR"):
-                if selected_section == "All Sections":
-                    answer = find_best_match(question, consolidated_data)
-                    if answer:
-                        final_answer = answer
-                    else:
-                        section_answers = []
-                        for section, section_content in context.items():
-                            # Get section description
-                            section_description = section_mapping.get(section, "")
-                            with st.spinner(f"Interpreting section: {section} {section_description} of eCFR"):
-                                answers_for_section = llm_processor.answer_from_sections(section_content, [question])
-                                if answers_for_section:
-                                    section_answers.append(answers_for_section[0])
-                        if section_answers:
-                            final_answer = llm_processor.consolidator(question, section_answers)
-                        else:
-                            final_answer = "No answers found from any section."
-                else:
-                    final_answer = llm_processor.answer_from_sections(context[selected_section], [question])[0]
-            
-            with st.chat_message("assistant"):
-                st.write(final_answer)
-    
-    # Update session state
-    st.session_state['chat_history'].append({"role": "user", "content": question})
-    st.session_state['chat_history'].append({"role": "assistant", "content": final_answer})
     
     # Store in previous QA pairs dictionary
     st.session_state['previous_qa_pairs'][question] = {
         "section": selected_section,
         "answer": final_answer
+    }
+    
+    # Update current QA
+    st.session_state['current_qa'] = {
+        "question": question,
+        "answer": final_answer,
+        "section": selected_section,
+        "is_previous": False  # This is a new answer
     }
     
     # Save to QA data
@@ -256,7 +357,27 @@ elif submit_clicked:
     if selected_question == "Other...":
         st.session_state['custom_question'] = ''
     
-    # Update last selected question
-    st.session_state['last_selected_question'] = selected_question
-    
-    # No need to force rerun as we're handling the display directly
+    # Reset streaming flag
+    st.session_state['streaming'] = False
+        
+    # Use rerun only if we need to update the UI elements outside of col2
+    # st.rerun()
+
+# Remove JavaScript which is not needed with the new button approach
+# st.markdown("""
+# <script>
+#     document.addEventListener('DOMContentLoaded', function() {
+#         const historyItems = document.querySelectorAll('.history-item');
+#         historyItems.forEach(item => {
+#             item.addEventListener('click', function() {
+#                 const questionId = this.id;
+#                 // Use Streamlit's postMessage to communicate with Python
+#                 window.parent.postMessage({
+#                     type: 'streamlit:setComponentValue',
+#                     value: questionId
+#                 }, '*');
+#             });
+#         });
+#     });
+# </script>
+# """, unsafe_allow_html=True)
