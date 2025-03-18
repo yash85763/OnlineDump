@@ -68,8 +68,6 @@ if 'current_qa' not in st.session_state:
     st.session_state['current_qa'] = {"question": "", "answer": "", "section": "", "is_previous": False}
 if 'regulation_date' not in st.session_state:
     st.session_state['regulation_date'] = "2025-03-06"  # Default date
-if 'streaming' not in st.session_state:
-    st.session_state['streaming'] = False
 
 # Add default questions to the list of available questions
 default_question_options = [
@@ -119,39 +117,66 @@ st.markdown("""
         margin-top: 5px;
         margin-bottom: 15px;
     }
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
     .user-message {
-        background-color: #f1f1f1;
-        padding: 10px;
-        border-radius: 5px;
+        display: flex;
+        align-items: flex-start;
         margin-bottom: 10px;
     }
     .assistant-message {
-        background-color: #e6f7ff;
-        padding: 10px;
-        border-radius: 5px;
+        display: flex;
+        align-items: flex-start;
         margin-bottom: 20px;
     }
     .assistant-message-previous {
-        background-color: #e6f7ff;
-        padding: 10px;
-        border-radius: 5px;
+        display: flex;
+        align-items: flex-start;
         margin-bottom: 20px;
         opacity: 0.7;
     }
+    .user-icon {
+        background-color: #6c757d;
+        color: white;
+        border-radius: 50%;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 10px;
+        flex-shrink: 0;
+    }
+    .bot-icon {
+        background-color: #0d6efd;
+        color: white;
+        border-radius: 50%;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 10px;
+        flex-shrink: 0;
+    }
+    .message-content {
+        padding: 10px;
+        border-radius: 5px;
+        max-width: calc(100% - 50px);
+    }
+    .user-message .message-content {
+        background-color: #f1f1f1;
+    }
+    .assistant-message .message-content, .assistant-message-previous .message-content {
+        background-color: #e6f7ff;
+    }
     .section-info {
         font-style: italic;
-        margin: 5px 0;
+        margin: 5px 0 15px 42px;
         color: #555;
-    }
-    @keyframes typing {
-        from { width: 0 }
-        to { width: 100% }
-    }
-    .typing-animation {
-        display: inline-block;
-        overflow: hidden;
-        white-space: nowrap;
-        animation: typing 1.5s steps(40, end);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -162,12 +187,16 @@ st.title("Regulation K Interpreter")
 # Create two columns with custom widths
 col1, col2 = st.columns([3, 7])
 
-# Add scrolling to col2
+# Add scrolling to col2 and ensure content doesn't compound
 st.markdown("""
 <style>
     [data-testid="column"]:nth-of-type(2) {
         height: 80vh;
         overflow-y: auto;
+    }
+    /* Clear all contents in the right column on rerun */
+    [data-testid="column"]:nth-of-type(2) > div {
+        height: auto !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -240,14 +269,24 @@ with col1:
 
 # Right column for displaying the current Q&A
 with col2:
-    # Clear any previous content
-    right_col_container = st.empty()
+    # Use st.empty() to completely replace previous content
+    right_col = st.empty()
     
-    # Display only the current Q&A
-    with right_col_container.container():
+    # Reset all content in the right column
+    with right_col.container():
         if st.session_state['current_qa']['question']:
-            # Display the question
-            st.markdown(f'<div class="user-message"><strong>Question:</strong> {st.session_state["current_qa"]["question"]}</div>', unsafe_allow_html=True)
+            # Display only the current Q&A in chat format with icons
+            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+            
+            # Question with user icon
+            st.markdown(f'''
+            <div class="user-message">
+                <div class="user-icon">👤</div>
+                <div class="message-content">
+                    {st.session_state["current_qa"]["question"]}
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
             
             # Display the section info if available
             if st.session_state['current_qa']['section'] and st.session_state['current_qa']['section'] != "All Sections":
@@ -255,42 +294,35 @@ with col2:
                 section_description = section_mapping.get(section, "")
                 st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
             
-            # Display the answer with appropriate styling based on whether it's a previous answer
+            # Answer with bot icon
             is_previous = st.session_state['current_qa'].get('is_previous', False)
-            answer_class = "assistant-message-previous" if is_previous else "assistant-message"
+            message_class = "assistant-message-previous" if is_previous else "assistant-message"
             
-            if is_previous:
-                # For previous answers, show with translucent styling
-                st.markdown(f'<div class="{answer_class}"><strong>Answer:</strong> {st.session_state["current_qa"]["answer"]}</div>', unsafe_allow_html=True)
-            else:
-                # For new answers, show with typing animation
-                st.markdown(f'<div class="{answer_class}"><strong>Answer:</strong> <span class="typing-animation">{st.session_state["current_qa"]["answer"]}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'''
+            <div class="{message_class}">
+                <div class="bot-icon">🤖</div>
+                <div class="message-content">
+                    {st.session_state["current_qa"]["answer"]}
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="assistant-message">Select a question and click Submit, or click on a previous question from the list.</div>', unsafe_allow_html=True)
+            # Initial message
+            st.markdown('''
+            <div class="chat-container">
+                <div class="assistant-message">
+                    <div class="bot-icon">🤖</div>
+                    <div class="message-content">
+                        Select a question and click Submit, or click on a previous question from the list.
+                    </div>
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
 
 # Process new submission
 if submit_clicked:
-    # Set streaming flag to true
-    st.session_state['streaming'] = True
-    
-    # First show the question and a placeholder for the answer
-    with col2:
-        # Clear any previous content and create a fresh container
-        right_col_container = st.empty()
-        
-        with right_col_container.container():
-            # Display the question
-            st.markdown(f'<div class="user-message"><strong>Question:</strong> {question}</div>', unsafe_allow_html=True)
-            
-            # Display the section info if available
-            if selected_section and selected_section != "All Sections":
-                section_description = section_mapping.get(selected_section, "")
-                st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
-            
-            # Show a placeholder for the incoming answer
-            answer_placeholder = st.empty()
-            answer_placeholder.markdown('<div class="assistant-message"><strong>Answer:</strong> <span class="typing-animation">Generating answer...</span></div>', unsafe_allow_html=True)
-    
     # Show a spinner while generating the answer
     with st.spinner(f"Interpreting section: {selected_section} {section_mapping.get(selected_section, '') if selected_section != 'All Sections' else ''} of eCFR"):
         if selected_section == "All Sections":
@@ -312,19 +344,6 @@ if submit_clicked:
                     final_answer = "No answers found from any section."
         else:
             final_answer = llm_processor.answer_from_sections(context[selected_section], [question])[0]
-    
-    # Update the answer with the final result
-    with right_col_container.container():
-        # Display the question again
-        st.markdown(f'<div class="user-message"><strong>Question:</strong> {question}</div>', unsafe_allow_html=True)
-        
-        # Display the section info if available
-        if selected_section and selected_section != "All Sections":
-            section_description = section_mapping.get(selected_section, "")
-            st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
-        
-        # Display the answer with typing animation
-        st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> <span class="typing-animation">{final_answer}</span></div>', unsafe_allow_html=True)
     
     # Add question to the previous questions list if it's not already there and not "Other..."
     if question and question != "Other..." and question not in st.session_state['previous_questions']:
@@ -356,9 +375,10 @@ if submit_clicked:
     # Clear custom question if it was used
     if selected_question == "Other...":
         st.session_state['custom_question'] = ''
-    
-    # Reset streaming flag
-    st.session_state['streaming'] = False
+        
+    # Display the answer in col2 immediately after submission
+    # Use st.rerun() to ensure the display is updated correctly
+    st.rerun()
         
     # Use rerun only if we need to update the UI elements outside of col2
     # st.rerun()
