@@ -17,17 +17,16 @@ def get_latest_regulation_data():
     return datetime.now().strftime("%Y-%m-%d")
 
 # Helper function to process a single section with the LLM
-def process_section(section, section_content, question, section_mapping):
-    section_description = section_mapping.get(section, "")
+def process_section(section, section_content, question):
     try:
-        with st.spinner(f"Interpreting section: {section} {section_description} of eCFR"):
-            answers = llm_processor.answer_from_sections(section_content, [question])
-            if answers and len(answers) > 0:
-                return answers[0]
-            return None
+        # Don't use st.spinner in threads since it requires the Streamlit context
+        answers = llm_processor.answer_from_sections(section_content, [question])
+        if answers and len(answers) > 0:
+            return section, answers[0]
+        return section, None
     except Exception as e:
-        st.error(f"Error processing section {section}: {e}")
-        return None
+        # Return the error instead of showing it directly
+        return section, f"Error: {str(e)}"
 
 # Load section mapping (assuming this function is defined elsewhere)
 # section_mapping = build_ecfr_section_mapping(ecfr_data)
@@ -344,27 +343,41 @@ if submit_clicked:
             else:
                 # Use concurrent processing for all sections
                 section_answers = []
+                section_errors = []
                 
-                # Create a partial function with fixed parameters
-                process_func = partial(process_section, question=question, section_mapping=section_mapping)
-                
-                # Use ThreadPoolExecutor to run LLM calls in parallel
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    # Submit all section processing tasks
-                    future_to_section = {
-                        executor.submit(process_func, section, section_content): section 
-                        for section, section_content in context.items()
-                    }
+                # Show overall progress
+                with st.spinner(f"Processing all sections in parallel..."):
+                    # Create a simplified function with necessary parameters
+                    process_func = partial(process_section, question=question)
                     
-                    # Collect results as they complete
-                    for future in concurrent.futures.as_completed(future_to_section):
-                        section = future_to_section[future]
-                        try:
-                            result = future.result()
-                            if result:
-                                section_answers.append(result)
-                        except Exception as exc:
-                            st.error(f"Section {section} generated an exception: {exc}")
+                    # Use ThreadPoolExecutor to run LLM calls in parallel
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        # Submit all section processing tasks
+                        future_to_section = {
+                            executor.submit(process_func, section, section_content): section 
+                            for section, section_content in context.items()
+                        }
+                        
+                        # Collect results as they complete
+                        for future in concurrent.futures.as_completed(future_to_section):
+                            try:
+                                section, result = future.result()
+                                if result:
+                                    if isinstance(result, str) and result.startswith("Error:"):
+                                        section_errors.append(f"Section {section}: {result}")
+                                    else:
+                                        section_answers.append(result)
+                                        st.success(f"✅ Processed section {section}")
+                                else:
+                                    st.info(f"ℹ️ No answer from section {section}")
+                            except Exception as exc:
+                                st.error(f"❌ Section processing failed: {exc}")
+                
+                # Display any errors that occurred
+                if section_errors:
+                    st.error("Some sections failed to process:")
+                    for error in section_errors:
+                        st.error(error)
                 
                 if section_answers:
                     final_answer = llm_processor.consolidator(question, section_answers)
@@ -373,11 +386,12 @@ if submit_clicked:
         else:
             # Make sure we have a valid response from the LLM
             try:
-                answers = llm_processor.answer_from_sections(context[selected_section], [question])
-                if answers and len(answers) > 0:
-                    final_answer = answers[0]
-                else:
-                    final_answer = "No answer was generated for this question. Please try rephrasing it."
+                with st.spinner(f"Processing section {selected_section}..."):
+                    answers = llm_processor.answer_from_sections(context[selected_section], [question])
+                    if answers and len(answers) > 0:
+                        final_answer = answers[0]
+                    else:
+                        final_answer = "No answer was generated for this question. Please try rephrasing it."
             except Exception as e:
                 st.error(f"Error processing question: {e}")
                 final_answer = "An error occurred while processing your question. Please try again."
