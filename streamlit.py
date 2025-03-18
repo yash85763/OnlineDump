@@ -1,43 +1,22 @@
 import streamlit as st
 import json
 import os
-import re
-from utils.llm_processor import LLMProcessor
-from ecfr_api_wrapper import ECFRAPIWrapper
-from utils.configuration import (
-    DATA_PATH,
-    client_id,
-    client_secret,
-    rai_base_url,
-    base_url,
-    PROXIES,
-    context_json_file_path,
-    consolidated_ans_json_file_path,
-    results_path_ext_cont
-)
+from typing import List, Dict, Any, Optional
 
-# Initialize LLMProcessor and ECFRAPIWrapper
-llm_processor = LLMProcessor(
-    rai_base_url,
-    client_secret,
-    client_id
-)
+# File paths
+DATA_PATH = "path/to/data"  # Adjust as needed
+context_json_file_path = os.path.join(DATA_PATH, "context")
+consolidated_ans_json_file_path = os.path.join(DATA_PATH, "consolidated")
 
-api = ECFRAPIWrapper(
-    base_url=base_url,
-    client_secret=client_secret,
-    client_id=client_id,
-    rai_base_url=rai_base_url,
-    proxies=PROXIES
-)
+# Load section mapping (assuming this function is defined elsewhere)
+# section_mapping = build_ecfr_section_mapping(ecfr_data)
 
-# Load the context data
+# Load context data
 with open(os.path.join(context_json_file_path, 'context.json'), 'r') as f:
     context = json.load(f)
 
-# Load the Consolidated data
+# Load consolidated data with error handling
 consolidated_data_file = os.path.join(consolidated_ans_json_file_path, 'consolidated_data.json')
-
 if not os.path.exists(consolidated_data_file):
     with open(consolidated_data_file, 'w') as f:
         json.dump([], f)
@@ -48,13 +27,12 @@ else:
             consolidated_data = json.load(f)
             if not isinstance(consolidated_data, list):
                 raise ValueError("Invalid JSON format: Root element must be a list")
-    except (json.JSONDecodeError, ValueError) as e:
+    except (json.JsonDecodeError, ValueError) as e:
         st.error(f"Error loading consolidated data: {e}")
         consolidated_data = []
 
-# Load the QA data
+# Load QA data similarly
 qa_data_file = os.path.join(DATA_PATH, 'qa_new_data.json')
-
 if not os.path.exists(qa_data_file):
     with open(qa_data_file, 'w') as f:
         json.dump([], f)
@@ -65,174 +43,191 @@ else:
             qa_data = json.load(f)
             if not isinstance(qa_data, list):
                 raise ValueError("Invalid JSON format: Root element must be a list")
-    except (json.JSONDecodeError, ValueError) as e:
+    except (json.JsonDecodeError, ValueError) as e:
         st.error(f"Error loading QA data: {e}")
         qa_data = []
 
-# Function to parse citations and convert them to eCFR links
-def format_answer_with_links(answer, title="12", part="211"):
-    """
-    Parse citations like [211.1] or [211.2(a)] in the answer and replace them with eCFR links.
-    
-    Args:
-        answer (str): The answer string containing citations.
-        title (str): The eCFR title (default: "12").
-        part (str): The eCFR part (default: "211").
-    
-    Returns:
-        str: The answer with citations replaced by Markdown links.
-    """
-    # Regular expression to match citations like [211.1] or [211.2(a)]
-    citation_pattern = r'\[(\d+\.\d+(?:\([a-zA-Z0-9]+\))?(?:,\s*\d+\.\d+(?:\([a-zA-Z0-9]+\))?)*)\]'
-    
-    def create_link(match):
-        # Extract the citation text (e.g., "211.1" or "211.2(a)")
-        citation_group = match.group(1)
-        citations = citation_group.split(", ")  # Handle multiple citations like [211.1, 211.2]
-        
-        links = []
-        for citation in citations:
-            # Split into section and subsection (if any)
-            if "(" in citation:
-                section, subsection = citation.split("(")
-                subsection = subsection.rstrip(")")
-                section_url = f"{section}#{section}({subsection})"
-            else:
-                section = citation
-                section_url = section
-            
-            # Construct the eCFR URL
-            ecfr_url = f"https://www.ecfr.gov/current/title-{title}/part-{part}/section-{section_url}"
-            # Create a Markdown link
-            link = f"[{citation}]({ecfr_url})"
-            links.append(link)
-        
-        # Join multiple links with commas
-        return ", ".join(links)
-    
-    # Replace all citations with links
-    formatted_answer = re.sub(citation_pattern, create_link, answer)
-    return formatted_answer
-
-# Create a Streamlit app
-st.title("Regulation Assistant: As of 2025-03-06")
-
-# Create a session state to store the chat history
+# Initialize session state
 if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-
-# Create a dropdown menu to select the regulation
-selected_regulation = st.selectbox("Select a regulation", ["Regulation k"], index=0)
-
-# Create a dropdown menu to select the section
-sections = list(context.keys())
-selected_section = st.selectbox("Select query scope", ["ALL Sections"] + sections, index=0)
-
-# Initialize session state for the user question
+    st.session_state['chat_history'] = []
 if 'custom_question' not in st.session_state:
-    st.session_state.custom_question = ''
-
-# Initialize session state for the submit button
+    st.session_state['custom_question'] = ''
 if 'submit_button_disabled' not in st.session_state:
-    st.session_state.submit_button_disabled = True
+    st.session_state['submit_button_disabled'] = True
+if 'previous_questions' not in st.session_state:
+    st.session_state['previous_questions'] = []
+if 'previous_qa_pairs' not in st.session_state:
+    st.session_state['previous_qa_pairs'] = {}  # Dictionary to store question-answer pairs
+if 'last_selected_question' not in st.session_state:
+    st.session_state['last_selected_question'] = None
 
-# Predefined questions
-question_options = [
-    'What does this regulation require our bank to do?',
-    'What does this regulation prohibit our bank from doing?',
-    'What does this regulation permit our bank to do? (drawing a distinction here between something that is permitted vs. other...)',
+# Add default questions to the list of available questions
+default_question_options = [
+    'What does this regulation require our bank to do?', 
+    'What does this regulation prohibit our bank from doing?', 
+    'What does this regulation permit our bank to do? (drawing a distinction here between something that is permitted vs. other...)', 
     'Other...'
 ]
 
-selected_question = st.selectbox(
-    'Select a question',
-    question_options,
-    index=0  # Default to first option
-)
+# Function to find best match (placeholder)
+def find_best_match(question, data):
+    # Implement your matching logic here
+    return None
 
-if selected_question == 'Other...':
-    st.session_state.custom_question = st.text_input(
-        'Enter your question',
-        value=st.session_state.custom_question
+# Main UI
+st.title("Regulation As of 2025-03-06")
+
+# Create two columns
+col1, col2 = st.columns([1, 2])
+
+# Left column for selection and inputs
+with col1:
+    selected_regulation = st.selectbox("Select a regulation", ["Regulation k"], index=0)
+
+    sections = list(context.keys())
+    selected_section = st.selectbox("Select query scope", ["All Sections"] + sections, index=0)
+    
+    # Combine default questions with previous questions from this session
+    # Make sure we don't have duplicates
+    all_questions = default_question_options.copy()
+    for prev_q in st.session_state['previous_questions']:
+        if prev_q not in all_questions and prev_q != "Other...":
+            all_questions.insert(-1, prev_q)  # Insert before "Other..."
+    
+    # Question selection with callback
+    def on_question_select():
+        # Update the last selected question to detect changes
+        st.session_state['last_selected_question'] = selected_question
+        
+    selected_question = st.selectbox(
+        "Select a question", 
+        all_questions, 
+        index=0,
+        on_change=on_question_select,
+        key="question_selector"
     )
-
-    if not st.session_state.custom_question:
-        st.warning('Please enter your question or select a predefined one')
-        st.session_state.submit_button_disabled = True
-        st.stop()
+    
+    # Check if user selected a previously asked question
+    is_previous_question = selected_question in st.session_state['previous_qa_pairs']
+    
+    if selected_question == "Other...":
+        st.session_state['custom_question'] = st.text_input("Enter your question", value=st.session_state['custom_question'])
+        question = st.session_state['custom_question'] if st.session_state['custom_question'] else None
     else:
-        question = st.session_state.custom_question
-        st.session_state.submit_button_disabled = False
-else:
+        question = selected_question
+    
+    submit_button_disabled = False if question else True
+    
+    # Submit button
+    submit_clicked = st.button("Submit", key="submit_button", disabled=submit_button_disabled)
+    
+    # Show additional info for previous questions
+    if is_previous_question and not submit_clicked:
+        st.info("This question has been answered before. You can view the previous answer in the chat history or submit again for a fresh response.")
+
+# Right column for chat history and answers
+with col2:
+    # Create a container with fixed height and scrolling
+    chat_container = st.container()
+    
+    # Apply some custom CSS for scrolling
+    st.markdown("""
+        <style>
+        .stContainer {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    with chat_container:
+        # Display chat history
+        for msg in st.session_state['chat_history']:
+            with st.chat_message(msg['role']):
+                st.write(msg['content'])
+
+# Check if a previously answered question was selected
+if selected_question in st.session_state['previous_qa_pairs'] and selected_question != st.session_state.get('last_selected_question'):
+    # Retrieve previous answer
+    previous_pair = st.session_state['previous_qa_pairs'][selected_question]
     question = selected_question
-    st.session_state.submit_button_disabled = False
+    
+    with col2:
+        with st.chat_message("user"):
+            st.write(question)
+        
+        with st.chat_message("assistant"):
+            st.write(previous_pair['answer'])
+            st.caption("Previous answer - Select the question and press Submit to regenerate")
+    
+    # Add to chat history without duplicating in QA data
+    st.session_state['chat_history'].append({"role": "user", "content": question})
+    st.session_state['chat_history'].append({
+        "role": "assistant", 
+        "content": previous_pair['answer'],
+        "is_previous": True
+    })
+    
+    # Update last selected question to prevent retriggering
+    st.session_state['last_selected_question'] = selected_question
 
-# Function to find the best-matching question in consolidated_data
-def find_best_match(user_question, consolidated_data):
-    for qa in consolidated_data:
-        if qa["question"].strip().lower() == user_question.strip().lower():
-            return qa["answer"]
-    return None  # Return None if no exact match is found
-
-# Create a button to submit the question
-if st.button("Submit", key="submit_button", disabled=st.session_state.submit_button_disabled):
-    with st.spinner("Processing your question..."):
-        final_answer = None
-        if selected_section == "ALL Sections":
-            # Check if the question exists in consolidated_data
-            answer = find_best_match(question, consolidated_data)
-            if answer:
-                final_answer = answer
-            else:
-                # Process each section individually to avoid context length issues
-                section_answers = []
-                for section, section_content in context.items():
-                    answers_for_section = llm_processor.answer_from_sections(section_content, [question])
-                    if answers_for_section:
-                        section_answers.append(answers_for_section[0])
-                
-                # Consolidate the answers from all sections
-                if section_answers:
-                    final_answer = llm_processor.consolidator(question, section_answers)
+# Process new submission
+elif submit_clicked:
+    # Add question to the previous questions list if it's not already there and not "Other..."
+    if question and question != "Other..." and question not in st.session_state['previous_questions']:
+        st.session_state['previous_questions'].append(question)
+    
+    with col2:
+        with st.chat_message("user"):
+            st.write(question)
+        
+        # Show a spinner while generating the answer
+        with st.spinner(f"Interpreting section: {selected_section} {section_mapping.get(selected_section, '') if selected_section != 'All Sections' else ''} of eCFR"):
+            if selected_section == "All Sections":
+                answer = find_best_match(question, consolidated_data)
+                if answer:
+                    final_answer = answer
                 else:
-                    final_answer = "No answers found from any section."
-
-                # Update consolidated_data with the new question-answer pair
-                consolidated_data.append({
-                    "question": question,
-                    "answer": final_answer
-                })
-                with open(consolidated_data_file, 'w') as f:
-                    json.dump(consolidated_data, f, indent=4)
-        else:
-            # Use answer_from_sections for the specific section
-            final_answer = llm_processor.answer_from_sections(context[selected_section], [question])[0]
-
-        # Format the answer with clickable eCFR links
-        formatted_answer = format_answer_with_links(final_answer, title="12", part="211")
-
-        # Display the answer using st.markdown to render links
-        st.markdown(f"**Answer:** {formatted_answer}", unsafe_allow_html=True)
-
-        # Update chat history (store the formatted answer)
-        chat_history = st.session_state.chat_history
-        chat_history.append({"role": "user", "content": question})
-        chat_history.append({"role": "assistant", "content": formatted_answer})
-        st.session_state.chat_history = chat_history
-
-        # Save the QA data (store the original answer without Markdown links)
-        qa_data.append({
-            "question": question,
-            "section": selected_section,
-            "answer": final_answer  # Store the raw answer, not the formatted one
-        })
-        with open(qa_data_file, 'w') as f:
-            json.dump(qa_data, f, indent=4)
-
-# Display the chat history
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        if message["role"] == "assistant":
-            st.markdown(message["content"], unsafe_allow_html=True)
-        else:
-            st.write(message["content"])
+                    section_answers = []
+                    for section, section_content in context.items():
+                        # Get section description
+                        section_description = section_mapping.get(section, "")
+                        with st.spinner(f"Interpreting section: {section} {section_description} of eCFR"):
+                            answers_for_section = llm_processor.answer_from_sections(section_content, [question])
+                            if answers_for_section:
+                                section_answers.append(answers_for_section[0])
+                    if section_answers:
+                        final_answer = llm_processor.consolidator(question, section_answers)
+                    else:
+                        final_answer = "No answers found from any section."
+            else:
+                final_answer = llm_processor.answer_from_sections(context[selected_section], [question])[0]
+        
+        with st.chat_message("assistant"):
+            st.write(final_answer)
+    
+    # Update session state
+    st.session_state['chat_history'].append({"role": "user", "content": question})
+    st.session_state['chat_history'].append({"role": "assistant", "content": final_answer})
+    
+    # Store in previous QA pairs dictionary
+    st.session_state['previous_qa_pairs'][question] = {
+        "section": selected_section,
+        "answer": final_answer
+    }
+    
+    # Save to QA data
+    qa_data.append({
+        "question": question,
+        "section": selected_section,
+        "answer": final_answer
+    })
+    with open(qa_data_file, 'w') as f:
+        json.dump(qa_data, f, indent=4)
+    
+    # Clear custom question if it was used
+    if selected_question == "Other...":
+        st.session_state['custom_question'] = ''
+    
+    # Update last selected question
+    st.session_state['last_selected_question'] = selected_question
