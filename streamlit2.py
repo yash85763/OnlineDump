@@ -1,6 +1,8 @@
 import streamlit as st
 import json
 import os
+import concurrent.futures
+from functools import partial
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -13,6 +15,19 @@ consolidated_ans_json_file_path = os.path.join(DATA_PATH, "consolidated")
 def get_latest_regulation_data():
     # Your implementation here
     return datetime.now().strftime("%Y-%m-%d")
+
+# Helper function to process a single section with the LLM
+def process_section(section, section_content, question, section_mapping):
+    section_description = section_mapping.get(section, "")
+    try:
+        with st.spinner(f"Interpreting section: {section} {section_description} of eCFR"):
+            answers = llm_processor.answer_from_sections(section_content, [question])
+            if answers and len(answers) > 0:
+                return answers[0]
+            return None
+    except Exception as e:
+        st.error(f"Error processing section {section}: {e}")
+        return None
 
 # Load section mapping (assuming this function is defined elsewhere)
 # section_mapping = build_ecfr_section_mapping(ecfr_data)
@@ -244,9 +259,6 @@ with col1:
     # Submit button
     submit_clicked = st.button("Submit", key="submit_button", disabled=submit_button_disabled)
     
-    # History section
-    st.markdown("### Previous Questions")
-    
     # Display previous questions as clickable items
     if st.session_state['previous_questions']:
         st.markdown("### Previous Questions")
@@ -289,7 +301,7 @@ with col2:
             ''', unsafe_allow_html=True)
             
             # Display the section info if available
-            if st.session_state['current_qa']['section'] and st.session_state['current_qa']['section'] != "All Sections":
+            if st.session_state['current_qa'].get('section') and st.session_state['current_qa']['section'] != "All Sections":
                 section = st.session_state['current_qa']['section']
                 section_description = section_mapping.get(section, "")
                 st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
@@ -302,7 +314,7 @@ with col2:
             <div class="{message_class}">
                 <div class="bot-icon">🤖</div>
                 <div class="message-content">
-                    {st.session_state["current_qa"]["answer"]}
+                    {st.session_state["current_qa"].get("answer", "")}
                 </div>
             </div>
             ''', unsafe_allow_html=True)
@@ -330,20 +342,45 @@ if submit_clicked:
             if answer:
                 final_answer = answer
             else:
+                # Use concurrent processing for all sections
                 section_answers = []
-                for section, section_content in context.items():
-                    # Get section description
-                    section_description = section_mapping.get(section, "")
-                    with st.spinner(f"Interpreting section: {section} {section_description} of eCFR"):
-                        answers_for_section = llm_processor.answer_from_sections(section_content, [question])
-                        if answers_for_section:
-                            section_answers.append(answers_for_section[0])
+                
+                # Create a partial function with fixed parameters
+                process_func = partial(process_section, question=question, section_mapping=section_mapping)
+                
+                # Use ThreadPoolExecutor to run LLM calls in parallel
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    # Submit all section processing tasks
+                    future_to_section = {
+                        executor.submit(process_func, section, section_content): section 
+                        for section, section_content in context.items()
+                    }
+                    
+                    # Collect results as they complete
+                    for future in concurrent.futures.as_completed(future_to_section):
+                        section = future_to_section[future]
+                        try:
+                            result = future.result()
+                            if result:
+                                section_answers.append(result)
+                        except Exception as exc:
+                            st.error(f"Section {section} generated an exception: {exc}")
+                
                 if section_answers:
                     final_answer = llm_processor.consolidator(question, section_answers)
                 else:
                     final_answer = "No answers found from any section."
         else:
-            final_answer = llm_processor.answer_from_sections(context[selected_section], [question])[0]
+            # Make sure we have a valid response from the LLM
+            try:
+                answers = llm_processor.answer_from_sections(context[selected_section], [question])
+                if answers and len(answers) > 0:
+                    final_answer = answers[0]
+                else:
+                    final_answer = "No answer was generated for this question. Please try rephrasing it."
+            except Exception as e:
+                st.error(f"Error processing question: {e}")
+                final_answer = "An error occurred while processing your question. Please try again."
     
     # Add question to the previous questions list if it's not already there and not "Other..."
     if question and question != "Other..." and question not in st.session_state['previous_questions']:
@@ -379,25 +416,3 @@ if submit_clicked:
     # Display the answer in col2 immediately after submission
     # Use st.rerun() to ensure the display is updated correctly
     st.rerun()
-        
-    # Use rerun only if we need to update the UI elements outside of col2
-    # st.rerun()
-
-# Remove JavaScript which is not needed with the new button approach
-# st.markdown("""
-# <script>
-#     document.addEventListener('DOMContentLoaded', function() {
-#         const historyItems = document.querySelectorAll('.history-item');
-#         historyItems.forEach(item => {
-#             item.addEventListener('click', function() {
-#                 const questionId = this.id;
-#                 // Use Streamlit's postMessage to communicate with Python
-#                 window.parent.postMessage({
-#                     type: 'streamlit:setComponentValue',
-#                     value: questionId
-#                 }, '*');
-#             });
-#         });
-#     });
-# </script>
-# """, unsafe_allow_html=True)
