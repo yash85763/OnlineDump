@@ -107,13 +107,9 @@ st.markdown("""
         background-color: #e6f3ff;
         border-left: 3px solid #2e74b5;
     }
-    .right-column {
+    .scrollable-column {
         height: 80vh;
         overflow-y: auto;
-        padding: 15px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        background-color: white;
     }
     .date-display {
         font-size: 0.8rem;
@@ -146,6 +142,16 @@ st.title("Regulation K Interpreter")
 
 # Create two columns with custom widths
 col1, col2 = st.columns([3, 7])
+
+# Add scrolling to col2
+st.markdown("""
+<style>
+    [data-testid="column"]:nth-of-type(2) {
+        height: 80vh;
+        overflow-y: auto;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Function to handle question click
 def handle_question_click(idx):
@@ -217,9 +223,6 @@ with col2:
     # Create a container for the right column content
     right_col_container = st.container()
     
-    # Add a CSS class to make it scrollable
-    st.markdown('<div class="right-column">', unsafe_allow_html=True)
-    
     # If there's a current question and answer to display
     if st.session_state['current_qa']['question']:
         # Display the question
@@ -235,8 +238,6 @@ with col2:
         st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> {st.session_state["current_qa"]["answer"]}</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="assistant-message">Select a question and click Submit, or click on a previous question from the list.</div>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # Process new submission
 if submit_clicked:
@@ -294,8 +295,6 @@ if submit_clicked:
     
     # Display the answer in col2 immediately
     with col2:
-        st.markdown('<div class="right-column">', unsafe_allow_html=True)
-        
         # Display the question
         st.markdown(f'<div class="user-message"><strong>Question:</strong> {question}</div>', unsafe_allow_html=True)
         
@@ -306,8 +305,6 @@ if submit_clicked:
         
         # Display the answer
         st.markdown(f'<div class="assistant-message"><strong>Answer:</strong> {final_answer}</div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
         
     # Use rerun only if we need to update the UI elements outside of col2
     # st.rerun()
