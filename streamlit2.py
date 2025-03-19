@@ -192,6 +192,22 @@ st.markdown("""
         margin: 5px 0 15px 42px;
         color: #555;
     }
+    .loading {
+        display: flex;
+        align-items: center;
+    }
+    .loading:after {
+        content: "...";
+        width: 24px;
+        text-align: left;
+        animation: dots 1.5s steps(5, end) infinite;
+    }
+    @keyframes dots {
+        0%, 20% { content: ""; }
+        40% { content: "."; }
+        60% { content: ".."; }
+        80%, 100% { content: "..."; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -215,7 +231,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Function to handle question click
+# Function to handle question click - ensure this triggers an immediate display update
 def handle_question_click(idx):
     if idx < len(st.session_state['previous_questions']):
         question = st.session_state['previous_questions'][idx]
@@ -227,6 +243,40 @@ def handle_question_click(idx):
                 "section": qa_pair['section'],
                 "is_previous": True  # Mark this as a previous answer
             }
+            
+            # Immediately update the display in the right column
+            with col2:
+                right_col = st.empty()
+                with right_col.container():
+                    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+                    
+                    # Question with user icon
+                    st.markdown(f'''
+                    <div class="user-message">
+                        <div class="user-icon">👤</div>
+                        <div class="message-content">
+                            {question}
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                    
+                    # Display the section info if available
+                    if qa_pair['section'] and qa_pair['section'] != "All Sections":
+                        section = qa_pair['section']
+                        section_description = section_mapping.get(section, "")
+                        st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
+                    
+                    # Answer with bot icon (previous style)
+                    st.markdown(f'''
+                    <div class="assistant-message-previous">
+                        <div class="bot-icon">🤖</div>
+                        <div class="message-content">
+                            {qa_pair['answer']}
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
 
 # Left column for selections and history
 with col1:
@@ -334,67 +384,100 @@ with col2:
 
 # Process new submission
 if submit_clicked:
-    # Show a spinner while generating the answer
-    with st.spinner(f"Interpreting section: {selected_section} {section_mapping.get(selected_section, '') if selected_section != 'All Sections' else ''} of eCFR"):
-        if selected_section == "All Sections":
-            answer = find_best_match(question, consolidated_data)
-            if answer:
-                final_answer = answer
-            else:
-                # Use concurrent processing for all sections
-                section_answers = []
-                section_errors = []
-                
-                # Show overall progress
-                with st.spinner(f"Processing all sections in parallel..."):
-                    # Create a simplified function with necessary parameters
-                    process_func = partial(process_section, question=question)
-                    
-                    # Use ThreadPoolExecutor to run LLM calls in parallel
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        # Submit all section processing tasks
-                        future_to_section = {
-                            executor.submit(process_func, section, section_content): section 
-                            for section, section_content in context.items()
-                        }
-                        
-                        # Collect results as they complete
-                        for future in concurrent.futures.as_completed(future_to_section):
-                            try:
-                                section, result = future.result()
-                                if result:
-                                    if isinstance(result, str) and result.startswith("Error:"):
-                                        section_errors.append(f"Section {section}: {result}")
-                                    else:
-                                        section_answers.append(result)
-                                        st.success(f"✅ Processed section {section}")
-                                else:
-                                    st.info(f"ℹ️ No answer from section {section}")
-                            except Exception as exc:
-                                st.error(f"❌ Section processing failed: {exc}")
-                
-                # Display any errors that occurred
-                if section_errors:
-                    st.error("Some sections failed to process:")
-                    for error in section_errors:
-                        st.error(error)
-                
-                if section_answers:
-                    final_answer = llm_processor.consolidator(question, section_answers)
-                else:
-                    final_answer = "No answers found from any section."
+    # First, update the right column to show the question and a loading indicator
+    with col2:
+        right_col = st.empty()
+        with right_col.container():
+            # Display the question
+            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+            st.markdown(f'''
+            <div class="user-message">
+                <div class="user-icon">👤</div>
+                <div class="message-content">
+                    {question}
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
+            
+            # Display the section info if available
+            if selected_section and selected_section != "All Sections":
+                section_description = section_mapping.get(selected_section, "")
+                st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
+            
+            # Show a spinner in the answer spot
+            answer_placeholder = st.empty()
+            with answer_placeholder:
+                st.markdown('''
+                <div class="assistant-message">
+                    <div class="bot-icon">🤖</div>
+                    <div class="message-content">
+                        <div class="loading">
+                            Generating answer...
+                        </div>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Process the question
+    if selected_section == "All Sections":
+        answer = find_best_match(question, consolidated_data)
+        if answer:
+            final_answer = answer
         else:
-            # Make sure we have a valid response from the LLM
-            try:
-                with st.spinner(f"Processing section {selected_section}..."):
-                    answers = llm_processor.answer_from_sections(context[selected_section], [question])
+            section_answers = []
+            for section, section_content in context.items():
+                try:
+                    # Process each section sequentially
+                    answers = llm_processor.answer_from_sections(section_content, [question])
                     if answers and len(answers) > 0:
-                        final_answer = answers[0]
-                    else:
-                        final_answer = "No answer was generated for this question. Please try rephrasing it."
-            except Exception as e:
-                st.error(f"Error processing question: {e}")
-                final_answer = "An error occurred while processing your question. Please try again."
+                        section_answers.append(answers[0])
+                except Exception as e:
+                    st.error(f"Error processing section {section}: {e}")
+            
+            if section_answers:
+                final_answer = llm_processor.consolidator(question, section_answers)
+            else:
+                final_answer = "No answers found from any section."
+    else:
+        # Process a single section
+        try:
+            answers = llm_processor.answer_from_sections(context[selected_section], [question])
+            if answers and len(answers) > 0:
+                final_answer = answers[0]
+            else:
+                final_answer = "No answer was generated for this question. Please try rephrasing it."
+        except Exception as e:
+            st.error(f"Error processing question: {e}")
+            final_answer = "An error occurred while processing your question. Please try again."
+    
+    # Update the answer display with the final answer
+    with right_col.container():
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+        st.markdown(f'''
+        <div class="user-message">
+            <div class="user-icon">👤</div>
+            <div class="message-content">
+                {question}
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
+        
+        # Display the section info if available
+        if selected_section and selected_section != "All Sections":
+            section_description = section_mapping.get(selected_section, "")
+            st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
+        
+        # Display the final answer
+        st.markdown(f'''
+        <div class="assistant-message">
+            <div class="bot-icon">🤖</div>
+            <div class="message-content">
+                {final_answer}
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Add question to the previous questions list if it's not already there and not "Other..."
     if question and question != "Other..." and question not in st.session_state['previous_questions']:
@@ -426,7 +509,3 @@ if submit_clicked:
     # Clear custom question if it was used
     if selected_question == "Other...":
         st.session_state['custom_question'] = ''
-        
-    # Display the answer in col2 immediately after submission
-    # Use st.rerun() to ensure the display is updated correctly
-    st.rerun()
