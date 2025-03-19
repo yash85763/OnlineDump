@@ -5,6 +5,7 @@ import concurrent.futures
 from functools import partial
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import re
 
 # File paths
 DATA_PATH = "path/to/data"  # Adjust as needed
@@ -16,17 +17,60 @@ def get_latest_regulation_data():
     # Your implementation here
     return datetime.now().strftime("%Y-%m-%d")
 
-# Helper function to process a single section with the LLM
-def process_section(section, section_content, question):
-    try:
-        # Don't use st.spinner in threads since it requires the Streamlit context
-        answers = llm_processor.answer_from_sections(section_content, [question])
-        if answers and len(answers) > 0:
-            return section, answers[0]
-        return section, None
-    except Exception as e:
-        # Return the error instead of showing it directly
-        return section, f"Error: {str(e)}"
+# Helper function to safely render markdown text
+def safe_markdown(text):
+    # Replace any characters that might break HTML rendering
+    if text is None:
+        return ""
+    
+    # Convert markdown to HTML safely
+    
+    # Escape HTML special characters first
+    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Process code blocks with syntax highlighting
+    text = re.sub(r'```(\w*)\n(.*?)\n```', r'<pre><code class="language-\1">\2</code></pre>', text, flags=re.DOTALL)
+    
+    # Process inline code
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # Process bold text
+    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+    
+    # Process italic text
+    text = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', text)
+    
+    # Process bullet lists
+    text = re.sub(r'^\s*\*\s(.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+    text = re.sub(r'(<li>.*</li>\n)+', r'<ul>\g<0></ul>', text, flags=re.DOTALL)
+    
+    # Process numbered lists
+    text = re.sub(r'^\s*(\d+)\.\s(.+)$', r'<li>\2</li>', text, flags=re.MULTILINE)
+    text = re.sub(r'(<li>.*</li>\n)+', r'<ol>\g<0></ol>', text, flags=re.DOTALL)
+    
+    # Process headers
+    text = re.sub(r'^###\s(.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+    text = re.sub(r'^##\s(.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+    text = re.sub(r'^#\s(.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+    
+    # Process paragraphs - separate by double newlines
+    paragraphs = text.split('\n\n')
+    processed_paragraphs = []
+    
+    for p in paragraphs:
+        if not p.strip():
+            continue
+        if not (p.startswith('<h') or p.startswith('<ul>') or p.startswith('<ol>') or 
+                p.startswith('<pre>') or p.startswith('<li>')):
+            p = f'<p>{p}</p>'
+        processed_paragraphs.append(p)
+    
+    text = '\n'.join(processed_paragraphs)
+    
+    # Convert newlines to <br> in paragraphs
+    text = re.sub(r'(?<!</(pre|code|h1|h2|h3|p|li)>)\n(?!<(h1|h2|h3|pre|ul|ol|li|/ul|/ol|p)>)', '<br>', text)
+    
+    return text
 
 # Load section mapping (assuming this function is defined elsewhere)
 # section_mapping = build_ecfr_section_mapping(ecfr_data)
@@ -180,6 +224,7 @@ st.markdown("""
         padding: 10px;
         border-radius: 5px;
         max-width: calc(100% - 50px);
+        overflow-wrap: break-word;
     }
     .user-message .message-content {
         background-color: #f1f1f1;
@@ -207,6 +252,52 @@ st.markdown("""
         40% { content: "."; }
         60% { content: ".."; }
         80%, 100% { content: "..."; }
+    }
+    
+    /* Markdown formatting within the message content */
+    .message-content p {
+        margin-bottom: 0.75rem;
+        line-height: 1.5;
+    }
+    .message-content h1, .message-content h2, .message-content h3 {
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        font-weight: bold;
+    }
+    .message-content h1 {
+        font-size: 1.5rem;
+    }
+    .message-content h2 {
+        font-size: 1.25rem;
+    }
+    .message-content h3 {
+        font-size: 1.1rem;
+    }
+    .message-content ul, .message-content ol {
+        margin-top: 0.5rem;
+        margin-bottom: 0.5rem;
+        padding-left: 1.5rem;
+    }
+    .message-content li {
+        margin-bottom: 0.25rem;
+    }
+    .message-content code {
+        font-family: monospace;
+        background-color: rgba(0,0,0,0.05);
+        padding: 0.1rem 0.2rem;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+    .message-content pre {
+        background-color: rgba(0,0,0,0.05);
+        padding: 0.5rem;
+        border-radius: 5px;
+        margin: 0.5rem 0;
+        overflow-x: auto;
+    }
+    .message-content pre code {
+        background-color: transparent;
+        padding: 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -266,12 +357,12 @@ def handle_question_click(idx):
                         section_description = section_mapping.get(section, "")
                         st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
                     
-                    # Answer with bot icon (previous style)
+                    # Answer with bot icon (previous style) - use safe_markdown for the answer
                     st.markdown(f'''
                     <div class="assistant-message-previous">
                         <div class="bot-icon">🤖</div>
                         <div class="message-content">
-                            {qa_pair['answer']}
+                            {safe_markdown(qa_pair['answer'])}
                         </div>
                     </div>
                     ''', unsafe_allow_html=True)
@@ -363,7 +454,7 @@ with col2:
             <div class="{message_class}">
                 <div class="bot-icon">🤖</div>
                 <div class="message-content">
-                    {st.session_state["current_qa"].get("answer", "")}
+                    {safe_markdown(st.session_state["current_qa"].get("answer", ""))}
                 </div>
             </div>
             ''', unsafe_allow_html=True)
@@ -468,12 +559,12 @@ if submit_clicked:
             section_description = section_mapping.get(selected_section, "")
             st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
         
-        # Display the final answer
+        # Display the final answer - use safe_markdown for proper formatting
         st.markdown(f'''
         <div class="assistant-message">
             <div class="bot-icon">🤖</div>
             <div class="message-content">
-                {final_answer}
+                {safe_markdown(final_answer)}
             </div>
         </div>
         ''', unsafe_allow_html=True)
