@@ -24,6 +24,7 @@ def safe_markdown(text):
         return ""
     
     # Convert markdown to HTML safely
+    import re
     
     # Escape HTML special characters first
     text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -42,33 +43,35 @@ def safe_markdown(text):
     
     # Process bullet lists
     text = re.sub(r'^\s*\*\s(.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
-    text = re.sub(r'(<li>.*</li>\n)+', r'<ul>\g<0></ul>', text, flags=re.DOTALL)
+    text = text.replace('<li>', '<ul><li>').replace('</li>', '</li></ul>')
     
     # Process numbered lists
     text = re.sub(r'^\s*(\d+)\.\s(.+)$', r'<li>\2</li>', text, flags=re.MULTILINE)
-    text = re.sub(r'(<li>.*</li>\n)+', r'<ol>\g<0></ol>', text, flags=re.DOTALL)
+    text = text.replace('<li>', '<ol><li>').replace('</li>', '</li></ol>')
     
     # Process headers
     text = re.sub(r'^###\s(.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
     text = re.sub(r'^##\s(.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
     text = re.sub(r'^#\s(.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
     
-    # Process paragraphs - separate by double newlines
-    paragraphs = text.split('\n\n')
-    processed_paragraphs = []
+    # Process paragraphs - split by double newlines and wrap in <p> tags
+    paragraphs = []
+    for p in text.split('\n\n'):
+        if p.strip() and not (p.startswith('<h') or p.startswith('<ul>') or p.startswith('<ol>')):
+            paragraphs.append(f'<p>{p}</p>')
+        else:
+            paragraphs.append(p)
     
-    for p in paragraphs:
-        if not p.strip():
-            continue
-        if not (p.startswith('<h') or p.startswith('<ul>') or p.startswith('<ol>') or 
-                p.startswith('<pre>') or p.startswith('<li>')):
-            p = f'<p>{p}</p>'
-        processed_paragraphs.append(p)
+    text = '\n'.join(paragraphs)
     
-    text = '\n'.join(processed_paragraphs)
+    # Replace newlines with <br> tags inside paragraphs
+    paragraphs = []
+    for p in text.split('</p>'):
+        if p.startswith('<p>'):
+            p = p.replace('\n', '<br>')
+        paragraphs.append(p)
     
-    # Convert newlines to <br> in paragraphs
-    text = re.sub(r'(?<!</(pre|code|h1|h2|h3|p|li)>)\n(?!<(h1|h2|h3|pre|ul|ol|li|/ul|/ol|p)>)', '<br>', text)
+    text = '</p>'.join(paragraphs)
     
     return text
 
