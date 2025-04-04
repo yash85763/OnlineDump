@@ -1,4 +1,4 @@
-Key Points
+ Key Points
 	•	It seems likely that pdfminer.six can extract contract information into a hierarchical JSON format, handling special characters, fused words, and various layouts.
 	•	Research suggests font styles and layout analysis help distinguish headings, but accuracy depends on document formatting.
 	•	The evidence leans toward robust structuring, but bi-columnar layouts may need additional processing.
@@ -212,3 +212,95 @@ Key Citations
 	•	Extract elements from a PDF using Python pdfminer.six
 	•	Frequently asked questions pdfminer.six
 	•	Python by Examples Extract PDF by PDFMiner.six Medium
+
+
+
+
+	from pdfminer.high_level import extract_pages
+	from pdfminer.layout import LTTextBox, LTTextLine, LTChar
+	import json
+	import re
+	
+	def clean_text(text):
+	    # Remove raw CIDs and handle special characters
+	    text = re.sub(r'cid:\d+', '', text)
+	    text = text.encode('ascii', 'ignore').decode('ascii')
+	    return text
+	
+	def split_fused_words(text):
+	    # Split fused words like "TermsandConditions" into "Terms and Conditions"
+	    words = re.findall(r'[A-Z][a-z]*', text)
+	    if words:
+	        return ' '.join(words)
+	    return text
+	
+	def build_hierarchy(file_path):
+	    hierarchy = {}
+	    current_heading = None
+	    current_subheading = None
+	
+	    # Regex pattern for subheadings (e.g., "1.1", "1.1.1")
+	    subheading_pattern = re.compile(r'^\d+\.\d+(\.\d+)?\s+.*$')
+	
+	    for page_layout in extract_pages(file_path):
+	        for element in page_layout:
+	            if isinstance(element, LTTextBox):
+	                for line in element:
+	                    if isinstance(line, LTTextLine):
+	                        text = line.get_text().strip()
+	                        if not text:
+	                            continue
+	
+	                        # Clean and process text
+	                        text = clean_text(text)
+	                        text = split_fused_words(text)
+	
+	                        # Extract font information from the first character
+	                        font_size = 0
+	                        is_bold = False
+	                        for char in line:
+	                            if isinstance(char, LTChar):
+	                                font_size = char.size
+	                                fontname = char.fontname
+	                                if 'Bold' in fontname or 'B' in fontname[-1]:
+	                                    is_bold = True
+	                                break
+	
+	                        # Main heading detection: large font or bold
+	                        if (font_size > 12 or is_bold) and not subheading_pattern.match(text):
+	                            current_heading = text
+	                            hierarchy[current_heading] = {}
+	                            current_subheading = None  # Reset subheading when new heading starts
+	                        # Subheading detection: matches numbering pattern
+	                        elif current_heading and subheading_pattern.match(text):
+	                            current_subheading = text
+	                            hierarchy[current_heading][current_subheading] = ""
+	                        # Content under heading or subheading
+	                        elif current_heading:
+	                            if current_subheading:
+	                                hierarchy[current_heading][current_subheading] += text + " "
+	                            else:
+	                                if "content" not in hierarchy[current_heading]:
+	                                    hierarchy[current_heading]["content"] = ""
+	                                hierarchy[current_heading]["content"] += text + " "
+	
+	    # Clean up trailing spaces in the hierarchy
+	    for heading in hierarchy:
+	        if "content" in hierarchy[heading]:
+	            hierarchy[heading]["content"] = hierarchy[heading]["content"].strip()
+	        for subheading in hierarchy[heading]:
+	            if isinstance(hierarchy[heading][subheading], str):
+	                hierarchy[heading][subheading] = hierarchy[heading][subheading].strip()
+	
+	    return hierarchy
+	
+	def save_to_json(data, output_file):
+	    with open(output_file, 'w', encoding='utf-8') as f:
+	        json.dump(data, f, indent=4, ensure_ascii=False)
+	
+	# Example usage
+	file_path = "contract.pdf"
+	output_file = "contract_hierarchy.json"
+	hierarchy = build_hierarchy(file_path)
+	save_to_json(hierarchy, output_file)
+	print(f"Hierarchy saved to {output_file}")
