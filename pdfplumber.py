@@ -1,30 +1,27 @@
-import pdfplumber
+import os
 import re
 import json
-import argparse
-import os
-from typing import List, Dict, Optional, Tuple, Any
+import pdfplumber
+from typing import List, Dict, Tuple
 import statistics
 from collections import defaultdict
 
-
 class ContractParser:
-    def __init__(self, pdf_path: str, header_height_percent: float = 0.1, footer_height_percent: float = 0.1):
+    def __init__(self, pdf_path: str):
         """
         Initialize the contract parser
         
         Args:
             pdf_path: Path to the PDF file
-            header_height_percent: Percentage of page height to consider as header (0.0-1.0)
-            footer_height_percent: Percentage of page height to consider as footer (0.0-1.0)
         """
         self.pdf_path = pdf_path
-        self.header_height_percent = header_height_percent
-        self.footer_height_percent = footer_height_percent
         self.pdf = None
-        self.column_boundaries = []
+        self.is_multi_column = False
+        self.page_layouts = {}
+        self.font_stats = {}
+        
+        # Common heading patterns in contracts
         self.heading_patterns = [
-            # Common heading patterns in contracts
             r'^(?:\d+\.)+\s+',          # Numbered headings like "1.2.3 "
             r'^(?:[A-Z]\.)+\s+',        # Lettered headings like "A.B. "
             r'^(?:[ivxlcdm]+\.)\s+',    # Roman numeral headings like "iv. "
@@ -38,119 +35,196 @@ class ContractParser:
             r'^SCHEDULE\s+[A-Z\d]',     # "SCHEDULE X"
             r'^APPENDIX\s+[A-Z\d]',     # "APPENDIX X"
         ]
-        self.font_stats = {}
-        self.hierarchical_structure = []
 
-    def open_pdf(self):
-        """Open the PDF file with pdfplumber"""
-        self.pdf = pdfplumber.open(self.pdf_path)
-        print(f"Opened PDF: {self.pdf_path} ({len(self.pdf.pages)} pages)")
-
-    def close_pdf(self):
-        """Close the PDF file"""
-        if self.pdf:
-            self.pdf.close()
-
-    def detect_columns(self, page) -> List[Tuple[float, float]]:
+    def parse(self) -> Dict:
         """
-        Detect columns in a page based on text distribution
+        Parse the PDF and extract structured content
+        
+        Returns:
+            Dictionary with hierarchical document structure
+        """
+        try:
+            # Open the PDF
+            self.pdf = pdfplumber.open(self.pdf_path)
+            print(f"Processing: {os.path.basename(self.pdf_path)} ({len(self.pdf.pages)} pages)")
+            
+            # Detect column layout
+            self.detect_layout()
+            
+            # Extract all text blocks with properties
+            all_text_blocks = self.extract_all_text_blocks()
+            
+            # Analyze font statistics to help identify headings
+            self.analyze_font_statistics()
+            
+            # Build hierarchical structure
+            structure = self.build_hierarchical_structure(all_text_blocks)
+            
+            # Create result with metadata
+            result = {
+                'metadata': {
+                    'filename': os.path.basename(self.pdf_path),
+                    'pages': len(self.pdf.pages),
+                    'layout': 'multi-column' if self.is_multi_column else 'single-column',
+                },
+                'structure': structure
+            }
+            
+            return result
+            
+        finally:
+            # Close the PDF
+            if self.pdf:
+                self.pdf.close()
+
+    def detect_layout(self, sample_pages=5):
+        """
+        Detect if the document has single or multiple columns
         
         Args:
-            page: pdfplumber page object
+            sample_pages: Number of pages to sample for detection
+        """
+        column_votes = []
+        
+        # Sample pages throughout the document
+        num_pages = len(self.pdf.pages)
+        pages_to_analyze = min(sample_pages, num_pages)
+        
+        # Sample evenly distributed pages
+        step = max(1, num_pages // pages_to_analyze)
+        indices = [i * step for i in range(pages_to_analyze)]
+        
+        for page_idx in indices:
+            if page_idx >= num_pages:
+                continue
+                
+            page = self.pdf.pages[page_idx]
+            
+            # Get text distribution
+            words = page.extract_words(
+                x_tolerance=3,
+                y_tolerance=3,
+                keep_blank_chars=False,
+                use_text_flow=True
+            )
+            
+            if not words:
+                continue
+            
+            # Create horizontal density profile
+            page_width = page.width
+            histogram_bins = 100
+            bin_size = page_width / histogram_bins
+            density_profile = [0] * histogram_bins
+            
+            for word in words:
+                start_bin = int(word['x0'] / bin_size)
+                end_bin = min(int(word['x1'] / bin_size), histogram_bins - 1)
+                for bin_idx in range(start_bin, end_bin + 1):
+                    density_profile[bin_idx] += 1
+            
+            # Look for a significant gap in the middle region
+            middle_start = histogram_bins // 3
+            middle_end = 2 * histogram_bins // 3
+            middle_region = density_profile[middle_start:middle_end]
+            
+            if not middle_region:
+                continue
+                
+            # Check if there's a significant drop in density in the middle
+            max_density = max(density_profile)
+            min_middle = min(middle_region)
+            
+            # If there's a significant empty area in the middle section, 
+            # it's likely a two-column layout
+            gap_threshold = 0.2  # Consider it a gap if density drops below 20% of max
+            has_middle_gap = min_middle < gap_threshold * max_density
+            
+            # Find the minimum position
+            if has_middle_gap:
+                mid_point = middle_start + middle_region.index(min_middle)
+                gap_start = mid_point
+                gap_end = mid_point
+                
+                # Expand gap boundaries
+                while gap_start > 0 and density_profile[gap_start] < gap_threshold * max_density:
+                    gap_start -= 1
+                
+                while gap_end < histogram_bins - 1 and density_profile[gap_end] < gap_threshold * max_density:
+                    gap_end += 1
+                
+                # Store column boundaries for this page
+                col1_end = gap_start * bin_size
+                col2_start = gap_end * bin_size
+                
+                self.page_layouts[page_idx] = {
+                    'columns': [(0, col1_end), (col2_start, page_width)]
+                }
+            else:
+                # Single column
+                self.page_layouts[page_idx] = {
+                    'columns': [(0, page_width)]
+                }
+            
+            column_votes.append(has_middle_gap)
+        
+        # Determine overall layout by majority vote
+        self.is_multi_column = sum(column_votes) > len(column_votes) / 2
+        
+        print(f"Detected layout: {'Multi-column' if self.is_multi_column else 'Single-column'}")
+
+    def get_column_boundaries(self, page_idx: int) -> List[Tuple[float, float]]:
+        """
+        Get column boundaries for a specific page
+        
+        Args:
+            page_idx: Page index
             
         Returns:
             List of (start_x, end_x) tuples for each column
         """
-        # Extract words with their bounding boxes
-        words = page.extract_words(
-            x_tolerance=3,
-            y_tolerance=3,
-            keep_blank_chars=False,
-            use_text_flow=True
-        )
+        # If we have stored layout for this page, use it
+        if page_idx in self.page_layouts:
+            return self.page_layouts[page_idx]['columns']
         
-        if not words:
-            return [(0, page.width)]
+        # Otherwise determine based on overall document layout
+        page = self.pdf.pages[page_idx]
         
-        # Analyze x-coordinates distribution
-        x_starts = [word["x0"] for word in words]
-        x_ends = [word["x1"] for word in words]
-        
-        # Create x-density histogram
-        hist_buckets = 100
-        bucket_size = page.width / hist_buckets
-        density = [0] * hist_buckets
-        
-        for word in words:
-            start_bucket = int(word["x0"] / bucket_size)
-            end_bucket = min(int(word["x1"] / bucket_size), hist_buckets - 1)
-            for i in range(start_bucket, end_bucket + 1):
-                density[i] += 1
-        
-        # Find gaps (potential column separators)
-        gaps = []
-        in_gap = False
-        gap_start = 0
-        min_gap_width = page.width * 0.05  # 5% of page width
-        
-        for i in range(hist_buckets):
-            if density[i] == 0 and not in_gap:
-                in_gap = True
-                gap_start = i * bucket_size
-            elif density[i] > 0 and in_gap:
-                in_gap = False
-                gap_end = i * bucket_size
-                if gap_end - gap_start >= min_gap_width:
-                    gaps.append((gap_start, gap_end))
-        
-        if not gaps:
-            # No gaps found, assume single column
-            return [(0, page.width)]
-        elif len(gaps) == 1:
-            # One gap found, assume two columns
-            return [(0, gaps[0][0]), (gaps[0][1], page.width)]
+        if self.is_multi_column:
+            # Default multi-column layout
+            mid_x = page.width / 2
+            margin = page.width * 0.1
+            return [(0, mid_x - margin/2), (mid_x + margin/2, page.width)]
         else:
-            # Multiple gaps, use the most significant one
-            widest_gap = max(gaps, key=lambda g: g[1] - g[0])
-            return [(0, widest_gap[0]), (widest_gap[1], page.width)]
+            # Single column
+            return [(0, page.width)]
 
-    def get_content_area(self, page) -> Tuple[float, float, float, float]:
+    def extract_text_blocks(self, page_idx: int) -> List[Dict]:
         """
-        Get content area excluding headers and footers
+        Extract text blocks with properties from a page
         
         Args:
-            page: pdfplumber page object
+            page_idx: Page index
             
         Returns:
-            Tuple of (x0, y0, x1, y1) for content area
+            List of text blocks with properties
         """
-        header_height = page.height * self.header_height_percent
-        footer_start = page.height * (1 - self.footer_height_percent)
+        page = self.pdf.pages[page_idx]
+        column_boundaries = self.get_column_boundaries(page_idx)
         
-        return (0, header_height, page.width, footer_start)
-
-    def extract_text_with_properties(self, page) -> List[Dict]:
-        """
-        Extract text with font, size and position properties
+        # Calculate header and footer areas (10% of page height)
+        header_height = page.height * 0.1
+        footer_start = page.height * 0.9
         
-        Args:
-            page: pdfplumber page object
-            
-        Returns:
-            List of dictionaries with text and its properties
-        """
-        content_area = self.get_content_area(page)
-        column_boundaries = self.detect_columns(page)
-        
-        # Extract characters with their properties
+        # Extract characters
         chars = page.chars
         if not chars:
             return []
         
-        # Filter out characters in header/footer
+        # Filter out header and footer
         content_chars = [
             c for c in chars
-            if c['y0'] >= content_area[1] and c['y1'] <= content_area[3]
+            if c['y0'] >= header_height and c['y1'] <= footer_start
         ]
         
         if not content_chars:
@@ -168,38 +242,28 @@ class ContractParser:
         # Sort lines by y-coordinate
         sorted_lines = sorted(lines.items(), key=lambda x: x[0])
         
-        # Group lines into text blocks with properties
+        # Process lines into text blocks
         text_blocks = []
-        current_block = None
         
         for y, line_chars in sorted_lines:
             # Sort characters by x-coordinate
             line_chars.sort(key=lambda c: c['x0'])
             
             # Assign characters to columns
-            col_chars = [[] for _ in range(len(column_boundaries))]
-            
-            for char in line_chars:
-                for col_idx, (col_start, col_end) in enumerate(column_boundaries):
-                    if col_start <= char['x0'] < col_end:
-                        col_chars[col_idx].append(char)
-                        break
-            
-            # Process each column's characters
-            for col_idx, chars in enumerate(col_chars):
-                if not chars:
+            for col_idx, (col_start, col_end) in enumerate(column_boundaries):
+                # Get characters in this column
+                col_chars = [c for c in line_chars if col_start <= c['x0'] < col_end]
+                
+                if not col_chars:
                     continue
                 
-                # Extract properties from the first character
-                first_char = chars[0]
-                col_start, col_end = column_boundaries[col_idx]
-                
-                # Build text and collect font statistics
-                text = ''.join(c['text'] for c in chars)
+                # Extract text and properties
+                text = ''.join(c['text'] for c in col_chars)
                 if not text.strip():
                     continue
                 
-                # Get font properties
+                # Get font properties from first character
+                first_char = col_chars[0]
                 font_name = first_char.get('fontname', '')
                 font_size = first_char.get('size', 0)
                 
@@ -214,45 +278,64 @@ class ContractParser:
                     'text': text,
                     'page': page.page_number,
                     'column': col_idx,
-                    'y0': min(c['y0'] for c in chars),
-                    'y1': max(c['y1'] for c in chars),
-                    'x0': min(c['x0'] for c in chars),
-                    'x1': max(c['x1'] for c in chars),
+                    'y0': min(c['y0'] for c in col_chars),
+                    'y1': max(c['y1'] for c in col_chars),
+                    'x0': min(c['x0'] for c in col_chars),
+                    'x1': max(c['x1'] for c in col_chars),
                     'font_name': font_name,
                     'font_size': font_size,
                     'bold': 'bold' in font_name.lower() or 'heavy' in font_name.lower(),
                     'italic': 'italic' in font_name.lower() or 'oblique' in font_name.lower(),
-                    'margin_left': min(c['x0'] for c in chars) - col_start,
+                    'margin_left': min(c['x0'] for c in col_chars) - col_start,
                 }
                 
                 text_blocks.append(text_block)
         
         return text_blocks
 
+    def extract_all_text_blocks(self) -> List[Dict]:
+        """
+        Extract text blocks from all pages
+        
+        Returns:
+            List of text blocks with properties
+        """
+        all_blocks = []
+        
+        for page_idx in range(len(self.pdf.pages)):
+            blocks = self.extract_text_blocks(page_idx)
+            all_blocks.extend(blocks)
+            
+            # Print progress
+            if (page_idx + 1) % 10 == 0 or page_idx + 1 == len(self.pdf.pages):
+                print(f"Processed {page_idx + 1}/{len(self.pdf.pages)} pages")
+        
+        return all_blocks
+
     def analyze_font_statistics(self):
         """
         Analyze font statistics to help identify headings
-        
-        Returns:
-            Dictionary with font statistics
         """
-        print("Analyzing font statistics...")
-        
         for font_name, stats in self.font_stats.items():
             if stats['sizes']:
                 stats['median_size'] = statistics.median(stats['sizes'])
-                stats['mode_size'] = statistics.mode(stats['sizes'])
+                try:
+                    stats['mode_size'] = statistics.mode(stats['sizes'])
+                except statistics.StatisticsError:
+                    # If no unique mode, use median
+                    stats['mode_size'] = stats['median_size']
                 stats['max_size'] = max(stats['sizes'])
                 stats['min_size'] = min(stats['sizes'])
                 stats['avg_size'] = sum(stats['sizes']) / len(stats['sizes'])
         
         # Find most common font (likely body text)
-        body_font = max(self.font_stats.items(), key=lambda x: x[1]['count'])
-        self.body_font_name = body_font[0]
-        self.body_font_size = body_font[1]['mode_size']
-        
-        print(f"Identified body font: {self.body_font_name}, size: {self.body_font_size}")
-        return self.font_stats
+        if self.font_stats:
+            body_font = max(self.font_stats.items(), key=lambda x: x[1]['count'])
+            self.body_font_name = body_font[0]
+            self.body_font_size = body_font[1].get('mode_size', 0)
+        else:
+            self.body_font_name = ""
+            self.body_font_size = 0
 
     def is_heading(self, text_block: Dict) -> bool:
         """
@@ -276,12 +359,15 @@ class ContractParser:
                 return True
         
         # Check font properties
-        font_size = text_block['font_size']
-        font_name = text_block['font_name']
-        is_bold = text_block['bold']
+        font_size = text_block.get('font_size', 0)
+        font_name = text_block.get('font_name', '')
+        is_bold = text_block.get('bold', False)
+        
+        # If body font size is 0, use a default threshold
+        size_threshold = self.body_font_size * 1.1 if self.body_font_size > 0 else 12
         
         # If font is significantly larger than body text, it's likely a heading
-        if font_size > self.body_font_size * 1.1:
+        if font_size > size_threshold:
             return True
         
         # If font is bold and not body font, it's likely a heading
@@ -293,7 +379,7 @@ class ContractParser:
             return True
             
         # If line has different left margin, it might be a heading
-        if text_block['margin_left'] > 20:  # Adjust based on document
+        if text_block.get('margin_left', 0) > 20:  # Adjust based on document
             return True
         
         return False
@@ -310,7 +396,7 @@ class ContractParser:
         """
         text = text_block['text'].strip()
         
-        # Check numbered headings
+        # Check numbered headings (e.g., 1.2.3)
         numbered_match = re.match(r'^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?', text)
         if numbered_match:
             # Count non-None groups to determine level
@@ -325,9 +411,9 @@ class ContractParser:
             return 1
         
         # Use font size to estimate level
-        font_size = text_block['font_size']
-        font_stats = self.font_stats.get(text_block['font_name'], {})
-        max_size = font_stats.get('max_size', self.body_font_size * 1.5)
+        font_size = text_block.get('font_size', 0)
+        font_stats = self.font_stats.get(text_block.get('font_name', ''), {})
+        max_size = font_stats.get('max_size', self.body_font_size * 1.5 if self.body_font_size > 0 else 12)
         
         # Map font size to levels
         if font_size >= max_size * 0.9:
@@ -444,126 +530,64 @@ class ContractParser:
         
         return hierarchy
 
-    def parse_pdf(self) -> Dict:
-        """
-        Parse the PDF and generate hierarchical structure
-        
-        Returns:
-            Dictionary with document metadata and hierarchical structure
-        """
-        try:
-            self.open_pdf()
-            
-            all_text_blocks = []
-            
-            # Process each page
-            for page_idx, page in enumerate(self.pdf.pages):
-                print(f"Processing page {page_idx + 1}/{len(self.pdf.pages)}")
-                
-                # Extract text with properties
-                text_blocks = self.extract_text_with_properties(page)
-                all_text_blocks.extend(text_blocks)
-            
-            # Analyze font statistics to identify headings
-            font_stats = self.analyze_font_statistics()
-            
-            # Build hierarchical structure
-            hierarchy = self.build_hierarchical_structure(all_text_blocks)
-            
-            # Create document metadata
-            metadata = {
-                'filename': os.path.basename(self.pdf_path),
-                'pages': len(self.pdf.pages),
-                'title': os.path.splitext(os.path.basename(self.pdf_path))[0],
-            }
-            
-            # Create result object
-            result = {
-                'metadata': metadata,
-                'structure': hierarchy
-            }
-            
-            return result
-            
-        finally:
-            self.close_pdf()
 
-    def clean_text(self, text: str) -> str:
-        """
-        Clean text by removing excessive whitespace and fixing common issues
-        
-        Args:
-            text: Text to clean
-            
-        Returns:
-            Cleaned text
-        """
-        # Replace multiple spaces with a single space
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Remove unnecessary line breaks
-        text = text.replace('\n', ' ')
-        
-        # Strip leading/trailing whitespace
-        text = text.strip()
-        
-        return text
-
-def parse_contract(pdf_path: str, output_file: Optional[str] = None) -> Dict:
+def process_folder(input_folder: str, output_folder: str = None):
     """
-    Parse a contract PDF and generate hierarchical structure
+    Process all PDFs in a folder and save as structured JSON
     
     Args:
-        pdf_path: Path to the PDF file
-        output_file: Path to save the parsed structure (optional)
-        
-    Returns:
-        Dictionary with document metadata and hierarchical structure
+        input_folder: Path to folder containing PDFs
+        output_folder: Path to save JSON output (defaults to input folder)
     """
-    parser = ContractParser(pdf_path)
-    result = parser.parse_pdf()
+    if output_folder is None:
+        output_folder = input_folder
     
-    # Save to file if requested
-    if output_file:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
-        print(f"Structure saved to {output_file}")
+    # Create output folder if it doesn't exist
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
     
-    return result
+    # Get all PDF files
+    pdf_files = [f for f in os.listdir(input_folder) if f.lower().endswith('.pdf')]
+    
+    if not pdf_files:
+        print(f"No PDF files found in {input_folder}")
+        return
+    
+    print(f"Found {len(pdf_files)} PDF files")
+    
+    # Process each PDF
+    for pdf_file in pdf_files:
+        pdf_path = os.path.join(input_folder, pdf_file)
+        base_name = os.path.splitext(pdf_file)[0]
+        output_path = os.path.join(output_folder, f"{base_name}.json")
+        
+        print(f"\nProcessing: {pdf_file}")
+        try:
+            # Parse the PDF
+            parser = ContractParser(pdf_path)
+            result = parser.parse()
+            
+            # Save to JSON
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            
+            print(f"Saved structure to: {output_path}")
+            
+        except Exception as e:
+            print(f"Error processing {pdf_file}: {str(e)}")
 
-def print_section(section, indent=0):
-    """Print a section with proper indentation"""
-    print(" " * indent + f"- {section.get('heading', 'Untitled Section')} (Level {section.get('level', 0)}, Page {section.get('page', 0)})")
-    
-    content = section.get('content', '')
-    if content:
-        # Print just the first 100 characters of content
-        print(" " * (indent + 2) + f"Content: {content[:100]}..." if len(content) > 100 else content)
-    
-    for subsection in section.get('subsections', []):
-        print_section(subsection, indent + 4)
 
 def main():
-    """Main function to run the contract parser from command line"""
-    parser = argparse.ArgumentParser(description='Parse contract PDFs into structured JSON')
-    parser.add_argument('pdf_path', help='Path to the contract PDF file')
-    parser.add_argument('--output', help='Path to save the structured JSON')
-    parser.add_argument('--visualize', action='store_true', help='Visualize the structure')
+    """
+    Main function with hardcoded paths
+    """
+    # EDIT THESE PATHS
+    input_folder = "/path/to/contracts"  # <-- CHANGE THIS to your input folder path
+    output_folder = "/path/to/output"    # <-- CHANGE THIS to your output folder path (or set to None to use same as input)
     
-    args = parser.parse_args()
-    
-    # Parse contract
-    result = parse_contract(args.pdf_path, args.output)
-    
-    # Visualize if requested
-    if args.visualize:
-        print("\nDocument Structure:")
-        print(f"Title: {result['metadata']['title']}")
-        print(f"Pages: {result['metadata']['pages']}")
-        print("\nHierarchy:")
-        
-        for section in result['structure']:
-            print_section(section)
+    # Process all PDFs in the folder
+    process_folder(input_folder, output_folder)
+
 
 if __name__ == "__main__":
     main()
