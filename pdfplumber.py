@@ -42,6 +42,14 @@ def extract_text_from_pdf(pdf_path: str, skip_header_footer: bool = True, skip_f
                 full_text += page_text + "\n"
     
     return full_text
+    
+def clean_cid_characters(text):
+    # Replace specific CIDs with appropriate characters
+    text = re.sub(r'\(cid:9\)', '\t', text)  # Replace tab CID with actual tab
+    text = re.sub(r'\(cid:13\)', '\n', text)  # Replace return CID with newline
+    # Replace any remaining CIDs with spaces
+    text = re.sub(r'\(cid:\d+\)', ' ', text)
+    return text
 
 def extract_paragraphs(text: str) -> List[str]:
     """
