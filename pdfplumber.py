@@ -4,21 +4,26 @@ import json
 import argparse
 from typing import Dict, List, Tuple, Optional
 
-def extract_text_from_pdf(pdf_path: str, skip_header_footer: bool = True) -> List[str]:
+def extract_text_from_pdf(pdf_path: str, skip_header_footer: bool = True, skip_first_page: bool = False) -> str:
     """
-    Extract text from PDF file, optionally skipping headers and footers.
+    Extract text from PDF file, optionally skipping headers and footers and the first page.
     
     Args:
         pdf_path: Path to the PDF file
         skip_header_footer: Whether to skip headers and footers
+        skip_first_page: Whether to skip the first page of the PDF
         
     Returns:
-        List of strings, each representing a page's text content
+        String containing all extracted text from the PDF
     """
-    text_content = []
+    full_text = ""
     
     with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
+        for i, page in enumerate(pdf.pages):
+            # Skip the first page if requested
+            if skip_first_page and i == 0:
+                continue
+                
             # Extract text with or without cropping
             if skip_header_footer:
                 # Get page dimensions
@@ -34,81 +39,51 @@ def extract_text_from_pdf(pdf_path: str, skip_header_footer: bool = True) -> Lis
                 page_text = page.extract_text()
                 
             if page_text:
-                text_content.append(page_text)
+                full_text += page_text + "\n"
     
-    return text_content
+    return full_text
 
-def identify_headings_and_content(text_content: List[str]) -> Dict[str, str]:
+def extract_paragraphs(text: str) -> List[str]:
     """
-    Identify headings and associated content from extracted text.
+    Extract paragraphs from text.
     
     Args:
-        text_content: List of strings, each representing a page's text content
+        text: The full text extracted from the PDF
         
     Returns:
-        Dictionary with headings as keys and their content as values
+        List of paragraphs
     """
-    # Join all pages into a single string
-    full_text = "\n".join(text_content)
+    # Remove excessive whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
     
-    # Pattern to match headings: number(s) followed by a dot, space, and text
-    heading_pattern = r'\n\s*(\d+\.(?:\d+\.)*)\s+(.*?)\n'
+    # Split text into paragraphs based on double newlines or significant spacing
+    # This regex pattern might need adjustment based on your specific PDF structure
+    paragraphs = re.split(r'\n\s*\n|\n{2,}', text)
     
-    # Find all headings
-    headings = re.findall(heading_pattern, full_text)
+    # Filter out empty paragraphs and strip whitespace
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
-    # Dictionary to store heading structure
-    structure = {}
-    
-    if not headings:
-        return structure
-    
-    # Iterate through headings
-    for i in range(len(headings)):
-        heading_num, heading_text = headings[i]
-        heading_key = f"{heading_num} {heading_text}"
-        
-        # Find start position of this heading
-        heading_pos = full_text.find(f"\n{heading_num} {heading_text}\n")
-        
-        # Find the start position of the next heading (if any)
-        if i < len(headings) - 1:
-            next_heading_num, next_heading_text = headings[i + 1]
-            next_heading_pos = full_text.find(f"\n{next_heading_num} {next_heading_text}\n")
-            # Extract content between headings
-            content = full_text[heading_pos + len(f"\n{heading_num} {heading_text}\n"):next_heading_pos].strip()
-        else:
-            # If this is the last heading, extract content until the end
-            content = full_text[heading_pos + len(f"\n{heading_num} {heading_text}\n"):].strip()
-        
-        structure[heading_key] = content
-    
-    return structure
+    return paragraphs
 
-def structure_to_json(structure: Dict[str, str], output_path: Optional[str] = None) -> str:
+def paragraphs_to_json(paragraphs: List[str], output_path: Optional[str] = None) -> str:
     """
-    Convert the heading-content structure to JSON.
+    Convert paragraphs to JSON.
     
     Args:
-        structure: Dictionary with headings as keys and their content as values
+        paragraphs: List of paragraph strings
         output_path: Optional path to save the JSON file
         
     Returns:
-        JSON string representation of the structure
+        JSON string representation of paragraphs
     """
-    # Create a structured format with separate heading number, title, and content
-    formatted_structure = []
-    
-    for heading, content in structure.items():
-        # Extract heading number and text
-        match = re.match(r'(\d+\.(?:\d+\.)*)\s+(.*)', heading)
-        if match:
-            number, title = match.groups()
-            formatted_structure.append({
-                "heading_number": number.strip(),
-                "heading_title": title.strip(),
-                "content": content
-            })
+    # Create a simple structure with paragraph index and text
+    formatted_structure = [
+        {
+            "paragraph_id": i + 1,
+            "text": para
+        }
+        for i, para in enumerate(paragraphs)
+    ]
     
     # Convert to JSON
     json_str = json.dumps(formatted_structure, indent=2, ensure_ascii=False)
@@ -121,28 +96,32 @@ def structure_to_json(structure: Dict[str, str], output_path: Optional[str] = No
     return json_str
 
 def main():
-    parser = argparse.ArgumentParser(description='Extract structured content from a PDF file')
+    parser = argparse.ArgumentParser(description='Extract paragraphs from a PDF file')
     parser.add_argument('pdf_path', help='Path to the PDF file')
     parser.add_argument('--output', '-o', help='Output JSON file path')
     parser.add_argument('--include-header-footer', action='store_true', 
                         help='Include header and footer in extraction')
+    parser.add_argument('--skip-first-page', action='store_true',
+                        help='Skip the first page of the PDF')
     
     args = parser.parse_args()
     
     # Extract text from PDF
-    text_content = extract_text_from_pdf(
+    full_text = extract_text_from_pdf(
         args.pdf_path, 
-        skip_header_footer=not args.include_header_footer
+        skip_header_footer=not args.include_header_footer,
+        skip_first_page=args.skip_first_page
     )
     
-    # Identify headings and content
-    structure = identify_headings_and_content(text_content)
+    # Extract paragraphs
+    paragraphs = extract_paragraphs(full_text)
     
     # Convert to JSON and save
-    json_str = structure_to_json(structure, args.output)
+    json_str = paragraphs_to_json(paragraphs, args.output)
     
     if args.output:
-        print(f"Structured content saved to {args.output}")
+        print(f"Paragraphs saved to {args.output}")
+        print(f"Total paragraphs extracted: {len(paragraphs)}")
     else:
         print(json_str)
 
