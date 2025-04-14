@@ -5,7 +5,8 @@ This script demonstrates how to properly extract text from double-columned PDFs
 like research papers, ensuring that:
 1. Columns are processed in the correct order
 2. Headers and footers are properly handled (optionally ignored)
-3. Paragraphs that span across pages are correctly joined
+3. Paragraphs that span across columns are correctly joined
+4. Paragraphs that span across pages are correctly joined
 """
 
 import fitz  # PyMuPDF
@@ -87,13 +88,29 @@ def parse_double_column_pdf(
             else:
                 content_blocks.append(block)
         
-        # 3. Identify columns in the main content area using x-coordinates
+        # 3. Process headers and footers
+        header_paragraphs = []
+        if include_headers and header_blocks:
+            # Sort header blocks from top to bottom, then left to right
+            header_blocks.sort(key=lambda b: (b[1], b[0]))
+            header_paragraphs = process_blocks_into_paragraphs(header_blocks, paragraph_spacing_threshold)
+        
+        footer_paragraphs = []
+        if include_footers and footer_blocks:
+            # Sort footer blocks from top to bottom, then left to right
+            footer_blocks.sort(key=lambda b: (b[1], b[0]))
+            footer_paragraphs = process_blocks_into_paragraphs(footer_blocks, paragraph_spacing_threshold)
+        
+        # 4. Process main content
+        content_paragraphs = []
+        is_double_column = False
+        
         if content_blocks:
+            # Identify columns using x-coordinates
             x_centers = [(block[0] + block[2]) / 2 for block in content_blocks]
             X = np.array(x_centers).reshape(-1, 1)
             
             # Skip clustering if too few blocks
-            is_double_column = False
             column_centers = [page_width / 2]  # Default for single column
             
             if len(content_blocks) >= 3:
@@ -111,190 +128,106 @@ def parse_double_column_pdf(
                     if col_distance > (page_width * 0.2):
                         is_double_column = True
             
-            # Get the midpoint between columns
+            # Get the midpoint between columns for separation
             if len(column_centers) > 1:
                 midpoint = (column_centers[0] + column_centers[1]) / 2
             else:
                 midpoint = page_width / 2
             
-            # 4. Group blocks by column and sort within columns
-            left_column = []
-            right_column = []
-            
-            for block in content_blocks:
-                block_center_x = (block[0] + block[2]) / 2
-                
-                if block_center_x < midpoint:
-                    left_column.append(block)
-                else:
-                    right_column.append(block)
-            
-            # Sort each column by y-coordinate (top to bottom)
-            left_column.sort(key=lambda b: b[1])
-            right_column.sort(key=lambda b: b[1])
-            
-            # 5. Process column blocks into paragraphs
-            # Function to extract paragraphs from a column
-            def process_column(column_blocks):
-                paragraphs = []
-                current_paragraph = ""
-                
-                for i, block in enumerate(column_blocks):
-                    text = block[4]
-                    
-                    if not text.strip():
-                        continue
-                    
-                    # If we're starting a new paragraph
-                    if not current_paragraph:
-                        current_paragraph = text
-                    else:
-                        # Check spacing between blocks
-                        prev_block = column_blocks[i-1]
-                        prev_bottom = prev_block[3]  # y1 (bottom)
-                        current_top = block[1]       # y0 (top)
-                        
-                        spacing = current_top - prev_bottom
-                        
-                        # If spacing is small, consider it part of the same paragraph
-                        if spacing <= paragraph_spacing_threshold:
-                            current_paragraph += " " + text
-                        else:
-                            # End current paragraph and start a new one
-                            paragraphs.append(current_paragraph)
-                            current_paragraph = text
-                
-                # Add the last paragraph if it exists
-                if current_paragraph:
-                    paragraphs.append(current_paragraph)
-                    
-                return paragraphs
-            
-            # Process each column
-            left_paragraphs = process_column(left_column)
-            right_paragraphs = process_column(right_column)
-            
-            # Check for cross-column paragraph continuity in double-column layouts
-            if is_double_column and left_paragraphs and right_paragraphs:
-                # Check if the last paragraph in left column might continue in the right column
-                if left_paragraphs:
-                    last_left_para = left_paragraphs[-1]
-                    # Check if it ends with a period, question mark, etc.
-                    ends_with_punctuation = bool(re.search(r'[.!?:;]
-            
-            # 6. Handle header blocks
-            header_paragraphs = []
-            if include_headers and header_blocks:
-                # Sort header blocks from top to bottom, then left to right
-                header_blocks.sort(key=lambda b: (b[1], b[0]))
-                header_paragraphs = process_column(header_blocks)
-            
-            # 7. Handle footer blocks
-            footer_paragraphs = []
-            if include_footers and footer_blocks:
-                # Sort footer blocks from top to bottom, then left to right
-                footer_blocks.sort(key=lambda b: (b[1], b[0]))
-                footer_paragraphs = process_column(footer_blocks)
-            
-            # 8. Build the final paragraphs list based on layout
-            paragraphs = []
-            
-            # Add headers first if included
-            if include_headers:
-                paragraphs.extend(header_paragraphs)
-            
-            # Add main content based on column layout
             if is_double_column:
-                # For double-column layout, first process left column, then right column
-                paragraphs.extend(left_paragraphs)
-                paragraphs.extend(right_paragraphs)
-            else:
-                # For single-column, combine all content blocks and sort by y-coordinate
-                all_content_blocks = sorted(content_blocks, key=lambda b: b[1])
-                content_paragraphs = process_column(all_content_blocks)
-                paragraphs.extend(content_paragraphs)
-            
-            # Add footers last if included
-            if include_footers:
-                paragraphs.extend(footer_paragraphs)
-            
-            # 9. Handle cross-page paragraph continuity
-            if paragraphs:
-                # Check if we need to join with a paragraph from the previous page
-                if prev_paragraph_info and paragraphs:
-                    prev_text, ends_with_period = prev_paragraph_info
-                    
-                    # If previous paragraph doesn't end with a period and current page has paragraphs
-                    if not ends_with_period:
-                        # Get the first paragraph from this page
-                        # Skip headers if they're included (headers shouldn't be joined with previous page content)
-                        first_content_idx = len(header_paragraphs) if include_headers else 0
-                        
-                        if len(paragraphs) > first_content_idx:
-                            first_content_paragraph = paragraphs[first_content_idx]
-                            
-                            # Check if this paragraph starts with a lowercase letter (likely continuation)
-                            if first_content_paragraph and first_content_paragraph.strip():
-                                first_char = first_content_paragraph.strip()[0]
-                                is_lowercase_start = first_char.islower() if first_char.isalpha() else False
-                                
-                                if is_lowercase_start:
-                                    # Join with previous paragraph and replace in the paragraphs list
-                                    joined_paragraph = prev_text + " " + first_content_paragraph
-                                    paragraphs[first_content_idx] = joined_paragraph
-                                    prev_paragraph_info = None  # Reset after joining
-                                else:
-                                    # If not joining, still include the previous paragraph
-                                    paragraphs.insert(first_content_idx, prev_text)
-                                    prev_paragraph_info = None
-                        else:
-                            # If there are no content paragraphs, still include the previous paragraph
-                            paragraphs.append(prev_text)
-                            prev_paragraph_info = None
+                # Separate into left and right columns
+                left_column = []
+                right_column = []
                 
-                # Check the last paragraph of current page for potential continuation
-                last_idx = len(paragraphs) - 1
-                if last_idx >= 0:
-                    # Skip footers when checking for continuation
-                    if include_footers and footer_paragraphs and last_idx >= len(paragraphs) - len(footer_paragraphs):
-                        last_content_idx = last_idx - len(footer_paragraphs)
-                        if last_content_idx >= 0:
-                            last_paragraph = paragraphs[last_content_idx]
-                        else:
-                            last_paragraph = ""
+                for block in content_blocks:
+                    block_center_x = (block[0] + block[2]) / 2
+                    
+                    if block_center_x < midpoint:
+                        left_column.append(block)
                     else:
-                        last_paragraph = paragraphs[last_idx]
-                    
-                    # Check if the paragraph ends with a period, question mark, exclamation mark, etc.
-                    ends_with_period = bool(re.search(r'[.!?:;]$', last_paragraph.strip()))
-                    
-                    # Store for next page if it doesn't end with a sentence-ending punctuation
-                    if not ends_with_period:
-                        prev_paragraph_info = (last_paragraph, ends_with_period)
-                        
-                        # Remove this paragraph as we'll carry it to the next page
-                        if include_footers and footer_paragraphs and last_idx >= len(paragraphs) - len(footer_paragraphs):
-                            paragraphs.pop(last_content_idx)
-                        else:
-                            paragraphs.pop(last_idx)
-        else:
-            # If there are no content blocks, just process headers and footers
-            paragraphs = []
-            
-            if include_headers and header_blocks:
-                header_blocks.sort(key=lambda b: (b[1], b[0]))
-                header_paragraphs = [block[4] for block in header_blocks]
-                paragraphs.extend(header_paragraphs)
-            
-            if include_footers and footer_blocks:
-                footer_blocks.sort(key=lambda b: (b[1], b[0]))
-                footer_paragraphs = [block[4] for block in footer_blocks]
-                paragraphs.extend(footer_paragraphs)
+                        right_column.append(block)
+                
+                # Sort each column by y-coordinate (top to bottom)
+                left_column.sort(key=lambda b: b[1])
+                right_column.sort(key=lambda b: b[1])
+                
+                # Process each column into paragraphs
+                left_paragraphs = process_blocks_into_paragraphs(left_column, paragraph_spacing_threshold)
+                right_paragraphs = process_blocks_into_paragraphs(right_column, paragraph_spacing_threshold)
+                
+                # Handle cross-column paragraph continuity
+                if left_paragraphs and right_paragraphs:
+                    joined_paragraphs = handle_cross_column_continuity(left_paragraphs, right_paragraphs)
+                    content_paragraphs = joined_paragraphs
+                else:
+                    # Just concatenate the paragraphs from both columns
+                    content_paragraphs = left_paragraphs + right_paragraphs
+            else:
+                # Single column - sort all blocks by y-coordinate
+                content_blocks.sort(key=lambda b: b[1])
+                content_paragraphs = process_blocks_into_paragraphs(content_blocks, paragraph_spacing_threshold)
         
-        # Add to result
+        # 5. Combine all paragraphs in the correct order
+        all_paragraphs = []
+        
+        # Add headers first if included
+        if header_paragraphs:
+            all_paragraphs.extend(header_paragraphs)
+        
+        # Handle cross-page paragraph continuity
+        if prev_paragraph_info and content_paragraphs:
+            prev_text, ends_with_punctuation = prev_paragraph_info
+            
+            # If we have content and the last paragraph didn't end with punctuation
+            if not ends_with_punctuation:
+                first_content_para = content_paragraphs[0]
+                
+                # Check if current first paragraph starts with lowercase (likely continuation)
+                if first_content_para and first_content_para.strip():
+                    first_char = first_content_para.strip()[0]
+                    is_lowercase_start = first_char.islower() if first_char.isalpha() else False
+                    
+                    if is_lowercase_start:
+                        # Join with previous paragraph
+                        joined_paragraph = prev_text + " " + first_content_para
+                        content_paragraphs[0] = joined_paragraph
+                    else:
+                        # If not joining, still include the previous paragraph
+                        all_paragraphs.append(prev_text)
+                else:
+                    # If no content paragraphs, still include the previous paragraph
+                    all_paragraphs.append(prev_text)
+                
+                # Reset previous paragraph info after handling
+                prev_paragraph_info = None
+            else:
+                # If not joining, still include the previous paragraph
+                all_paragraphs.append(prev_text)
+                prev_paragraph_info = None
+        
+        # Add main content
+        all_paragraphs.extend(content_paragraphs)
+        
+        # Add footers last if included
+        if footer_paragraphs:
+            all_paragraphs.extend(footer_paragraphs)
+        
+        # Check the last paragraph for potential continuation to next page
+        if content_paragraphs:
+            last_para = content_paragraphs[-1]
+            ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_para.strip()))
+            
+            # If it doesn't end with punctuation, it might continue on the next page
+            if not ends_with_punctuation:
+                prev_paragraph_info = (last_para, ends_with_punctuation)
+                
+                # Remove from current page as we'll carry it forward
+                all_paragraphs.pop()  # Remove the last paragraph
+        
+        # Add processed paragraphs to result
         result["pages"].append({
             "page_number": page_num + 1,
-            "paragraphs": paragraphs,
+            "paragraphs": all_paragraphs,
             "layout": "double_column" if is_double_column else "single_column"
         })
     
@@ -306,202 +239,101 @@ def parse_double_column_pdf(
     return result
 
 
-def extract_text_from_pdf(
-    pdf_path: str,
-    include_headers: bool = True,
-    include_footers: bool = False
-) -> str:
+def process_blocks_into_paragraphs(blocks, paragraph_spacing_threshold):
     """
-    Extract text from a PDF file, handling double-column layout and cross-page continuity.
-    Returns the full text as a single string.
+    Process a list of text blocks into paragraphs based on vertical spacing.
     
     Args:
-        pdf_path: Path to the PDF file
-        include_headers: Whether to include headers in the output
-        include_footers: Whether to include footers in the output
+        blocks: List of text blocks with position information
+        paragraph_spacing_threshold: Maximum spacing to consider blocks part of the same paragraph
         
     Returns:
-        Extracted text as a single string
+        List of paragraph texts
     """
-    result = parse_double_column_pdf(
-        pdf_path,
-        include_headers=include_headers,
-        include_footers=include_footers
-    )
+    paragraphs = []
+    current_paragraph = ""
     
-    all_text = []
-    for page in result["pages"]:
-        all_text.extend(page["paragraphs"])
-    
-    return "\n\n".join(all_text)
-
-
-def main():
-    # Example usage
-    pdf_path = "path/to/your/research_paper.pdf"
-    
-    # Parse PDF with default settings (include headers, exclude footers)
-    result = parse_double_column_pdf(
-        pdf_path,
-        include_headers=True,
-        include_footers=False
-    )
-    
-    # Print the first few paragraphs from each page
-    for page in result["pages"]:
-        print(f"Page {page['page_number']} - Layout: {page.get('layout', 'unknown')}")
-        for i, para in enumerate(page["paragraphs"][:3]):  # First 3 paragraphs
-            print(f"  Paragraph {i+1}: {para[:100]}...")  # First 100 chars
-        print()
-    
-    # Alternative: Extract as plain text
-    full_text = extract_text_from_pdf(pdf_path)
-    print(f"Total extracted text length: {len(full_text)} characters")
-
-
-if __name__ == "__main__":
-    main()
-, last_left_para.strip()))
-                    
-                    # If it doesn't end with punctuation and there's at least one paragraph in right column
-                    if not ends_with_punctuation and right_paragraphs:
-                        first_right_para = right_paragraphs[0]
-                        
-                        # Check if right paragraph starts with lowercase (likely continuation)
-                        if first_right_para and first_right_para.strip():
-                            first_char = first_right_para.strip()[0]
-                            is_lowercase_start = first_char.islower() if first_char.isalpha() else False
-                            
-                            if is_lowercase_start:
-                                # Join the paragraphs across columns
-                                joined_para = last_left_para + " " + first_right_para
-                                
-                                # Replace in the lists
-                                left_paragraphs[-1] = joined_para
-                                right_paragraphs.pop(0)  # Remove from right since it's now joined with left
-            
-            # 6. Handle header blocks
-            header_paragraphs = []
-            if include_headers and header_blocks:
-                # Sort header blocks from top to bottom, then left to right
-                header_blocks.sort(key=lambda b: (b[1], b[0]))
-                header_paragraphs = process_column(header_blocks)
-            
-            # 7. Handle footer blocks
-            footer_paragraphs = []
-            if include_footers and footer_blocks:
-                # Sort footer blocks from top to bottom, then left to right
-                footer_blocks.sort(key=lambda b: (b[1], b[0]))
-                footer_paragraphs = process_column(footer_blocks)
-            
-            # 8. Build the final paragraphs list based on layout
-            paragraphs = []
-            
-            # Add headers first if included
-            if include_headers:
-                paragraphs.extend(header_paragraphs)
-            
-            # Add main content based on column layout
-            if is_double_column:
-                # For double-column layout, first process left column, then right column
-                paragraphs.extend(left_paragraphs)
-                paragraphs.extend(right_paragraphs)
-            else:
-                # For single-column, combine all content blocks and sort by y-coordinate
-                all_content_blocks = sorted(content_blocks, key=lambda b: b[1])
-                content_paragraphs = process_column(all_content_blocks)
-                paragraphs.extend(content_paragraphs)
-            
-            # Add footers last if included
-            if include_footers:
-                paragraphs.extend(footer_paragraphs)
-            
-            # 9. Handle cross-page paragraph continuity
-            if paragraphs:
-                # Check if we need to join with a paragraph from the previous page
-                if prev_paragraph_info and paragraphs:
-                    prev_text, ends_with_period = prev_paragraph_info
-                    
-                    # If previous paragraph doesn't end with a period and current page has paragraphs
-                    if not ends_with_period:
-                        # Get the first paragraph from this page
-                        # Skip headers if they're included (headers shouldn't be joined with previous page content)
-                        first_content_idx = len(header_paragraphs) if include_headers else 0
-                        
-                        if len(paragraphs) > first_content_idx:
-                            first_content_paragraph = paragraphs[first_content_idx]
-                            
-                            # Check if this paragraph starts with a lowercase letter (likely continuation)
-                            if first_content_paragraph and first_content_paragraph.strip():
-                                first_char = first_content_paragraph.strip()[0]
-                                is_lowercase_start = first_char.islower() if first_char.isalpha() else False
-                                
-                                if is_lowercase_start:
-                                    # Join with previous paragraph and replace in the paragraphs list
-                                    joined_paragraph = prev_text + " " + first_content_paragraph
-                                    paragraphs[first_content_idx] = joined_paragraph
-                                    prev_paragraph_info = None  # Reset after joining
-                                else:
-                                    # If not joining, still include the previous paragraph
-                                    paragraphs.insert(first_content_idx, prev_text)
-                                    prev_paragraph_info = None
-                        else:
-                            # If there are no content paragraphs, still include the previous paragraph
-                            paragraphs.append(prev_text)
-                            prev_paragraph_info = None
-                
-                # Check the last paragraph of current page for potential continuation
-                last_idx = len(paragraphs) - 1
-                if last_idx >= 0:
-                    # Skip footers when checking for continuation
-                    if include_footers and footer_paragraphs and last_idx >= len(paragraphs) - len(footer_paragraphs):
-                        last_content_idx = last_idx - len(footer_paragraphs)
-                        if last_content_idx >= 0:
-                            last_paragraph = paragraphs[last_content_idx]
-                        else:
-                            last_paragraph = ""
-                    else:
-                        last_paragraph = paragraphs[last_idx]
-                    
-                    # Check if the paragraph ends with a period, question mark, exclamation mark, etc.
-                    ends_with_period = bool(re.search(r'[.!?:;]$', last_paragraph.strip()))
-                    
-                    # Store for next page if it doesn't end with a sentence-ending punctuation
-                    if not ends_with_period:
-                        prev_paragraph_info = (last_paragraph, ends_with_period)
-                        
-                        # Remove this paragraph as we'll carry it to the next page
-                        if include_footers and footer_paragraphs and last_idx >= len(paragraphs) - len(footer_paragraphs):
-                            paragraphs.pop(last_content_idx)
-                        else:
-                            paragraphs.pop(last_idx)
-        else:
-            # If there are no content blocks, just process headers and footers
-            paragraphs = []
-            
-            if include_headers and header_blocks:
-                header_blocks.sort(key=lambda b: (b[1], b[0]))
-                header_paragraphs = [block[4] for block in header_blocks]
-                paragraphs.extend(header_paragraphs)
-            
-            if include_footers and footer_blocks:
-                footer_blocks.sort(key=lambda b: (b[1], b[0]))
-                footer_paragraphs = [block[4] for block in footer_blocks]
-                paragraphs.extend(footer_paragraphs)
+    for i, block in enumerate(blocks):
+        text = block[4]
         
-        # Add to result
-        result["pages"].append({
-            "page_number": page_num + 1,
-            "paragraphs": paragraphs,
-            "layout": "double_column" if is_double_column else "single_column"
-        })
+        if not text.strip():
+            continue
+        
+        # If we're starting a new paragraph
+        if not current_paragraph:
+            current_paragraph = text
+        else:
+            # Check spacing between blocks
+            if i > 0:
+                prev_block = blocks[i-1]
+                prev_bottom = prev_block[3]  # y1 (bottom)
+                current_top = block[1]       # y0 (top)
+                
+                spacing = current_top - prev_bottom
+                
+                # If spacing is small, consider it part of the same paragraph
+                if spacing <= paragraph_spacing_threshold:
+                    current_paragraph += " " + text
+                else:
+                    # End current paragraph and start a new one
+                    paragraphs.append(current_paragraph)
+                    current_paragraph = text
+            else:
+                current_paragraph = text
     
-    # If there's still a paragraph carried over at the end of the document, add it
-    if prev_paragraph_info:
-        last_page = result["pages"][-1]
-        last_page["paragraphs"].append(prev_paragraph_info[0])
+    # Add the last paragraph if it exists
+    if current_paragraph:
+        paragraphs.append(current_paragraph)
+        
+    return paragraphs
+
+
+def handle_cross_column_continuity(left_paragraphs, right_paragraphs):
+    """
+    Handle paragraph continuity across columns by checking if the last paragraph
+    in the left column continues in the first paragraph of the right column.
     
-    return result
+    Args:
+        left_paragraphs: List of paragraphs from the left column
+        right_paragraphs: List of paragraphs from the right column
+        
+    Returns:
+        Combined list of paragraphs with cross-column continuity handled
+    """
+    # Create a copy of the paragraphs to avoid modifying the originals
+    result_paragraphs = left_paragraphs.copy()
+    
+    # If both columns have paragraphs, check for continuity
+    if left_paragraphs and right_paragraphs:
+        # Get the last paragraph in the left column
+        last_left_para = left_paragraphs[-1]
+        
+        # Check if it ends with punctuation
+        ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_left_para.strip()))
+        
+        # If it doesn't end with punctuation, check the first right paragraph
+        if not ends_with_punctuation and right_paragraphs:
+            first_right_para = right_paragraphs[0]
+            
+            # Check if it starts with lowercase (likely continuation)
+            if first_right_para and first_right_para.strip():
+                first_char = first_right_para.strip()[0]
+                is_lowercase_start = first_char.islower() if first_char.isalpha() else False
+                
+                if is_lowercase_start:
+                    # This is likely a continuation - join the paragraphs
+                    joined_para = last_left_para + " " + first_right_para
+                    
+                    # Replace the last left paragraph with the joined version
+                    result_paragraphs[-1] = joined_para
+                    
+                    # Add the remaining right paragraphs (skipping the first)
+                    result_paragraphs.extend(right_paragraphs[1:])
+                    return result_paragraphs
+    
+    # If no continuity detected or empty columns, just append right paragraphs
+    result_paragraphs.extend(right_paragraphs)
+    return result_paragraphs
 
 
 def extract_text_from_pdf(
