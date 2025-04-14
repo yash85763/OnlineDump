@@ -487,13 +487,24 @@ if __name__ == "__main__":
 # except ImportError:
 #     raise ImportError("Required libraries missing. Install with: 'pip install PyPDF2 pdfminer.six pdfplumber'")
 
-# # Optional: Import sentence-transformers for embeddings
+# # Optional: Import libraries for embeddings
 # try:
+#     # For sentence-transformers
 #     from sentence_transformers import SentenceTransformer
 #     import faiss
-#     EMBEDDINGS_AVAILABLE = True
+#     SENTENCE_TRANSFORMERS_AVAILABLE = True
 # except ImportError:
-#     EMBEDDINGS_AVAILABLE = False
+#     SENTENCE_TRANSFORMERS_AVAILABLE = False
+
+# # For Azure OpenAI embeddings
+# try:
+#     from openai import AzureOpenAI
+#     AZURE_OPENAI_AVAILABLE = True
+# except ImportError:
+#     AZURE_OPENAI_AVAILABLE = False
+
+# # Check if any embedding method is available
+# EMBEDDINGS_AVAILABLE = SENTENCE_TRANSFORMERS_AVAILABLE or AZURE_OPENAI_AVAILABLE
 
 
 # class PDFHandler:
@@ -503,7 +514,9 @@ if __name__ == "__main__":
 #                  min_quality_ratio: float = 0.5,
 #                  paragraph_spacing_threshold: int = 10,
 #                  page_continuity_threshold: float = 0.1,
-#                  embedding_model: str = "all-MiniLM-L6-v2"):
+#                  embedding_model: str = "all-MiniLM-L6-v2",
+#                  embedding_provider: str = "sentence_transformers",
+#                  azure_openai_config: Dict[str, str] = None):
 #         """
 #         Initialize the PDF handler with configurable thresholds.
         
@@ -513,19 +526,49 @@ if __name__ == "__main__":
 #                                          part of the same paragraph, in points (default 10)
 #             page_continuity_threshold: Percentage of page height to check for paragraph 
 #                                        continuation across pages (default 0.1 or 10%)
-#             embedding_model: Name of the sentence-transformer model to use for embeddings
+#             embedding_model: Name of the embedding model to use
+#                             - For sentence_transformers: model name like "all-MiniLM-L6-v2"
+#                             - For azure_openai: deployment name for the embedding model
+#             embedding_provider: Which embedding provider to use, either "sentence_transformers" or "azure_openai"
+#             azure_openai_config: Configuration for Azure OpenAI, required if using "azure_openai" provider:
+#                                 - api_key: Azure OpenAI API key
+#                                 - azure_endpoint: Azure OpenAI endpoint URL
+#                                 - api_version: API version (e.g., "2023-05-15")
 #         """
 #         self.min_quality_ratio = min_quality_ratio
 #         self.paragraph_spacing_threshold = paragraph_spacing_threshold
 #         self.page_continuity_threshold = page_continuity_threshold
+#         self.embedding_provider = embedding_provider
+#         self.azure_openai_config = azure_openai_config or {}
         
 #         # Initialize the embedding model if available
 #         self.embedding_model = None
-#         if EMBEDDINGS_AVAILABLE:
+#         self.azure_client = None
+        
+#         if embedding_provider == "sentence_transformers" and SENTENCE_TRANSFORMERS_AVAILABLE:
 #             try:
 #                 self.embedding_model = SentenceTransformer(embedding_model)
+#                 print(f"Initialized Sentence Transformers model: {embedding_model}")
 #             except Exception as e:
-#                 print(f"Warning: Could not load embedding model: {e}")
+#                 print(f"Warning: Could not load Sentence Transformers model: {e}")
+        
+#         elif embedding_provider == "azure_openai" and AZURE_OPENAI_AVAILABLE:
+#             try:
+#                 # Check if we have all the required config parameters
+#                 required_params = ["api_key", "azure_endpoint", "api_version"]
+#                 if not all(param in self.azure_openai_config for param in required_params):
+#                     missing = [p for p in required_params if p not in self.azure_openai_config]
+#                     raise ValueError(f"Missing required Azure OpenAI config parameters: {missing}")
+                
+#                 self.azure_client = AzureOpenAI(
+#                     api_key=self.azure_openai_config["api_key"],
+#                     api_version=self.azure_openai_config["api_version"],
+#                     azure_endpoint=self.azure_openai_config["azure_endpoint"]
+#                 )
+#                 self.embedding_model = embedding_model  # Store the deployment name
+#                 print(f"Initialized Azure OpenAI client with deployment: {embedding_model}")
+#             except Exception as e:
+#                 print(f"Warning: Could not initialize Azure OpenAI client: {e}")
     
 #     def process_pdf(self, pdf_path: str, generate_embeddings: bool = False) -> Dict[str, Any]:
 #         """
@@ -844,7 +887,7 @@ if __name__ == "__main__":
     
 #     def generate_embeddings(self, pages_content: List[Dict[str, Any]]) -> Dict[str, Any]:
 #         """
-#         Generate embeddings for each paragraph using sentence-transformers.
+#         Generate embeddings for each paragraph using the configured embedding provider.
         
 #         Args:
 #             pages_content: List of dictionaries containing page content
@@ -852,7 +895,9 @@ if __name__ == "__main__":
 #         Returns:
 #             Dictionary with paragraph indices and their embeddings
 #         """
-#         if not EMBEDDINGS_AVAILABLE or self.embedding_model is None:
+#         if not EMBEDDINGS_AVAILABLE or (
+#             self.embedding_provider == "sentence_transformers" and self.embedding_model is None) or (
+#             self.embedding_provider == "azure_openai" and self.azure_client is None):
 #             return {"error": "Embedding generation not available"}
         
 #         all_paragraphs = []
@@ -864,18 +909,52 @@ if __name__ == "__main__":
 #                 all_paragraphs.append(paragraph)
 #                 paragraph_indices.append((page_idx, para_idx))
         
-#         # Generate embeddings
+#         # Generate embeddings based on the selected provider
 #         try:
-#             embeddings = self.embedding_model.encode(all_paragraphs)
+#             embeddings = None
             
-#             # Create a mapping of indices to embeddings
-#             embedding_map = {}
-#             for (page_idx, para_idx), embedding in zip(paragraph_indices, embeddings):
-#                 if page_idx not in embedding_map:
-#                     embedding_map[page_idx] = {}
-#                 embedding_map[page_idx][para_idx] = embedding.tolist()
+#             if self.embedding_provider == "sentence_transformers":
+#                 # Use Sentence Transformers
+#                 embeddings = self.embedding_model.encode(all_paragraphs)
+                
+#                 # Create a mapping of indices to embeddings
+#                 embedding_map = {}
+#                 for (page_idx, para_idx), embedding in zip(paragraph_indices, embeddings):
+#                     if page_idx not in embedding_map:
+#                         embedding_map[page_idx] = {}
+#                     embedding_map[page_idx][para_idx] = embedding.tolist()
+                
+#                 return embedding_map
+                
+#             elif self.embedding_provider == "azure_openai":
+#                 # Use Azure OpenAI API
+#                 embedding_map = {}
+                
+#                 # Process in batches to avoid token limits (max 16 texts per request)
+#                 batch_size = 16
+#                 for i in range(0, len(all_paragraphs), batch_size):
+#                     batch = all_paragraphs[i:i+batch_size]
+#                     batch_indices = paragraph_indices[i:i+batch_size]
+                    
+#                     # Get embeddings from Azure OpenAI
+#                     response = self.azure_client.embeddings.create(
+#                         input=batch,
+#                         model=self.embedding_model  # This should be the deployment name
+#                     )
+                    
+#                     # Extract embeddings from response and map to paragraphs
+#                     for j, embedding_data in enumerate(response.data):
+#                         page_idx, para_idx = batch_indices[j]
+                        
+#                         if page_idx not in embedding_map:
+#                             embedding_map[page_idx] = {}
+                        
+#                         embedding_map[page_idx][para_idx] = embedding_data.embedding
+                
+#                 return embedding_map
             
-#             return embedding_map
+#             else:
+#                 return {"error": f"Unknown embedding provider: {self.embedding_provider}"}
             
 #         except Exception as e:
 #             return {"error": f"Error generating embeddings: {str(e)}"}
@@ -948,18 +1027,62 @@ if __name__ == "__main__":
 #     output_directory = "extracted/"  # Directory for output JSON files
     
 #     # Whether to generate embeddings
-#     generate_embeddings = False
+#     generate_embeddings = True
+    
+#     # Choose embedding provider: "sentence_transformers" or "azure_openai"
+#     embedding_provider = "azure_openai"
+    
+#     # For Azure OpenAI embeddings, provide these configuration details
+#     azure_openai_config = {
+#         "api_key": "your-azure-openai-api-key",
+#         "azure_endpoint": "https://your-resource-name.openai.azure.com/",
+#         "api_version": "2023-05-15"
+#     }
     
 #     # Process a single file
 #     if os.path.isfile(input_path):
-#         handler = PDFHandler()
+#         # Initialize the handler with appropriate configuration
+#         if embedding_provider == "azure_openai":
+#             handler = PDFHandler(
+#                 embedding_provider=embedding_provider,
+#                 embedding_model="text-embedding-ada-002",  # Use your deployment name here
+#                 azure_openai_config=azure_openai_config
+#             )
+#         else:
+#             # Default to sentence_transformers
+#             handler = PDFHandler(embedding_provider="sentence_transformers")
+            
 #         result = handler.process_pdf(input_path, generate_embeddings)
 #         handler.save_to_json(result, output_path)
 #         print(f"Processed {input_path} and saved to {output_path}")
     
 #     # Uncomment the following lines to process a directory instead
 #     # if os.path.isdir(input_directory):
-#     #     results = process_directory(input_directory, output_directory, generate_embeddings)
+#     #     # Use the same handler initialization as above
+#     #     if embedding_provider == "azure_openai":
+#     #         handler = PDFHandler(
+#     #             embedding_provider=embedding_provider,
+#     #             embedding_model="text-embedding-ada-002",
+#     #             azure_openai_config=azure_openai_config
+#     #         )
+#     #     else:
+#     #         handler = PDFHandler(embedding_provider="sentence_transformers")
+#     #         
+#     #     # Custom directory processing with the configured handler
+#     #     results = []
+#     #     for filename in os.listdir(input_directory):
+#     #         if filename.lower().endswith('.pdf'):
+#     #             pdf_path = os.path.join(input_directory, filename)
+#     #             output_path = os.path.join(output_directory, f"{os.path.splitext(filename)[0]}.json")
+#     #             
+#     #             print(f"Processing {filename}...")
+#     #             result = handler.process_pdf(pdf_path, generate_embeddings)
+#     #             
+#     #             # Save result to JSON
+#     #             handler.save_to_json(result, output_path)
+#     #             
+#     #             results.append(result)
+#     #     
 #     #     print(f"Processed {len(results)} PDF files from {input_directory} and saved to {output_directory}")
 #     #
 #     # else:
