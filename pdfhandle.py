@@ -234,96 +234,146 @@ class PDFHandler:
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
             page_height = page.rect.height
+            page_width = page.rect.width
             
             # Extract text blocks
             blocks = page.get_text("blocks")
             
-            # Sort blocks by y-coordinate (top to bottom)
-            blocks.sort(key=lambda b: b[1])  # Sort by y0 (top coordinate)
+            # Determine if the page has a double column layout
+            is_double_column = False
+            midpoint = page_width / 2
             
-            current_paragraphs = []
-            current_paragraph = ""
+            # If enough blocks, try to detect columns
+            if len(blocks) >= 3:
+                # Get x-coordinates of blocks (middle of each block)
+                x_centers = [(block[0] + block[2]) / 2 for block in blocks]
+                X = np.array(x_centers).reshape(-1, 1)
+                
+                # Try clustering with k=2 (assuming either 1 or 2 columns)
+                kmeans = KMeans(n_clusters=2, random_state=0).fit(X)
+                centers = kmeans.cluster_centers_.flatten()
+                counts = np.bincount(kmeans.labels_)
+                
+                # Sort centers from left to right
+                column_centers = sorted(centers)
+                
+                # If centers are far apart and both clusters have blocks, it's likely double column
+                if len(column_centers) > 1:
+                    center_distance = abs(column_centers[0] - column_centers[1])
+                    if (center_distance > page_width * 0.3 and 
+                            min(counts) > len(x_centers) * 0.15):
+                        is_double_column = True
+                        midpoint = (column_centers[0] + column_centers[1]) / 2
             
-            # Check if we need to continue a paragraph from the previous page
-            if last_block_info and blocks:
-                prev_text, prev_has_end_punctuation = last_block_info
+            # Define header and footer boundaries (optional)
+            header_boundary = page_height * 0.1  # Top 10% of page
+            footer_boundary = page_height * 0.9  # Bottom 10% of page
+            
+            # Separate blocks into header, footer, and main content
+            header_blocks = []
+            footer_blocks = []
+            content_blocks = []
+            
+            for block in blocks:
+                # Block coordinates
+                y0 = block[1]  # Top of block
+                y1 = block[3]  # Bottom of block
                 
-                # Get first block of current page
-                first_block = blocks[0]
-                first_block_text = first_block[4]
-                
-                # Check if first block starts with a lowercase letter (potential continuation)
-                first_char = first_block_text.strip()[0] if first_block_text.strip() else ""
-                is_lowercase_start = first_char.islower() if first_char.isalpha() else False
-                
-                # If the previous block didn't end with punctuation and the current starts lowercase,
-                # consider it a continuation
-                if not prev_has_end_punctuation and is_lowercase_start:
-                    current_paragraph = prev_text + " " + first_block_text
-                    blocks = blocks[1:]  # Remove the first block as it's been processed
+                if y0 < header_boundary:
+                    header_blocks.append(block)
+                elif y1 > footer_boundary:
+                    footer_blocks.append(block)
                 else:
-                    # Add the previous paragraph as a separate paragraph
-                    current_paragraphs.append(prev_text)
+                    content_blocks.append(block)
             
-            # Process remaining blocks
-            for i, block in enumerate(blocks):
-                text = block[4]
+            # Process headers (if needed)
+            header_paragraphs = []
+            if header_blocks:
+                header_blocks.sort(key=lambda b: (b[1], b[0]))  # Sort by y, then x
+                raw_header_paragraphs = self._process_blocks_into_paragraphs(header_blocks)
+                header_paragraphs = process_sequential_paragraphs(raw_header_paragraphs, self.min_words_threshold)
+            
+            # Process content blocks based on layout
+            content_paragraphs = []
+            
+            if is_double_column:
+                # Separate into left and right columns
+                left_column = []
+                right_column = []
                 
-                if not text.strip():
-                    continue
-                
-                # If we're starting a new paragraph
-                if not current_paragraph:
-                    current_paragraph = text
-                else:
-                    # Check vertical spacing between blocks
-                    prev_block = blocks[i-1]
-                    prev_bottom = prev_block[3]  # y1 (bottom)
-                    current_top = block[1]      # y0 (top)
+                for block in content_blocks:
+                    block_center_x = (block[0] + block[2]) / 2
                     
-                    spacing = current_top - prev_bottom
-                    
-                    # If spacing is small, consider it part of the same paragraph
-                    if spacing <= self.paragraph_spacing_threshold:
-                        current_paragraph += " " + text
+                    if block_center_x < midpoint:
+                        left_column.append(block)
                     else:
-                        # End current paragraph and start a new one
-                        current_paragraphs.append(current_paragraph)
-                        current_paragraph = text
-            
-            # Add the last paragraph if it exists
-            if current_paragraph:
-                current_paragraphs.append(current_paragraph)
-            
-            # Store info about the last block for potential cross-page continuity
-            if blocks:
-                last_block = blocks[-1]
-                last_text = last_block[4]
-                last_bottom = last_block[3]  # y1 (bottom)
+                        right_column.append(block)
                 
-                # Check if the last block is near the bottom of the page
-                is_near_bottom = (page_height - last_bottom) < (page_height * self.page_continuity_threshold)
+                # Sort each column by y-coordinate (top to bottom)
+                left_column.sort(key=lambda b: b[1])
+                right_column.sort(key=lambda b: b[1])
                 
-                # Check if the last block ends with punctuation
-                has_end_punctuation = bool(re.search(r'[.!?;:]$', last_text.strip()))
+                # Process each column into initial paragraphs
+                left_paragraphs = self._process_blocks_into_paragraphs(left_column)
+                right_paragraphs = self._process_blocks_into_paragraphs(right_column)
                 
-                # If it's near the bottom and doesn't end with punctuation, 
-                # it might continue on the next page
-                if is_near_bottom and not has_end_punctuation:
-                    # Remove the last paragraph as we'll carry it to the next page
-                    if current_paragraphs:
-                        last_paragraph = current_paragraphs.pop()
-                        last_block_info = (last_paragraph, has_end_punctuation)
-                else:
-                    last_block_info = None
+                # Combine paragraphs from both columns and process sequentially
+                all_column_paragraphs = left_paragraphs + right_paragraphs
+                content_paragraphs = process_sequential_paragraphs(all_column_paragraphs, self.min_words_threshold)
             else:
+                # Single column - sort all blocks by y-coordinate
+                content_blocks.sort(key=lambda b: b[1])
+                raw_paragraphs = self._process_blocks_into_paragraphs(content_blocks)
+                content_paragraphs = process_sequential_paragraphs(raw_paragraphs, self.min_words_threshold)
+            
+            # Skip footer processing for now (typically we don't include footers)
+            
+            # Combine paragraphs
+            all_paragraphs = []
+            all_paragraphs.extend(header_paragraphs)
+            
+            # Handle cross-page paragraph continuity
+            if last_block_info and content_paragraphs:
+                prev_text, prev_has_end_punctuation, prev_word_count = last_block_info
+                
+                # Join if previous paragraph doesn't end with punctuation or is very short
+                if not prev_has_end_punctuation or prev_word_count < self.min_words_threshold:
+                    first_content_para = content_paragraphs[0]
+                    joined_paragraph = prev_text + " " + first_content_para
+                    content_paragraphs[0] = joined_paragraph
+                else:
+                    # Add previous paragraph as separate
+                    all_paragraphs.append(prev_text)
+                
+                # Reset previous block info
                 last_block_info = None
             
-            # Add page content to the result
+            # Add content paragraphs
+            all_paragraphs.extend(content_paragraphs)
+            
+            # Check last paragraph for potential continuation to next page
+            if content_paragraphs:
+                last_para = content_paragraphs[-1]
+                has_end_punctuation = bool(re.search(r'[.!?:;]$', last_para.strip()))
+                word_count = len(last_para.split())
+                
+                # If doesn't end with punctuation or is very short, might continue on next page
+                if not has_end_punctuation or word_count < self.min_words_threshold:
+                    last_block_info = (last_para, has_end_punctuation, word_count)
+                    # Remove from current page as we'll carry it to the next
+                    all_paragraphs.pop()
+            
+            # Add page content to result
             pages_content.append({
                 "page_number": page_num + 1,  # 1-based page numbering
-                "paragraphs": current_paragraphs
+                "paragraphs": all_paragraphs,
+                "layout": "double_column" if is_double_column else "single_column"
             })
+        
+        # If there's still a paragraph carried over at the end of the document, add it
+        if last_block_info:
+            last_page = pages_content[-1]
+            last_page["paragraphs"].append(last_block_info[0])
         
         return pages_content
     
