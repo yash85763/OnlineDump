@@ -317,37 +317,29 @@ def handle_cross_column_continuity(left_paragraphs, right_paragraphs, min_words_
     if not right_paragraphs:
         return left_paragraphs
     
-    # Create result list starting with all left paragraphs except the last one
+    # Create result list with all left paragraphs except the last one
     result_paragraphs = left_paragraphs[:-1].copy()
     
-    # Get the last paragraph from left column and first from right
-    last_left_para = left_paragraphs[-1]
-    first_right_para = right_paragraphs[0]
+    # Get the last paragraph from left column
+    current_paragraph = left_paragraphs[-1]
     
-    # Count words in the last paragraph
-    word_count = len(last_left_para.split())
-    
-    # Check if it's a very short paragraph (should always be joined)
-    if word_count < min_words_threshold:
-        # Join the paragraphs
-        joined_para = last_left_para + " " + first_right_para
+    # Process right column paragraphs one by one
+    for right_para in right_paragraphs:
+        # Check if the current paragraph doesn't end with punctuation or is very short
+        word_count = len(current_paragraph.split())
+        ends_with_punctuation = bool(re.search(r'[.!?:;]$', current_paragraph.strip()))
         
-        # Add the joined paragraph and the rest of the right column
-        result_paragraphs.append(joined_para)
-        result_paragraphs.extend(right_paragraphs[1:])
-    else:
-        # Check if the paragraph ends with punctuation
-        ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_left_para.strip()))
-        
-        # If it doesn't end with punctuation, join it with the first paragraph in right column
-        if not ends_with_punctuation:
-            joined_para = last_left_para + " " + first_right_para
-            result_paragraphs.append(joined_para)
-            result_paragraphs.extend(right_paragraphs[1:])
+        # If it doesn't end with punctuation or is very short, join with the next paragraph
+        if not ends_with_punctuation or word_count < min_words_threshold:
+            current_paragraph += " " + right_para
         else:
-            # If it ends with punctuation, keep paragraphs separate
-            result_paragraphs.append(last_left_para)
-            result_paragraphs.extend(right_paragraphs)
+            # It's a complete paragraph, add to results and start a new one
+            result_paragraphs.append(current_paragraph)
+            current_paragraph = right_para
+    
+    # Add the final paragraph if it exists
+    if current_paragraph:
+        result_paragraphs.append(current_paragraph)
     
     return result_paragraphs
 
