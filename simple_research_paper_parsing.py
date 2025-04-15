@@ -1,12 +1,13 @@
 """
 Enhanced Double-Column PDF Parser using PyMuPDF
 
-This script demonstrates how to properly extract text from double-columned PDFs
-like research papers, ensuring that:
+This script provides functionality for extracting text from double-columned PDFs
+like research papers, ensuring:
 1. Columns are processed in the correct order
 2. Headers and footers are properly handled (optionally ignored)
 3. Paragraphs that span across columns are correctly joined
 4. Paragraphs that span across pages are correctly joined
+5. Short paragraphs (less than 5 words) are joined with the next paragraph
 """
 
 import fitz  # PyMuPDF
@@ -23,11 +24,12 @@ def parse_double_column_pdf(
     include_footers: bool = False,
     header_height_percentage: float = 0.1,
     footer_height_percentage: float = 0.1,
-    paragraph_spacing_threshold: int = 10
+    paragraph_spacing_threshold: int = 10,
+    min_words_threshold: int = 5
 ) -> Dict[str, Any]:
     """
     Parse a double-column PDF correctly with enhanced handling of columns, headers, footers,
-    and cross-page paragraph continuity.
+    cross-page paragraph continuity, and short paragraphs.
     
     Args:
         pdf_path: Path to the PDF file
@@ -36,6 +38,7 @@ def parse_double_column_pdf(
         header_height_percentage: Percentage of page height considered as header area (default 10%)
         footer_height_percentage: Percentage of page height considered as footer area (default 10%)
         paragraph_spacing_threshold: Max spacing between blocks to be considered same paragraph (default 10)
+        min_words_threshold: Minimum number of words for a paragraph to be considered standalone (default 5)
         
     Returns:
         Dictionary with parsed content by page
@@ -49,7 +52,7 @@ def parse_double_column_pdf(
     doc = fitz.open(pdf_path)
     
     # Previous paragraph info for handling cross-page continuity
-    prev_paragraph_info = None  # (text, ends_with_period)
+    prev_paragraph_info = None  # Will be a tuple: (text, word_count)
     
     for page_num in range(len(doc)):
         page = doc.load_page(page_num)
@@ -156,12 +159,11 @@ def parse_double_column_pdf(
                 right_paragraphs = process_blocks_into_paragraphs(right_column, paragraph_spacing_threshold)
                 
                 # Handle cross-column paragraph continuity
-                if left_paragraphs and right_paragraphs:
-                    joined_paragraphs = handle_cross_column_continuity(left_paragraphs, right_paragraphs)
-                    content_paragraphs = joined_paragraphs
-                else:
-                    # Just concatenate the paragraphs from both columns
-                    content_paragraphs = left_paragraphs + right_paragraphs
+                content_paragraphs = handle_cross_column_continuity(
+                    left_paragraphs, 
+                    right_paragraphs, 
+                    min_words_threshold
+                )
             else:
                 # Single column - sort all blocks by y-coordinate
                 content_blocks.sort(key=lambda b: b[1])
@@ -176,34 +178,30 @@ def parse_double_column_pdf(
         
         # Handle cross-page paragraph continuity
         if prev_paragraph_info and content_paragraphs:
-            prev_text, ends_with_punctuation = prev_paragraph_info
+            prev_text, prev_word_count = prev_paragraph_info
             
-            # If we have content and the last paragraph didn't end with punctuation
-            if not ends_with_punctuation:
+            # Always join if:
+            # 1. The previous paragraph was very short (fewer than min_words_threshold words)
+            # This happens regardless of punctuation
+            if prev_word_count < min_words_threshold and content_paragraphs:
                 first_content_para = content_paragraphs[0]
-                
-                # Check if current first paragraph starts with lowercase (likely continuation)
-                if first_content_para and first_content_para.strip():
-                    first_char = first_content_para.strip()[0]
-                    is_lowercase_start = first_char.islower() if first_char.isalpha() else False
-                    
-                    if is_lowercase_start:
-                        # Join with previous paragraph
-                        joined_paragraph = prev_text + " " + first_content_para
-                        content_paragraphs[0] = joined_paragraph
-                    else:
-                        # If not joining, still include the previous paragraph
-                        all_paragraphs.append(prev_text)
-                else:
-                    # If no content paragraphs, still include the previous paragraph
-                    all_paragraphs.append(prev_text)
-                
-                # Reset previous paragraph info after handling
+                joined_paragraph = prev_text + " " + first_content_para
+                content_paragraphs[0] = joined_paragraph
                 prev_paragraph_info = None
             else:
-                # If not joining, still include the previous paragraph
-                all_paragraphs.append(prev_text)
-                prev_paragraph_info = None
+                # Check if it ends with punctuation
+                ends_with_punctuation = bool(re.search(r'[.!?:;]$', prev_text.strip()))
+                
+                # If it doesn't end with punctuation, it might continue
+                if not ends_with_punctuation and content_paragraphs:
+                    first_content_para = content_paragraphs[0]
+                    joined_paragraph = prev_text + " " + first_content_para
+                    content_paragraphs[0] = joined_paragraph
+                    prev_paragraph_info = None
+                else:
+                    # If not joining, still include the previous paragraph
+                    all_paragraphs.append(prev_text)
+                    prev_paragraph_info = None
         
         # Add main content
         all_paragraphs.extend(content_paragraphs)
@@ -215,14 +213,25 @@ def parse_double_column_pdf(
         # Check the last paragraph for potential continuation to next page
         if content_paragraphs:
             last_para = content_paragraphs[-1]
-            ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_para.strip()))
+            word_count = len(last_para.split())
             
-            # If it doesn't end with punctuation, it might continue on the next page
-            if not ends_with_punctuation:
-                prev_paragraph_info = (last_para, ends_with_punctuation)
+            # If it's a very short paragraph, it might continue on the next page
+            # regardless of punctuation
+            if word_count < min_words_threshold:
+                prev_paragraph_info = (last_para, word_count)
                 
                 # Remove from current page as we'll carry it forward
-                all_paragraphs.pop()  # Remove the last paragraph
+                all_paragraphs.pop()
+            else:
+                # Check if it ends with punctuation
+                ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_para.strip()))
+                
+                # If it doesn't end with punctuation, it might continue on the next page
+                if not ends_with_punctuation:
+                    prev_paragraph_info = (last_para, word_count)
+                    
+                    # Remove from current page as we'll carry it forward
+                    all_paragraphs.pop()
         
         # Add processed paragraphs to result
         result["pages"].append({
@@ -288,51 +297,58 @@ def process_blocks_into_paragraphs(blocks, paragraph_spacing_threshold):
     return paragraphs
 
 
-def handle_cross_column_continuity(left_paragraphs, right_paragraphs):
+def handle_cross_column_continuity(left_paragraphs, right_paragraphs, min_words_threshold=5):
     """
-    Handle paragraph continuity across columns by checking if the last paragraph
-    in the left column continues in the first paragraph of the right column.
+    Handle paragraph continuity across columns, joining paragraphs when:
+    1. The last paragraph in left column has fewer than min_words_threshold words, OR
+    2. The last paragraph in left column doesn't end with punctuation
     
     Args:
         left_paragraphs: List of paragraphs from the left column
         right_paragraphs: List of paragraphs from the right column
+        min_words_threshold: Minimum word count to be considered a standalone paragraph
         
     Returns:
         Combined list of paragraphs with cross-column continuity handled
     """
-    # Create a copy of the paragraphs to avoid modifying the originals
-    result_paragraphs = left_paragraphs.copy()
+    # If either column is empty, return the other
+    if not left_paragraphs:
+        return right_paragraphs
+    if not right_paragraphs:
+        return left_paragraphs
     
-    # If both columns have paragraphs, check for continuity
-    if left_paragraphs and right_paragraphs:
-        # Get the last paragraph in the left column
-        last_left_para = left_paragraphs[-1]
+    # Create result list starting with all left paragraphs except the last one
+    result_paragraphs = left_paragraphs[:-1].copy()
+    
+    # Get the last paragraph from left column and first from right
+    last_left_para = left_paragraphs[-1]
+    first_right_para = right_paragraphs[0]
+    
+    # Count words in the last paragraph
+    word_count = len(last_left_para.split())
+    
+    # Check if it's a very short paragraph (should always be joined)
+    if word_count < min_words_threshold:
+        # Join the paragraphs
+        joined_para = last_left_para + " " + first_right_para
         
-        # Check if it ends with punctuation
+        # Add the joined paragraph and the rest of the right column
+        result_paragraphs.append(joined_para)
+        result_paragraphs.extend(right_paragraphs[1:])
+    else:
+        # Check if the paragraph ends with punctuation
         ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_left_para.strip()))
         
-        # If it doesn't end with punctuation, check the first right paragraph
-        if not ends_with_punctuation and right_paragraphs:
-            first_right_para = right_paragraphs[0]
-            
-            # Check if it starts with lowercase (likely continuation)
-            if first_right_para and first_right_para.strip():
-                first_char = first_right_para.strip()[0]
-                is_lowercase_start = first_char.islower() if first_char.isalpha() else False
-                
-                if is_lowercase_start:
-                    # This is likely a continuation - join the paragraphs
-                    joined_para = last_left_para + " " + first_right_para
-                    
-                    # Replace the last left paragraph with the joined version
-                    result_paragraphs[-1] = joined_para
-                    
-                    # Add the remaining right paragraphs (skipping the first)
-                    result_paragraphs.extend(right_paragraphs[1:])
-                    return result_paragraphs
+        # If it doesn't end with punctuation, join it with the first paragraph in right column
+        if not ends_with_punctuation:
+            joined_para = last_left_para + " " + first_right_para
+            result_paragraphs.append(joined_para)
+            result_paragraphs.extend(right_paragraphs[1:])
+        else:
+            # If it ends with punctuation, keep paragraphs separate
+            result_paragraphs.append(last_left_para)
+            result_paragraphs.extend(right_paragraphs)
     
-    # If no continuity detected or empty columns, just append right paragraphs
-    result_paragraphs.extend(right_paragraphs)
     return result_paragraphs
 
 
