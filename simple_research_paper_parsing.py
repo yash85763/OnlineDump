@@ -7,7 +7,8 @@ like research papers, ensuring:
 2. Headers and footers are properly handled (optionally ignored)
 3. Paragraphs that span across columns are correctly joined
 4. Paragraphs that span across pages are correctly joined
-5. Short paragraphs (less than 5 words) are joined with the next paragraph
+5. Short paragraphs (less than 5 words) are joined with adjacent paragraphs
+6. Any paragraph not ending with punctuation is joined with the next paragraph
 """
 
 import fitz  # PyMuPDF
@@ -158,16 +159,14 @@ def parse_double_column_pdf(
                 left_paragraphs = process_blocks_into_paragraphs(left_column, paragraph_spacing_threshold)
                 right_paragraphs = process_blocks_into_paragraphs(right_column, paragraph_spacing_threshold)
                 
-                # Handle cross-column paragraph continuity
-                content_paragraphs = handle_cross_column_continuity(
-                    left_paragraphs, 
-                    right_paragraphs, 
-                    min_words_threshold
-                )
+                # Process all paragraphs from both columns sequentially
+                all_column_paragraphs = left_paragraphs + right_paragraphs
+                content_paragraphs = process_sequential_paragraphs(all_column_paragraphs, min_words_threshold)
             else:
                 # Single column - sort all blocks by y-coordinate
                 content_blocks.sort(key=lambda b: b[1])
-                content_paragraphs = process_blocks_into_paragraphs(content_blocks, paragraph_spacing_threshold)
+                content_paragraphs_raw = process_blocks_into_paragraphs(content_blocks, paragraph_spacing_threshold)
+                content_paragraphs = process_sequential_paragraphs(content_paragraphs_raw, min_words_threshold)
         
         # 5. Combine all paragraphs in the correct order
         all_paragraphs = []
@@ -181,27 +180,19 @@ def parse_double_column_pdf(
             prev_text, prev_word_count = prev_paragraph_info
             
             # Always join if:
-            # 1. The previous paragraph was very short (fewer than min_words_threshold words)
-            # This happens regardless of punctuation
-            if prev_word_count < min_words_threshold and content_paragraphs:
+            # 1. The previous paragraph was very short (fewer than min_words_threshold words), OR
+            # 2. The previous paragraph doesn't end with punctuation
+            ends_with_punctuation = bool(re.search(r'[.!?:;]$', prev_text.strip()))
+            
+            if prev_word_count < min_words_threshold or not ends_with_punctuation:
                 first_content_para = content_paragraphs[0]
                 joined_paragraph = prev_text + " " + first_content_para
                 content_paragraphs[0] = joined_paragraph
                 prev_paragraph_info = None
             else:
-                # Check if it ends with punctuation
-                ends_with_punctuation = bool(re.search(r'[.!?:;]$', prev_text.strip()))
-                
-                # If it doesn't end with punctuation, it might continue
-                if not ends_with_punctuation and content_paragraphs:
-                    first_content_para = content_paragraphs[0]
-                    joined_paragraph = prev_text + " " + first_content_para
-                    content_paragraphs[0] = joined_paragraph
-                    prev_paragraph_info = None
-                else:
-                    # If not joining, still include the previous paragraph
-                    all_paragraphs.append(prev_text)
-                    prev_paragraph_info = None
+                # If not joining, still include the previous paragraph
+                all_paragraphs.append(prev_text)
+                prev_paragraph_info = None
         
         # Add main content
         all_paragraphs.extend(content_paragraphs)
@@ -214,24 +205,15 @@ def parse_double_column_pdf(
         if content_paragraphs:
             last_para = content_paragraphs[-1]
             word_count = len(last_para.split())
+            ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_para.strip()))
             
-            # If it's a very short paragraph, it might continue on the next page
-            # regardless of punctuation
-            if word_count < min_words_threshold:
+            # If it's a very short paragraph OR doesn't end with punctuation,
+            # it might continue on the next page
+            if word_count < min_words_threshold or not ends_with_punctuation:
                 prev_paragraph_info = (last_para, word_count)
                 
                 # Remove from current page as we'll carry it forward
                 all_paragraphs.pop()
-            else:
-                # Check if it ends with punctuation
-                ends_with_punctuation = bool(re.search(r'[.!?:;]$', last_para.strip()))
-                
-                # If it doesn't end with punctuation, it might continue on the next page
-                if not ends_with_punctuation:
-                    prev_paragraph_info = (last_para, word_count)
-                    
-                    # Remove from current page as we'll carry it forward
-                    all_paragraphs.pop()
         
         # Add processed paragraphs to result
         result["pages"].append({
@@ -297,47 +279,43 @@ def process_blocks_into_paragraphs(blocks, paragraph_spacing_threshold):
     return paragraphs
 
 
-def handle_cross_column_continuity(left_paragraphs, right_paragraphs, min_words_threshold=5):
+def process_sequential_paragraphs(paragraphs, min_words_threshold=5):
     """
-    Handle paragraph continuity across columns, joining paragraphs when:
-    1. The last paragraph in left column has fewer than min_words_threshold words, OR
-    2. The last paragraph in left column doesn't end with punctuation
+    Process a list of paragraphs sequentially, joining paragraphs that:
+    1. Don't end with punctuation, OR
+    2. Have fewer than min_words_threshold words
     
     Args:
-        left_paragraphs: List of paragraphs from the left column
-        right_paragraphs: List of paragraphs from the right column
+        paragraphs: List of paragraphs to process
         min_words_threshold: Minimum word count to be considered a standalone paragraph
         
     Returns:
-        Combined list of paragraphs with cross-column continuity handled
+        List of processed paragraphs with appropriate joins
     """
-    # If either column is empty, return the other
-    if not left_paragraphs:
-        return right_paragraphs
-    if not right_paragraphs:
-        return left_paragraphs
+    if not paragraphs:
+        return []
     
-    # Create result list with all left paragraphs except the last one
-    result_paragraphs = left_paragraphs[:-1].copy()
+    result_paragraphs = []
+    current_paragraph = paragraphs[0]
     
-    # Get the last paragraph from left column
-    current_paragraph = left_paragraphs[-1]
-    
-    # Process right column paragraphs one by one
-    for right_para in right_paragraphs:
-        # Check if the current paragraph doesn't end with punctuation or is very short
+    # Process paragraphs sequentially
+    for i in range(1, len(paragraphs)):
+        next_paragraph = paragraphs[i]
+        
+        # Check if current paragraph doesn't end with punctuation or is very short
         word_count = len(current_paragraph.split())
         ends_with_punctuation = bool(re.search(r'[.!?:;]$', current_paragraph.strip()))
         
-        # If it doesn't end with punctuation or is very short, join with the next paragraph
+        # Join if either condition is met
         if not ends_with_punctuation or word_count < min_words_threshold:
-            current_paragraph += " " + right_para
+            # Join with the next paragraph
+            current_paragraph += " " + next_paragraph
         else:
-            # It's a complete paragraph, add to results and start a new one
+            # Current paragraph is complete, add to results and move to next
             result_paragraphs.append(current_paragraph)
-            current_paragraph = right_para
+            current_paragraph = next_paragraph
     
-    # Add the final paragraph if it exists
+    # Add the final paragraph
     if current_paragraph:
         result_paragraphs.append(current_paragraph)
     
