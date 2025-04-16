@@ -1,19 +1,14 @@
-import os
-import json
+import numpy as np
 import torch
 import torchvision.transforms as T
 from PIL import Image
-import fitz  # PyMuPDF
-from tqdm import tqdm
-from transformers import AutoProcessor, AutoModel, AutoTokenizer
-import logging
 from torchvision.transforms.functional import InterpolationMode
+from transformers import AutoModel, AutoTokenizer
+import os
+from pdf2image import convert_from_path
+import json
+from tqdm import tqdm
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Image preprocessing functions from InternVL2 inference example
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
@@ -45,15 +40,23 @@ def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_
 def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
     orig_width, orig_height = image.size
     aspect_ratio = orig_width / orig_height
+
+    # calculate the existing image aspect ratio
     target_ratios = set(
-        (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1)
-        if i * j <= max_num and i * j >= min_num)
+        (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if
+        i * j <= max_num and i * j >= min_num)
     target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
+
+    # find the closest aspect ratio to the target
     target_aspect_ratio = find_closest_aspect_ratio(
         aspect_ratio, target_ratios, orig_width, orig_height, image_size)
+
+    # calculate the target width and height
     target_width = image_size * target_aspect_ratio[0]
     target_height = image_size * target_aspect_ratio[1]
     blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
+
+    # resize the image
     resized_img = image.resize((target_width, target_height))
     processed_images = []
     for i in range(blocks):
@@ -63,6 +66,7 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
             ((i % (target_width // image_size)) + 1) * image_size,
             ((i // (target_width // image_size)) + 1) * image_size
         )
+        # split the image
         split_img = resized_img.crop(box)
         processed_images.append(split_img)
     assert len(processed_images) == blocks
@@ -71,234 +75,145 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
         processed_images.append(thumbnail_img)
     return processed_images
 
-def load_image(image, input_size=448, max_num=12):
+def load_image(image_file, input_size=448, max_num=12):
+    image = Image.open(image_file).convert('RGB')
     transform = build_transform(input_size=input_size)
     images = dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
     pixel_values = [transform(image) for image in images]
     pixel_values = torch.stack(pixel_values)
     return pixel_values
 
-class PDFParser:
-    def __init__(self, model_name="OpenGVLab/InternVL2-8B", model_dir=None):
-        """
-        Initialize the PDF parser with the InternVL2-8B model.
-        
-        Args:
-            model_name (str): HuggingFace model name
-            model_dir (str, optional): Directory to save/load the model
-        """
-        logger.info(f"Initializing PDFParser with model: {model_name}")
-        self.model = None
-        self.tokenizer = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Using device: {self.device}")
-        
-        try:
-            if model_dir and os.path.exists(os.path.join(model_dir, "config.json")):
-                logger.info(f"Loading model from local directory: {model_dir}")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True, use_fast=False)
-                self.model = AutoModel.from_pretrained(
-                    model_dir, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True,
-                    use_flash_attn=True, trust_remote_code=True
-                )
-            else:
-                logger.info(f"Downloading model from HuggingFace: {model_name}")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
-                self.model = AutoModel.from_pretrained(
-                    model_name, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True,
-                    use_flash_attn=True, trust_remote_code=True
-                )
-                if model_dir:
-                    logger.info(f"Saving model to directory: {model_dir}")
-                    os.makedirs(model_dir, exist_ok=True)
-                    self.tokenizer.save_pretrained(model_dir)
-                    self.model.save_pretrained(model_dir)
-                    logger.info(f"Model saved successfully to: {model_dir}")
-            
-            if self.model is None or self.tokenizer is None:
-                raise RuntimeError("Model or tokenizer not initialized properly")
-            
-            self.model = self.model.eval().to(self.device)
-            logger.info("Model initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing model: {str(e)}")
-            raise RuntimeError(f"Failed to initialize model: {str(e)}")
+def load_model(model_path):
+    """Load the InternVL model and tokenizer."""
+    print(f"Loading model from {model_path}")
+    model = AutoModel.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
+        use_flash_attn=True,
+        trust_remote_code=True).eval().cuda()
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+    return model, tokenizer
 
-    def convert_pdf_to_images(self, pdf_path, output_dir=None, dpi=300):
-        """
-        Convert PDF pages to images.
-        
-        Args:
-            pdf_path (str): Path to the PDF file
-            output_dir (str, optional): Directory to save images
-            dpi (int): DPI for image rendering
-            
-        Returns:
-            list: List of image paths
-        """
-        if output_dir is None:
-            output_dir = os.path.join(os.path.dirname(pdf_path), "pdf_images")
-        os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"Converting PDF to images: {pdf_path}")
-        
-        doc = fitz.open(pdf_path)
-        images = []
-        for page_num, page in enumerate(tqdm(doc, desc="Converting PDF pages")):
-            pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
-            img_path = os.path.join(output_dir, f"page_{page_num+1}.png")
-            pix.save(img_path)
-            images.append(img_path)
-        logger.info(f"Converted {len(images)} PDF pages to images")
-        return images
+def convert_pdf_to_images(pdf_path, output_dir, dpi=300):
+    """Convert PDF pages to images."""
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    print(f"Converting PDF {pdf_path} to images...")
+    images = convert_from_path(pdf_path, dpi=dpi)
+    
+    image_paths = []
+    for i, image in enumerate(images):
+        image_path = os.path.join(output_dir, f'page_{i+1}.jpg')
+        image.save(image_path, 'JPEG')
+        image_paths.append(image_path)
+    
+    print(f"Converted {len(image_paths)} pages to images")
+    return image_paths
 
-    def parse_image(self, image_path, prompt_template="Analyze this document page. Identify and extract all content, maintaining the hierarchical structure."):
-        """
-        Parse content from an image using InternVL2-8B model.
+def process_pdf_with_vlm(model, tokenizer, pdf_path, output_dir, save_dir, max_num=12):
+    """Process a PDF file with the VLM model."""
+    # Create image directory
+    image_dir = os.path.join(output_dir, 'images')
+    if not os.path.exists(image_dir):
+        os.makedirs(image_dir)
+    
+    # Convert PDF to images
+    image_paths = convert_pdf_to_images(pdf_path, image_dir)
+    
+    # Process each page with the VLM
+    results = []
+    for i, image_path in enumerate(tqdm(image_paths, desc="Processing pages")):
+        page_num = i + 1
+        print(f"Processing page {page_num}/{len(image_paths)}")
         
-        Args:
-            image_path (str): Path to the image
-            prompt_template (str): Prompt for the model
-            
-        Returns:
-            dict: Parsed content
-        """
-        logger.info(f"Parsing image: {image_path}")
-        try:
-            if self.model is None or self.tokenizer is None:
-                raise RuntimeError("Model or tokenizer not initialized")
-            
-            # Load and preprocess image
-            image = Image.open(image_path).convert("RGB")
-            pixel_values = load_image(image, input_size=448, max_num=12).to(torch.bfloat16).to(self.device)
-            
-            # Use model's chat method
+        # Load and prepare the image
+        pixel_values = load_image(image_path, max_num=max_num).to(torch.bfloat16).cuda()
+        
+        # Generate prompts for different aspects of the document
+        prompts = [
+            "<image>\nExtract the hierarchical structure of this document page, identifying all headings, subheadings, and their content. Format the output as structured text maintaining the hierarchy.",
+            "<image>\nIdentify and extract any tables, lists, or structured elements in this document page.",
+            "<image>\nExtract any figures, charts, or visual elements on this page and describe their content."
+        ]
+        
+        page_results = {}
+        for j, prompt in enumerate(prompts):
+            print(f"Running prompt {j+1}/{len(prompts)}")
             generation_config = dict(max_new_tokens=1024, do_sample=False)
-            response = self.model.chat(self.tokenizer, pixel_values, prompt_template, generation_config)
-            parsed_text = response.strip()
+            response = model.chat(tokenizer, pixel_values, prompt, generation_config)
             
-            # Extract structured content
-            structured_content = self._extract_structure(parsed_text)
-            return structured_content
-        except Exception as e:
-            logger.error(f"Error parsing image {image_path}: {str(e)}")
-            return {"error": str(e), "raw_text": "Failed to parse image"}
+            if j == 0:
+                page_results["structure"] = response
+            elif j == 1:
+                page_results["tables_lists"] = response
+            elif j == 2:
+                page_results["figures"] = response
+        
+        page_results["page_number"] = page_num
+        results.append(page_results)
+    
+    # Save results
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    # Save as JSON
+    json_path = os.path.join(save_dir, "pdf_parsed_results.json")
+    with open(json_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    # Save as text
+    text_path = os.path.join(save_dir, "pdf_parsed_results.txt")
+    with open(text_path, 'w') as f:
+        for page in results:
+            f.write(f"PAGE {page['page_number']}\n")
+            f.write("="*80 + "\n\n")
+            f.write("DOCUMENT STRUCTURE:\n")
+            f.write(page['structure'] + "\n\n")
+            f.write("TABLES AND LISTS:\n")
+            f.write(page['tables_lists'] + "\n\n")
+            f.write("FIGURES AND VISUALS:\n")
+            f.write(page['figures'] + "\n\n")
+            f.write("-"*80 + "\n\n")
+    
+    print(f"Results saved to {save_dir}")
+    return results
 
-    def _extract_structure(self, text):
-        """
-        Extract structured information from the model's text output.
-        
-        Args:
-            text (str): Text from the model
-            
-        Returns:
-            dict: Structured content
-        """
-        try:
-            paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-            result = {"content": []}
-            current_section = None
-            
-            for para in paragraphs:
-                if para.startswith('#'):
-                    level = len(para) - len(para.lstrip('#'))
-                    heading_text = para.lstrip('#').strip()
-                    item = {"type": f"heading-{level}", "text": heading_text, "children": []}
-                    result["content"].append(item)
-                    current_section = item
-                elif para.strip().startswith('- ') or para.strip().startswith('* '):
-                    list_item = {"type": "list-item", "text": para.strip()[2:].strip()}
-                    if current_section:
-                        current_section["children"].append(list_item)
-                    else:
-                        result["content"].append(list_item)
-                else:
-                    para_item = {"type": "paragraph", "text": para.strip()}
-                    if current_section:
-                        current_section["children"].append(para_item)
-                    else:
-                        result["content"].append(para_item)
-            return result
-        except Exception as e:
-            logger.error(f"Error extracting structure: {str(e)}")
-            return {"raw_text": text}
-
-    def parse_pdf(self, pdf_path, output_json_path=None, keep_images=False):
-        """
-        Parse a complete PDF document and maintain hierarchy.
-        
-        Args:
-            pdf_path (str): Path to the PDF file
-            output_json_path (str, optional): Path to save JSON output
-            keep_images (bool): Whether to keep the intermediate images
-            
-        Returns:
-            dict: Complete parsed content
-        """
-        if output_json_path is None:
-            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-            output_json_path = f"{base_name}_parsed.json"
-        
-        temp_dir = os.path.join(os.path.dirname(pdf_path), f"{os.path.basename(pdf_path)}_temp_images")
-        os.makedirs(temp_dir, exist_ok=True)
-        image_paths = []
-        try:
-            image_paths = self.convert_pdf_to_images(pdf_path, output_dir=temp_dir)
-            result = {"document_name": os.path.basename(pdf_path), "pages": []}
-            
-            for i, img_path in enumerate(tqdm(image_paths, desc="Parsing pages")):
-                prompt = f"This is page {i+1} of a document. Extract all content from this page, preserving the structure (headings, paragraphs, lists, tables)."
-                page_content = self.parse_image(img_path, prompt)
-                result["pages"].append({"page_number": i + 1, "content": page_content})
-            
-            with open(output_json_path, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-            logger.info(f"PDF parsing complete. Results saved to: {output_json_path}")
-            return result
-        except Exception as e:
-            logger.error(f"Error parsing PDF {pdf_path}: {str(e)}")
-            return {"error": str(e)}
-        finally:
-            if not keep_images and image_paths:
-                for img_path in image_paths:
-                    try:
-                        os.remove(img_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to remove temporary image: {img_path}. Error: {str(e)}")
-                try:
-                    os.rmdir(temp_dir)
-                    logger.info(f"Removed temporary directory: {temp_dir}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove temporary directory: {temp_dir}. Error: {str(e)}")
+def save_model_local(model, tokenizer, save_dir):
+    """Save the fine-tuned model to a local directory."""
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    print(f"Saving model to {save_dir}")
+    model.save_pretrained(save_dir)
+    tokenizer.save_pretrained(save_dir)
+    print(f"Model saved to {save_dir}")
 
 def main():
-    config = {
-        "pdf_files": ["/dbfs/path/to/your/document.pdf"],  # Update for Databricks DBFS
-        "output_dir": "/dbfs/path/to/output/directory",
-        "model_name": "OpenGVLab/InternVL2-8B",
-        "model_dir": "/dbfs/path/to/model_dir",
-        "keep_images": False,
-        "dpi": 300
-    }
+    # Hardcoded parameters
+    pdf_path = "path/to/your/document.pdf"  # CHANGE THIS TO YOUR PDF PATH
+    model_path = "OpenGVLab/InternVL2-8B"
+    output_dir = "./output"
+    save_dir = "./results"
+    model_save_dir = "./saved_model"
+    max_num = 12
     
-    try:
-        os.makedirs(config["model_dir"], exist_ok=True)
-        logger.info(f"Initializing parser with model: {config['model_name']}")
-        pdf_parser = PDFParser(model_name=config["model_name"], model_dir=config["model_dir"])
-        
-        os.makedirs(config["output_dir"], exist_ok=True)
-        for pdf_path in config["pdf_files"]:
-            if not os.path.exists(pdf_path):
-                logger.error(f"PDF file not found: {pdf_path}")
-                continue
-            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-            output_json_path = os.path.join(config["output_dir"], f"{base_name}_parsed.json")
-            try:
-                pdf_parser.parse_pdf(pdf_path=pdf_path, output_json_path=output_json_path, keep_images=config["keep_images"])
-                logger.info(f"Successfully processed: {pdf_path}")
-            except Exception as e:
-                logger.error(f"Failed to process {pdf_path}: {str(e)}")
-    except Exception as e:
-        logger.error(f"Critical error in main execution: {str(e)}")
+    # Load model
+    model, tokenizer = load_model(model_path)
+    
+    # Process PDF
+    process_pdf_with_vlm(
+        model=model,
+        tokenizer=tokenizer,
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        save_dir=save_dir,
+        max_num=max_num
+    )
+    
+    # Save model
+    save_model_local(model, tokenizer, model_save_dir)
 
 if __name__ == "__main__":
     main()
