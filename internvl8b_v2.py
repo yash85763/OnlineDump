@@ -25,13 +25,21 @@ class PDFParser:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {self.device}")
         
-        self.processor = AutoProcessor.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(self.device)
-        
-        # Set model to evaluation mode
-        self.model.eval()
-        
-        logger.info("Model initialized successfully")
+        try:
+            logger.info("Loading model processor...")
+            self.processor = AutoProcessor.from_pretrained(model_name)
+            
+            logger.info("Loading model...")
+            self.model = AutoModel.from_pretrained(model_name)
+            self.model = self.model.to(self.device)
+            
+            # Set model to evaluation mode
+            self.model.eval()
+            
+            logger.info("Model initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing model: {str(e)}")
+            raise RuntimeError(f"Failed to initialize model: {str(e)}")
 
     def convert_pdf_to_images(self, pdf_path, output_dir=None, dpi=300):
         """
@@ -76,33 +84,31 @@ class PDFParser:
         """
         logger.info(f"Parsing image: {image_path}")
         
-        # Load image
-        image = Image.open(image_path).convert("RGB")
-        
-        # Process image and text
-        inputs = self.processor(text=prompt_template, images=image, return_tensors="pt").to(self.device)
-        
-        # Generate content
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=1024,
-                do_sample=False
-            )
-        
-        # Decode the output
-        generated_text = self.processor.decode(outputs[0], skip_special_tokens=True)
-        parsed_text = generated_text.replace(prompt_template, "").strip()
-        
-        # Try to parse as structured content
         try:
-            # Here we're returning the raw text, but you could implement 
-            # additional processing to extract structured information
+            # Load image
+            image = Image.open(image_path).convert("RGB")
+            
+            # Process image and text
+            inputs = self.processor(text=prompt_template, images=image, return_tensors="pt").to(self.device)
+            
+            # Generate content
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=1024,
+                    do_sample=False
+                )
+            
+            # Decode the output
+            generated_text = self.processor.decode(outputs[0], skip_special_tokens=True)
+            parsed_text = generated_text.replace(prompt_template, "").strip()
+            
+            # Try to parse as structured content
             structured_content = self._extract_structure(parsed_text)
             return structured_content
         except Exception as e:
-            logger.error(f"Error parsing structure: {str(e)}")
-            return {"raw_text": parsed_text}
+            logger.error(f"Error parsing image {image_path}: {str(e)}")
+            return {"error": str(e), "raw_text": "Failed to parse image"}
 
     def _extract_structure(self, text):
         """
@@ -116,57 +122,58 @@ class PDFParser:
         Returns:
             dict: Structured content
         """
-        # This is a simplified implementation
-        # You might need more sophisticated parsing based on model output
-        
-        # Split by sections/paragraphs
-        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-        
-        # Basic structure detection (headings, lists, paragraphs)
-        result = {
-            "content": []
-        }
-        
-        current_section = None
-        
-        for para in paragraphs:
-            if para.startswith('#'):  # Heading
-                # Count number of # to determine heading level
-                level = len(para) - len(para.lstrip('#'))
-                heading_text = para.lstrip('#').strip()
-                
-                item = {
-                    "type": f"heading-{level}",
-                    "text": heading_text,
-                    "children": []
-                }
-                
-                result["content"].append(item)
-                current_section = item
-                
-            elif para.strip().startswith('- ') or para.strip().startswith('* '):  # List item
-                list_item = {
-                    "type": "list-item",
-                    "text": para.strip()[2:].strip()
-                }
-                
-                if current_section:
-                    current_section["children"].append(list_item)
-                else:
-                    result["content"].append(list_item)
+        try:
+            # Split by sections/paragraphs
+            paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+            
+            # Basic structure detection (headings, lists, paragraphs)
+            result = {
+                "content": []
+            }
+            
+            current_section = None
+            
+            for para in paragraphs:
+                if para.startswith('#'):  # Heading
+                    # Count number of # to determine heading level
+                    level = len(para) - len(para.lstrip('#'))
+                    heading_text = para.lstrip('#').strip()
                     
-            else:  # Regular paragraph
-                para_item = {
-                    "type": "paragraph",
-                    "text": para.strip()
-                }
-                
-                if current_section:
-                    current_section["children"].append(para_item)
-                else:
-                    result["content"].append(para_item)
-        
-        return result
+                    item = {
+                        "type": f"heading-{level}",
+                        "text": heading_text,
+                        "children": []
+                    }
+                    
+                    result["content"].append(item)
+                    current_section = item
+                    
+                elif para.strip().startswith('- ') or para.strip().startswith('* '):  # List item
+                    list_item = {
+                        "type": "list-item",
+                        "text": para.strip()[2:].strip()
+                    }
+                    
+                    if current_section:
+                        current_section["children"].append(list_item)
+                    else:
+                        result["content"].append(list_item)
+                        
+                else:  # Regular paragraph
+                    para_item = {
+                        "type": "paragraph",
+                        "text": para.strip()
+                    }
+                    
+                    if current_section:
+                        current_section["children"].append(para_item)
+                    else:
+                        result["content"].append(para_item)
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error extracting structure: {str(e)}")
+            return {"raw_text": text}
 
     def parse_pdf(self, pdf_path, output_json_path=None, keep_images=False):
         """
@@ -189,6 +196,7 @@ class PDFParser:
         temp_dir = os.path.join(os.path.dirname(pdf_path), f"{os.path.basename(pdf_path)}_temp_images")
         os.makedirs(temp_dir, exist_ok=True)
         
+        image_paths = []
         try:
             # Convert PDF to images
             image_paths = self.convert_pdf_to_images(pdf_path, output_dir=temp_dir)
@@ -219,9 +227,12 @@ class PDFParser:
             
             return result
             
+        except Exception as e:
+            logger.error(f"Error parsing PDF {pdf_path}: {str(e)}")
+            return {"error": str(e)}
         finally:
             # Clean up temporary image files if not keeping them
-            if not keep_images:
+            if not keep_images and image_paths:
                 for img_path in image_paths:
                     try:
                         os.remove(img_path)
@@ -250,96 +261,37 @@ def main():
         "dpi": 300                                  # DPI for PDF rendering
     }
     
-    # Initialize parser
-    pdf_parser = PDFParser(model_name=config["model_name"])
-    
-    # Ensure output directory exists
-    os.makedirs(config["output_dir"], exist_ok=True)
-    
-    # Process each PDF file
-    for pdf_path in config["pdf_files"]:
-        if not os.path.exists(pdf_path):
-            logger.error(f"PDF file not found: {pdf_path}")
-            continue
-            
-        # Generate output JSON path
-        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-        output_json_path = os.path.join(config["output_dir"], f"{base_name}_parsed.json")
+    try:
+        # Initialize parser
+        logger.info(f"Initializing parser with model: {config['model_name']}")
+        pdf_parser = PDFParser(model_name=config["model_name"])
         
-        # Parse PDF
-        try:
-            pdf_parser.parse_pdf(
-                pdf_path=pdf_path,
-                output_json_path=output_json_path,
-                keep_images=config["keep_images"]
-            )
-            logger.info(f"Successfully processed: {pdf_path}")
-        except Exception as e:
-            logger.error(f"Failed to process {pdf_path}: {str(e)}")
-
-
-# Simple batch processing for multiple directories of PDFs
-def batch_process():
-    # Configuration for batch processing
-    batch_config = {
-        "input_dirs": [
-            # List of directories containing PDF files
-            "/path/to/pdf/directory1",
-            "/path/to/pdf/directory2"
-        ],
-        "output_base_dir": "/path/to/output/base/directory",
-        "model_name": "Internvl2/internvl2-8b",
-        "keep_images": False,
-        "dpi": 300,
-        # File extensions to process
-        "extensions": [".pdf", ".PDF"]
-    }
-    
-    # Initialize parser
-    pdf_parser = PDFParser(model_name=batch_config["model_name"])
-    
-    # Process each directory
-    for input_dir in batch_config["input_dirs"]:
-        if not os.path.exists(input_dir):
-            logger.error(f"Input directory not found: {input_dir}")
-            continue
-            
-        # Create corresponding output directory
-        dir_name = os.path.basename(input_dir)
-        output_dir = os.path.join(batch_config["output_base_dir"], dir_name)
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Find all PDF files in the directory
-        pdf_files = []
-        for file in os.listdir(input_dir):
-            if any(file.endswith(ext) for ext in batch_config["extensions"]):
-                pdf_files.append(os.path.join(input_dir, file))
+        # Ensure output directory exists
+        os.makedirs(config["output_dir"], exist_ok=True)
         
         # Process each PDF file
-        for pdf_path in pdf_files:
+        for pdf_path in config["pdf_files"]:
+            if not os.path.exists(pdf_path):
+                logger.error(f"PDF file not found: {pdf_path}")
+                continue
+                
             # Generate output JSON path
             base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-            output_json_path = os.path.join(output_dir, f"{base_name}_parsed.json")
+            output_json_path = os.path.join(config["output_dir"], f"{base_name}_parsed.json")
             
             # Parse PDF
             try:
                 pdf_parser.parse_pdf(
                     pdf_path=pdf_path,
                     output_json_path=output_json_path,
-                    keep_images=batch_config["keep_images"]
+                    keep_images=config["keep_images"]
                 )
                 logger.info(f"Successfully processed: {pdf_path}")
             except Exception as e:
                 logger.error(f"Failed to process {pdf_path}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Critical error in main execution: {str(e)}")
 
 
 if __name__ == "__main__":
-    # Choose which mode to run
-    run_mode = "single"  # Options: "single", "batch"
-    
-    if run_mode == "single":
-        main()
-    elif run_mode == "batch":
-        batch_process()
-    else:
-        logger.error(f"Unknown run mode: {run_mode}")
+    main()
