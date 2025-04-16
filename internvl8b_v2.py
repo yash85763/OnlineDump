@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class PDFParser:
-    def __init__(self, model_name="OpenGVLab/InternVL2-8B", model_dir=None):
+    def __init__(self, model_name="Internvl2/internvl2-8b", model_dir=None):
         """
         Initialize the PDF parser with the InternVL2-8B model.
         
@@ -22,25 +22,27 @@ class PDFParser:
         """
         logger.info(f"Initializing PDFParser with model: {model_name}")
         
+        # Initialize empty model and processor
+        self.model = None
+        self.processor = None
+        
         # Load model and processor
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {self.device}")
         
         try:
-            # Determine if we should load from local directory or download
-            local_model_path = model_dir if model_dir else None
-            
-            if local_model_path and os.path.exists(local_model_path):
-                logger.info(f"Loading model from local directory: {local_model_path}")
+            # Check if model_dir exists and contains a config.json file
+            if model_dir and os.path.exists(os.path.join(model_dir, "config.json")):
+                logger.info(f"Loading model from local directory: {model_dir}")
                 
                 # Load processor and model from local directory
                 self.processor = AutoProcessor.from_pretrained(
-                    local_model_path,
+                    model_dir,
                     trust_remote_code=True
                 )
                 
                 self.model = AutoModel.from_pretrained(
-                    local_model_path,
+                    model_dir,
                     trust_remote_code=True
                 )
             else:
@@ -66,6 +68,10 @@ class PDFParser:
                     self.processor.save_pretrained(model_dir)
                     self.model.save_pretrained(model_dir)
                     logger.info(f"Model saved successfully to: {model_dir}")
+            
+            # Check if model was initialized properly
+            if self.model is None:
+                raise RuntimeError("Model was not initialized properly")
             
             # Move model to the appropriate device
             self.model = self.model.to(self.device)
@@ -122,6 +128,10 @@ class PDFParser:
         logger.info(f"Parsing image: {image_path}")
         
         try:
+            # Check if model and processor are available
+            if self.model is None or self.processor is None:
+                raise RuntimeError("Model or processor not initialized")
+                
             # Load image
             image = Image.open(image_path).convert("RGB")
             
@@ -293,13 +303,16 @@ def main():
             "/path/to/your/document2.pdf"
         ],
         "output_dir": "/path/to/output/directory",      # Output directory for JSON files
-        "model_name": "OpenGVLab/InternVL2-8B",         # Model to use
-        "model_dir": "/path/to/save/model/directory",   # Directory to save/load the model
+        "model_name": "Internvl2/internvl2-8b",         # Model to use
+        "model_dir": "my_model_dir",                   # Directory to save/load the model
         "keep_images": False,                           # Whether to keep intermediate images
         "dpi": 300                                      # DPI for PDF rendering
     }
     
     try:
+        # Make sure model directory exists
+        os.makedirs(config["model_dir"], exist_ok=True)
+        
         # Initialize parser with model directory for saving/loading
         logger.info(f"Initializing parser with model: {config['model_name']}")
         pdf_parser = PDFParser(
