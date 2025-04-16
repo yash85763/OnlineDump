@@ -1,245 +1,345 @@
-import fitz  # PyMuPDF
-import json
 import os
-
-import numpy as np
+import json
 import torch
-import torchvision.transforms as T
-from decord import VideoReader, cpu
 from PIL import Image
-from torchvision.transforms.functional import InterpolationMode
-from transformers import AutoModel, AutoTokenizer
+import fitz  # PyMuPDF
+from tqdm import tqdm
+from transformers import AutoProcessor, AutoModel
+import logging
 
-# --------------------------------------------------------------------------
-# (1) Existing internVL2 transformations & functions
-# --------------------------------------------------------------------------
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
+class PDFParser:
+    def __init__(self, model_name="Internvl2/internvl2-8b"):
+        """
+        Initialize the PDF parser with the InternVL2-8B model.
+        
+        Args:
+            model_name (str): HuggingFace model name for InternVL2
+        """
+        logger.info(f"Initializing PDFParser with model: {model_name}")
+        
+        # Load model and processor
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Using device: {self.device}")
+        
+        self.processor = AutoProcessor.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        
+        # Set model to evaluation mode
+        self.model.eval()
+        
+        logger.info("Model initialized successfully")
 
-def build_transform(input_size):
-    transform = T.Compose([
-        T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-        T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
-        T.ToTensor(),
-        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
-    ])
-    return transform
+    def convert_pdf_to_images(self, pdf_path, output_dir=None, dpi=300):
+        """
+        Convert PDF pages to images.
+        
+        Args:
+            pdf_path (str): Path to the PDF file
+            output_dir (str, optional): Directory to save images
+            dpi (int): DPI for image rendering
+            
+        Returns:
+            list: List of image paths or PIL Image objects
+        """
+        if output_dir is None:
+            output_dir = os.path.join(os.path.dirname(pdf_path), "pdf_images")
+        
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Converting PDF to images: {pdf_path}")
+        
+        doc = fitz.open(pdf_path)
+        images = []
+        
+        for page_num, page in enumerate(tqdm(doc, desc="Converting PDF pages")):
+            pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
+            img_path = os.path.join(output_dir, f"page_{page_num+1}.png")
+            pix.save(img_path)
+            images.append(img_path)
+            
+        logger.info(f"Converted {len(images)} PDF pages to images")
+        return images
 
-def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
-    best_ratio_diff = float('inf')
-    best_ratio = (1, 1)
-    area = width * height
-    for ratio in target_ratios:
-        target_aspect_ratio = ratio[0] / ratio[1]
-        ratio_diff = abs(aspect_ratio - target_aspect_ratio)
-        if ratio_diff < best_ratio_diff:
-            best_ratio_diff = ratio_diff
-            best_ratio = ratio
-        elif ratio_diff == best_ratio_diff:
-            # Additional tie-breaking based on area (optional)
-            if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
-                best_ratio = ratio
-    return best_ratio
+    def parse_image(self, image_path, prompt_template="Analyze this document page. Identify and extract all content, maintaining the hierarchical structure."):
+        """
+        Parse content from an image using InternVL2-8B model.
+        
+        Args:
+            image_path (str): Path to the image
+            prompt_template (str): Prompt for the model
+            
+        Returns:
+            dict: Parsed content
+        """
+        logger.info(f"Parsing image: {image_path}")
+        
+        # Load image
+        image = Image.open(image_path).convert("RGB")
+        
+        # Process image and text
+        inputs = self.processor(text=prompt_template, images=image, return_tensors="pt").to(self.device)
+        
+        # Generate content
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=1024,
+                do_sample=False
+            )
+        
+        # Decode the output
+        generated_text = self.processor.decode(outputs[0], skip_special_tokens=True)
+        parsed_text = generated_text.replace(prompt_template, "").strip()
+        
+        # Try to parse as structured content
+        try:
+            # Here we're returning the raw text, but you could implement 
+            # additional processing to extract structured information
+            structured_content = self._extract_structure(parsed_text)
+            return structured_content
+        except Exception as e:
+            logger.error(f"Error parsing structure: {str(e)}")
+            return {"raw_text": parsed_text}
 
-def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
-    """
-    Splits an image into tiles based on the 'closest aspect ratio' approach.
-    If use_thumbnail=True and the image was split, also adds a single thumbnail tile.
-    """
-    orig_width, orig_height = image.size
-    aspect_ratio = orig_width / orig_height
+    def _extract_structure(self, text):
+        """
+        Extract structured information from the model's text output.
+        This is a placeholder - you may need to customize this based on 
+        the model's output format and your specific needs.
+        
+        Args:
+            text (str): Text from the model
+            
+        Returns:
+            dict: Structured content
+        """
+        # This is a simplified implementation
+        # You might need more sophisticated parsing based on model output
+        
+        # Split by sections/paragraphs
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        
+        # Basic structure detection (headings, lists, paragraphs)
+        result = {
+            "content": []
+        }
+        
+        current_section = None
+        
+        for para in paragraphs:
+            if para.startswith('#'):  # Heading
+                # Count number of # to determine heading level
+                level = len(para) - len(para.lstrip('#'))
+                heading_text = para.lstrip('#').strip()
+                
+                item = {
+                    "type": f"heading-{level}",
+                    "text": heading_text,
+                    "children": []
+                }
+                
+                result["content"].append(item)
+                current_section = item
+                
+            elif para.strip().startswith('- ') or para.strip().startswith('* '):  # List item
+                list_item = {
+                    "type": "list-item",
+                    "text": para.strip()[2:].strip()
+                }
+                
+                if current_section:
+                    current_section["children"].append(list_item)
+                else:
+                    result["content"].append(list_item)
+                    
+            else:  # Regular paragraph
+                para_item = {
+                    "type": "paragraph",
+                    "text": para.strip()
+                }
+                
+                if current_section:
+                    current_section["children"].append(para_item)
+                else:
+                    result["content"].append(para_item)
+        
+        return result
 
-    # Build candidate aspect ratios (i,j) for i*j in [min_num, max_num].
-    target_ratios = set(
-        (i, j)
-        for n in range(min_num, max_num + 1)
-        for i in range(1, n + 1)
-        for j in range(1, n + 1)
-        if i * j <= max_num and i * j >= min_num
-    )
-    target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
+    def parse_pdf(self, pdf_path, output_json_path=None, keep_images=False):
+        """
+        Parse a complete PDF document and maintain hierarchy.
+        
+        Args:
+            pdf_path (str): Path to the PDF file
+            output_json_path (str, optional): Path to save JSON output
+            keep_images (bool): Whether to keep the intermediate images
+            
+        Returns:
+            dict: Complete parsed content
+        """
+        # Generate output path if not provided
+        if output_json_path is None:
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            output_json_path = f"{base_name}_parsed.json"
+        
+        # Create temp directory for images
+        temp_dir = os.path.join(os.path.dirname(pdf_path), f"{os.path.basename(pdf_path)}_temp_images")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        try:
+            # Convert PDF to images
+            image_paths = self.convert_pdf_to_images(pdf_path, output_dir=temp_dir)
+            
+            # Parse each page
+            result = {
+                "document_name": os.path.basename(pdf_path),
+                "pages": []
+            }
+            
+            for i, img_path in enumerate(tqdm(image_paths, desc="Parsing pages")):
+                # Create a page-specific prompt
+                prompt = f"This is page {i+1} of a document. Extract all content from this page, preserving the structure (headings, paragraphs, lists, tables). Identify section headings, paragraphs, bullet points, and tables."
+                
+                # Parse the page
+                page_content = self.parse_image(img_path, prompt)
+                
+                result["pages"].append({
+                    "page_number": i + 1,
+                    "content": page_content
+                })
+            
+            # Save result to JSON
+            with open(output_json_path, 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"PDF parsing complete. Results saved to: {output_json_path}")
+            
+            return result
+            
+        finally:
+            # Clean up temporary image files if not keeping them
+            if not keep_images:
+                for img_path in image_paths:
+                    try:
+                        os.remove(img_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temporary image: {img_path}. Error: {str(e)}")
+                
+                try:
+                    os.rmdir(temp_dir)
+                    logger.info(f"Removed temporary directory: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary directory: {temp_dir}. Error: {str(e)}")
 
-    # Find the closest aspect ratio
-    target_aspect_ratio = find_closest_aspect_ratio(
-        aspect_ratio, target_ratios, orig_width, orig_height, image_size
-    )
 
-    # Resize the image to fit that aspect ratio
-    target_width = image_size * target_aspect_ratio[0]
-    target_height = image_size * target_aspect_ratio[1]
-    blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
+# Main execution code - specify files directly here
+def main():
+    # Configuration
+    config = {
+        "pdf_files": [
+            # List your PDF files here
+            "/path/to/your/document1.pdf",
+            "/path/to/your/document2.pdf"
+        ],
+        "output_dir": "/path/to/output/directory",  # Output directory for JSON files
+        "model_name": "Internvl2/internvl2-8b",     # Model to use
+        "keep_images": False,                       # Whether to keep intermediate images
+        "dpi": 300                                  # DPI for PDF rendering
+    }
+    
+    # Initialize parser
+    pdf_parser = PDFParser(model_name=config["model_name"])
+    
+    # Ensure output directory exists
+    os.makedirs(config["output_dir"], exist_ok=True)
+    
+    # Process each PDF file
+    for pdf_path in config["pdf_files"]:
+        if not os.path.exists(pdf_path):
+            logger.error(f"PDF file not found: {pdf_path}")
+            continue
+            
+        # Generate output JSON path
+        base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+        output_json_path = os.path.join(config["output_dir"], f"{base_name}_parsed.json")
+        
+        # Parse PDF
+        try:
+            pdf_parser.parse_pdf(
+                pdf_path=pdf_path,
+                output_json_path=output_json_path,
+                keep_images=config["keep_images"]
+            )
+            logger.info(f"Successfully processed: {pdf_path}")
+        except Exception as e:
+            logger.error(f"Failed to process {pdf_path}: {str(e)}")
 
-    resized_img = image.resize((target_width, target_height))
-    processed_images = []
-    for i in range(blocks):
-        box = (
-            (i % (target_width // image_size)) * image_size,
-            (i // (target_width // image_size)) * image_size,
-            ((i % (target_width // image_size)) + 1) * image_size,
-            ((i // (target_width // image_size)) + 1) * image_size
-        )
-        split_img = resized_img.crop(box)
-        processed_images.append(split_img)
 
-    if use_thumbnail and len(processed_images) != 1:
-        # Add a single thumbnail tile
-        thumbnail_img = image.resize((image_size, image_size))
-        processed_images.append(thumbnail_img)
+# Simple batch processing for multiple directories of PDFs
+def batch_process():
+    # Configuration for batch processing
+    batch_config = {
+        "input_dirs": [
+            # List of directories containing PDF files
+            "/path/to/pdf/directory1",
+            "/path/to/pdf/directory2"
+        ],
+        "output_base_dir": "/path/to/output/base/directory",
+        "model_name": "Internvl2/internvl2-8b",
+        "keep_images": False,
+        "dpi": 300,
+        # File extensions to process
+        "extensions": [".pdf", ".PDF"]
+    }
+    
+    # Initialize parser
+    pdf_parser = PDFParser(model_name=batch_config["model_name"])
+    
+    # Process each directory
+    for input_dir in batch_config["input_dirs"]:
+        if not os.path.exists(input_dir):
+            logger.error(f"Input directory not found: {input_dir}")
+            continue
+            
+        # Create corresponding output directory
+        dir_name = os.path.basename(input_dir)
+        output_dir = os.path.join(batch_config["output_base_dir"], dir_name)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Find all PDF files in the directory
+        pdf_files = []
+        for file in os.listdir(input_dir):
+            if any(file.endswith(ext) for ext in batch_config["extensions"]):
+                pdf_files.append(os.path.join(input_dir, file))
+        
+        # Process each PDF file
+        for pdf_path in pdf_files:
+            # Generate output JSON path
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            output_json_path = os.path.join(output_dir, f"{base_name}_parsed.json")
+            
+            # Parse PDF
+            try:
+                pdf_parser.parse_pdf(
+                    pdf_path=pdf_path,
+                    output_json_path=output_json_path,
+                    keep_images=batch_config["keep_images"]
+                )
+                logger.info(f"Successfully processed: {pdf_path}")
+            except Exception as e:
+                logger.error(f"Failed to process {pdf_path}: {str(e)}")
 
-    return processed_images
-
-def load_image(image_file, input_size=448, max_num=12):
-    """
-    Load a SINGLE image file (e.g. PNG/JPG) from disk,
-    apply dynamic_preprocess, then return a stacked tensor.
-    """
-    image = Image.open(image_file).convert('RGB')
-    transform = build_transform(input_size=input_size)
-
-    images = dynamic_preprocess(
-        image, image_size=input_size,
-        use_thumbnail=True, max_num=max_num
-    )
-    pixel_values = [transform(im) for im in images]
-    pixel_values = torch.stack(pixel_values)
-    return pixel_values
-
-# --------------------------------------------------------------------------
-# (2) New PDF-specific logic
-# --------------------------------------------------------------------------
-
-def load_pdf_pages(pdf_path, resolution=200, max_pages=None):
-    """
-    Convert each page of the PDF into a high-resolution PIL image.
-    Args:
-      pdf_path    (str): Path to the input PDF.
-      resolution (int):  DPI for rendering PDF pages (the higher the clearer, but also bigger memory).
-      max_pages   (int): If set, limit the number of pages to load.
-    Returns:
-      A list of PIL.Images, one per page.
-    """
-    doc = fitz.open(pdf_path)
-    images = []
-    for i, page in enumerate(doc):
-        if max_pages and i >= max_pages:
-            break
-        # Render page at the given resolution
-        mat = fitz.Matrix(resolution / 72, resolution / 72)  # 72 dpi is base
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        # Convert to PIL
-        pil_img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        images.append(pil_img)
-    return images
-
-def parse_pdf_pages_with_model(
-    pdf_path,
-    model,
-    tokenizer,
-    generation_config,
-    resolution=200,
-    input_size=448,
-    max_num=12,
-    max_pages=None
-):
-    """
-    (1) Convert each PDF page -> PIL image.
-    (2) Process images into model-ready tensors.
-    (3) For each page, run a single question to ask the model
-        to parse the page into a hierarchical JSON structure.
-    (4) Collect the responses in a dictionary.
-
-    Returns:
-      A Python dict with structure: {
-         "pages": [
-             { "page_index": int, "response": str (JSON text) },
-             ...
-         ]
-      }
-    """
-    # 1) Convert each PDF page to a high-res image
-    pil_pages = load_pdf_pages(pdf_path, resolution=resolution, max_pages=max_pages)
-
-    # 2) For each page, get pixel_values
-    parsed_results = {"pages": []}
-    for page_index, pil_img in enumerate(pil_pages):
-        # Build the tiling
-        # (We reuse `dynamic_preprocess` + transform from the existing code)
-        #   - You can also directly call `load_image` on a temporary file if you prefer.
-        #   - Or keep it in-memory as done here:
-
-        processed_imgs = dynamic_preprocess(
-            pil_img, image_size=input_size, use_thumbnail=True, max_num=max_num
-        )
-        transform = build_transform(input_size)
-        tile_tensors = [transform(im) for im in processed_imgs]
-        pixel_values = torch.stack(tile_tensors).to(torch.bfloat16).cuda()
-
-        # 3) Ask the model to parse the page in JSON
-        #    The prompt can be anything you like; here's an example:
-        question = (
-            "<image>\n"
-            "Please parse the content of this PDF page and return a JSON structure "
-            "reflecting its hierarchical organization (headings, subheadings, paragraphs, etc.). "
-            "Only return valid JSON."
-        )
-
-        response = model.chat(
-            tokenizer,
-            pixel_values,
-            question,
-            generation_config
-        )
-
-        # 4) Collect the response
-        parsed_results["pages"].append({
-            "page_index": page_index + 1,
-            "response": response
-        })
-
-    return parsed_results
-
-# --------------------------------------------------------------------------
-# (3) Example usage
-# --------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # 1) Load your model
-    path = 'OpenGVLab/InternVL2-8B'
-    model = AutoModel.from_pretrained(
-        path,
-        torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True,
-        use_flash_attn=True,
-        trust_remote_code=True
-    ).eval().cuda()
-    tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True, use_fast=False)
-
-    # 2) Set up generation configs
-    generation_config = dict(
-        max_new_tokens=1024,
-        do_sample=True
-    )
-
-    # 3) PDF you want to parse
-    pdf_path = "my_document.pdf"
-
-    # 4) Parse the PDF
-    results = parse_pdf_pages_with_model(
-        pdf_path, model, tokenizer, generation_config,
-        resolution=200,   # Increase if needed for sharper text
-        input_size=448,   # Image tile size
-        max_num=12,       # Max number of tiles to split the page into
-        max_pages=None    # or a specific integer limit
-    )
-
-    # 5) Print or save the results
-    #    Each page's "response" string should ideally be JSON.
-    #    However, the model might not always produce perfect JSON:
-    #    you'll likely want to handle or sanitize the model outputs.
-    print("=== PDF Parsing Results ===")
-    print(json.dumps(results, indent=2, ensure_ascii=False))
-
-    # If you want to save to a file:
-    # with open("parsed_pdf.json", "w", encoding="utf-8") as f:
-    #     json.dump(results, f, indent=2, ensure_ascii=False)
+    # Choose which mode to run
+    run_mode = "single"  # Options: "single", "batch"
+    
+    if run_mode == "single":
+        main()
+    elif run_mode == "batch":
+        batch_process()
+    else:
+        logger.error(f"Unknown run mode: {run_mode}")
