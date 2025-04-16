@@ -12,12 +12,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class PDFParser:
-    def __init__(self, model_name="Internvl2/internvl2-8b"):
+    def __init__(self, model_name="OpenGVLab/InternVL2-8B", model_dir=None):
         """
         Initialize the PDF parser with the InternVL2-8B model.
         
         Args:
             model_name (str): HuggingFace model name for InternVL2
+            model_dir (str, optional): Directory to save/load the model
         """
         logger.info(f"Initializing PDFParser with model: {model_name}")
         
@@ -26,11 +27,47 @@ class PDFParser:
         logger.info(f"Using device: {self.device}")
         
         try:
-            logger.info("Loading model processor...")
-            self.processor = AutoProcessor.from_pretrained(model_name)
+            # Determine if we should load from local directory or download
+            local_model_path = model_dir if model_dir else None
             
-            logger.info("Loading model...")
-            self.model = AutoModel.from_pretrained(model_name)
+            if local_model_path and os.path.exists(local_model_path):
+                logger.info(f"Loading model from local directory: {local_model_path}")
+                
+                # Load processor and model from local directory
+                self.processor = AutoProcessor.from_pretrained(
+                    local_model_path,
+                    trust_remote_code=True
+                )
+                
+                self.model = AutoModel.from_pretrained(
+                    local_model_path,
+                    trust_remote_code=True
+                )
+            else:
+                logger.info(f"Downloading model from HuggingFace: {model_name}")
+                
+                # Download processor and model from HuggingFace
+                self.processor = AutoProcessor.from_pretrained(
+                    model_name,
+                    trust_remote_code=True
+                )
+                
+                self.model = AutoModel.from_pretrained(
+                    model_name,
+                    trust_remote_code=True
+                )
+                
+                # Save the model to the specified directory if provided
+                if model_dir:
+                    logger.info(f"Saving model to directory: {model_dir}")
+                    os.makedirs(model_dir, exist_ok=True)
+                    
+                    # Save processor and model
+                    self.processor.save_pretrained(model_dir)
+                    self.model.save_pretrained(model_dir)
+                    logger.info(f"Model saved successfully to: {model_dir}")
+            
+            # Move model to the appropriate device
             self.model = self.model.to(self.device)
             
             # Set model to evaluation mode
@@ -255,16 +292,20 @@ def main():
             "/path/to/your/document1.pdf",
             "/path/to/your/document2.pdf"
         ],
-        "output_dir": "/path/to/output/directory",  # Output directory for JSON files
-        "model_name": "Internvl2/internvl2-8b",     # Model to use
-        "keep_images": False,                       # Whether to keep intermediate images
-        "dpi": 300                                  # DPI for PDF rendering
+        "output_dir": "/path/to/output/directory",      # Output directory for JSON files
+        "model_name": "OpenGVLab/InternVL2-8B",         # Model to use
+        "model_dir": "/path/to/save/model/directory",   # Directory to save/load the model
+        "keep_images": False,                           # Whether to keep intermediate images
+        "dpi": 300                                      # DPI for PDF rendering
     }
     
     try:
-        # Initialize parser
+        # Initialize parser with model directory for saving/loading
         logger.info(f"Initializing parser with model: {config['model_name']}")
-        pdf_parser = PDFParser(model_name=config["model_name"])
+        pdf_parser = PDFParser(
+            model_name=config["model_name"],
+            model_dir=config["model_dir"]
+        )
         
         # Ensure output directory exists
         os.makedirs(config["output_dir"], exist_ok=True)
