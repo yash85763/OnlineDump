@@ -1,0 +1,94 @@
+{
+  "success": true,
+  "metadata": {
+    "title": "Decentralizing AI Memory: SHIMI, a Semantic Hierarchical Memory Index for Scalable Agent Reasoning",
+    "authors": "Tooraj Helmi",
+    "affiliation": "University of Southern California, Los Angeles, CA, USA",
+    "email": "thelmi@usc.edu"
+  },
+  "abstract": "Retrieval-Augmented Generation (RAG) and vector-based search have become foundational tools for memory in AI systems, yet they struggle with abstraction, scalability, and semantic precision—especially in decentralized environments. We present SHIMI (Semantic Hierarchical Memory Index), a unified architecture that models knowledge as a dynamically structured hierarchy of concepts, enabling agents to retrieve information based on meaning rather than surface similarity. SHIMI organizes memory into layered semantic nodes and supports top-down traversal from abstract intent to specific entities, offering more precise and explainable retrieval. Critically, SHIMI is natively designed for decentralized ecosystems, where agents maintain local memory trees and synchronize them asynchronously across networks. We introduce a lightweight sync protocol that leverages Merkle-DAG summaries, Bloom filters, and CRDT-style conflict resolution to enable partial synchronization with minimal overhead. Through benchmark experiments and use cases involving decentralized agent collaboration, we demonstrate SHIMI's advantages in retrieval accuracy, semantic fidelity, and scalability—positioning it as a core infrastructure layer for decentralized cognitive systems.",
+  "key_terms": [
+    "Decentralized AI Agents",
+    "Semantic Memory Retrieval",
+    "Hierarchical Knowledge Representation",
+    "Blockchain-Based Infrastructure",
+    "Retrieval-Augmented Generation (RAG)",
+    "Knowledge Indexing"
+  ],
+  "key_findings": [
+    "SHIMI improves retrieval accuracy and interpretability while significantly reducing synchronization cost, positioning it as a foundational component for decentralized memory in emerging AI-native infrastructures.",
+    "Unlike RAG and similar approaches, SHIMI embeds semantics into both its retrieval and synchronization layers, with each agent maintaining its own local semantic tree and updating it independently.",
+    "SHIMI's partial sync mechanism leverages Merkle-DAG summaries and Bloom filters, resulting in over 90% reduction in data transferred during sync events compared to full replication approaches.",
+    "The semantic tree's ability to prune large portions of memory before performing any deep matching results in a significantly lower number of comparisons per query.",
+    "Despite entity growth, SHIMI's latency curve remains relatively flat, validating its use of pruning and hierarchical structure to avoid linear degradation."
+  ],
+  "extracts": [
+    {
+      "section": "1 Introduction",
+      "text": "As decentralized computing moves beyond financial transactions into cognitive infrastructure, there is growing demand for intelligent agents capable of reasoning, adaptation, and autonomous coordination. From decentralized autonomous organizations (DAOs) to blockchain-native AI agents, these systems require not only execution logic, but also access to structured, interpretable memory. Agents must retrieve knowledge, match tasks, and share context across evolving environments—yet most memory systems in AI today are neither explainable nor decentralized.",
+      "full_content": "As decentralized computing moves beyond financial transactions into cognitive infrastructure, there is growing demand for intelligent agents capable of reasoning, adaptation, and autonomous coordination. From decentralized autonomous organizations (DAOs) [12] to blockchain-native AI agents [17], these systems require not only execution logic, but also access to structured, interpretable memory. Agents must retrieve knowledge, match tasks, and share context across evolving environments—yet most memory systems in AI today are neither explainable [16] nor decentralized [27]."
+    },
+    {
+      "section": "2 Background and Related Work",
+      "text": "In this section, we review existing approaches to knowledge retrieval in AI systems, discuss their limitations in decentralized environments, and outline the foundational technologies that influence SHIMI's design.",
+      "full_content": "In this section, we review existing approaches to knowledge retrieval in AI systems, discuss their limitations in decentralized environments, and outline the foundational technologies that influence SHIMI's design."
+    },
+    {
+      "section": "3 Approach",
+      "text": "SHIMI organizes memory as a dynamic tree structure in which semantic abstractions are layered hierarchically. Formally, the memory is modeled as a rooted directed tree T = (V, E), where each node v ∈ V represents a semantic concept, and each directed edge (vi, vj) ∈ E encodes a parent-child relationship. Nodes may store entities, act as abstractions, or dynamically adapt their structure through merging.",
+      "full_content": "SHIMI organizes memory as a dynamic tree structure in which semantic abstractions are layered hierarchically. Formally, the memory is modeled as a rooted directed tree T = (V, E), where each node v ∈ V represents a semantic concept, and each directed edge (vi, vj) ∈ E encodes a parent-child relationship. Nodes may store entities, act as abstractions, or dynamically adapt their structure through merging.\nWe define the following parameters, aligned with our implementation: T, the maximum number of child nodes under a parent (tree branching factor); L, the maximum number of abstraction levels used for generalization; δ ∈ [0, 1], the similarity threshold for placement or matching; and γ ∈ [0, 1], the compression ratio for semantic abstraction (word reduction).\nEach node v ∈ V contains: a semantic summary s(v) ∈ L; a list of children C(v) ⊆ V; a set of entities Ev ⊆ E; and a parent pointer p(v) ∈ V ∪ {⊥}."
+    },
+    {
+      "section": "4 Evaluation",
+      "text": "We evaluate SHIMI in a simulated decentralized setting to assess its effectiveness along four axes: semantic retrieval accuracy, traversal efficiency, synchronization cost, and scalability. Each experiment is motivated by known limitations of flat vector retrieval and decentralized memory systems. We provide justification for each setup, report quantitative results, and briefly interpret what each reveals about SHIMI's behavior.",
+      "full_content": "We evaluate SHIMI in a simulated decentralized setting to assess its effectiveness along four axes: semantic retrieval accuracy, traversal efficiency, synchronization cost, and scalability. Each experiment is motivated by known limitations of flat vector retrieval and decentralized memory systems [15,19,3]. We provide justification for each setup, report quantitative results, and briefly interpret what each reveals about SHIMI's behavior."
+    },
+    {
+      "section": "5 Applications",
+      "text": "SHIMI is designed as a memory protocol for decentralized AI ecosystems where semantic retrieval, interpretability, and scalable sync are essential. Its architecture enables several classes of applications that are otherwise limited by current flat or centralized memory systems.",
+      "full_content": "SHIMI is designed as a memory protocol for decentralized AI ecosystems where semantic retrieval, interpretability, and scalable sync are essential. Its architecture enables several classes of applications that are otherwise limited by current flat or centralized memory systems."
+    },
+    {
+      "section": "6 Conclusion and Future Work",
+      "text": "We introduced SHIMI, a semantic hierarchical memory index purpose-built for decentralized AI environments. Unlike traditional retrieval-augmented generation (RAG) models that rely on surface-level similarity, SHIMI organizes knowledge semantically, enabling meaningful and interpretable retrieval even across lexically diverse inputs. Through a series of simulation-based experiments, we demonstrated SHIMI's superiority over flat vector approaches across four critical dimensions: retrieval accuracy, traversal efficiency, synchronization cost, and scalability.",
+      "full_content": "We introduced SHIMI, a semantic hierarchical memory index purpose-built for decentralized AI environments. Unlike traditional retrieval-augmented generation (RAG) models that rely on surface-level similarity, SHIMI organizes knowledge semantically, enabling meaningful and interpretable retrieval even across lexically diverse inputs. Through a series of simulation-based experiments, we demonstrated SHIMI's superiority over flat vector approaches across four critical dimensions: retrieval accuracy, traversal efficiency, synchronization cost, and scalability.\nSHIMI's architecture is well-aligned with the demands of distributed agent ecosystems. Its partial synchronization mechanism enables bandwidth-efficient updates without sacrificing consistency, and its tree-based structure supports fast and explainable memory access. These properties make SHIMI particularly suited for settings where agents are autonomous, memory is dynamic, and infrastructure is decentralized."
+    }
+  ],
+  "binary_questions": [
+    {
+      "question": "Does this paper propose a hierarchical approach?",
+      "answer": "Yes",
+      "explanation": "The paper introduces SHIMI (Semantic Hierarchical Memory Index), which organizes memory as a dynamic tree structure with semantic abstractions layered hierarchically."
+    },
+    {
+      "question": "Is this research focused on centralized AI systems?",
+      "answer": "No",
+      "explanation": "The paper specifically addresses decentralized environments where agents maintain local memory trees and synchronize them asynchronously across networks."
+    },
+    {
+      "question": "Does the paper compare its approach against vector-based retrieval?",
+      "answer": "Yes",
+      "explanation": "The paper evaluates SHIMI against a RAG-style embedding-based retrieval baseline on semantically non-trivial queries, with SHIMI showing 90% Top-1 Accuracy compared to RAG's 65%."
+    },
+    {
+      "question": "Does the paper include experimental evaluation?",
+      "answer": "Yes",
+      "explanation": "The paper includes a comprehensive evaluation section that measures retrieval accuracy, traversal efficiency, synchronization cost, and scalability through benchmark experiments."
+    },
+    {
+      "question": "Does SHIMI support synchronization between agents?",
+      "answer": "Yes",
+      "explanation": "SHIMI includes a partial synchronization protocol using Merkle-DAG summaries, Bloom filters, and CRDT-style conflict resolution to enable efficient updates between agents with minimal overhead."
+    }
+  ],
+  "visual_elements": {
+    "figures": [
+      "Fig. 1: Traversal cost vs. tree depth (nodes visited per query)"
+    ],
+    "tables": [
+      "Table 1: Retrieval accuracy comparison between SHIMI and RAG baseline",
+      "Table 2: Bandwidth cost of sync with varying number of nodes"
+    ]
+  },
+  "num_pages": 17
+}
