@@ -1,12 +1,11 @@
 import os
 import json
-import base64
 import streamlit as st
 from pathlib import Path
 import re
-import urllib.parse
 from PyPDF2 import PdfReader
 from io import BytesIO
+from streamlit_pdf_viewer import pdf_viewer
 
 # Set page configuration
 st.set_page_config(
@@ -81,42 +80,6 @@ def validate_pdf(pdf_bytes):
         return True, metadata if metadata else "No metadata available"
     except Exception as e:
         return False, f"Invalid PDF: {str(e)}"
-
-# Function to display PDF using iframe
-def display_pdf_iframe(pdf_bytes, search_text=None):
-    """Display PDF with optional search text"""
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    pdf_display = f'<iframe id="pdfViewer" src="data:application/pdf;base64,{base64_pdf}'
-    if search_text:
-        sanitized_text = sanitize_search_text(search_text)
-        encoded_text = urllib.parse.quote(sanitized_text)
-        pdf_display += f'#search={encoded_text}'
-    pdf_display += '" width="100%" height="600px" type="application/pdf"></iframe>'
-    
-    if search_text:
-        js_script = f"""
-        <script>
-            document.getElementById('pdfViewer').addEventListener('load', function() {{
-                try {{
-                    this.contentWindow.postMessage({{
-                        type: 'search',
-                        query: '{sanitize_search_text(search_text)}'
-                    }}, '*');
-                }} catch (e) {{
-                    console.log('Error triggering PDF search:', e);
-                }}
-            }});
-        </script>
-        """
-        pdf_display += js_script
-    
-    return pdf_display
-
-# Fallback PDF display using object tag
-def display_pdf_object(pdf_bytes):
-    """Display PDF using object tag (fallback)"""
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    return f'<object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="600px"></object>'
 
 # Initialize session state
 if 'pdf_files' not in st.session_state:
@@ -198,6 +161,8 @@ def main():
                     pdf_bytes = pdf.getvalue()
                     is_valid, metadata_or_error = validate_pdf(pdf_bytes)
                     if is_valid:
+                        if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
+                            st.warning(f"{pdf.name} is larger than 1.5MB and may load slowly.")
                         st.session_state.pdf_files[pdf.name] = pdf_bytes
                         if st.session_state.current_pdf is None:
                             st.session_state.current_pdf = pdf.name
@@ -254,27 +219,27 @@ def main():
             st.subheader(f"Viewing: {st.session_state.current_pdf}")
             
             try:
-                pdf_display = display_pdf_iframe(current_pdf_bytes, st.session_state.search_text)
-                st.markdown(pdf_display, unsafe_allow_html=True)
+                pdf_viewer(
+                    input=current_pdf_bytes,
+                    width="100%",  # Responsive width
+                    height=600,
+                    search=st.session_state.search_text,
+                    key=f"pdf_viewer_{st.session_state.current_pdf}"
+                )
             except Exception as e:
-                st.error(f"Error with iframe: {e}")
-                try:
-                    pdf_display = display_pdf_object(current_pdf_bytes)
-                    st.markdown(pdf_display, unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Error with object tag: {e}")
-                    is_valid, metadata_or_error = validate_pdf(current_pdf_bytes)
-                    if not is_valid:
-                        st.error(f"Validation failed: {metadata_or_error}")
-                    else:
-                        st.info(f"PDF metadata: {metadata_or_error}")
-                    st.download_button(
-                        label="Download PDF",
-                        data=current_pdf_bytes,
-                        file_name=st.session_state.current_pdf,
-                        mime="application/pdf",
-                        key="download_pdf"
-                    )
+                st.error(f"Error displaying PDF: {e}")
+                is_valid, metadata_or_error = validate_pdf(current_pdf_bytes)
+                if not is_valid:
+                    st.error(f"Validation failed: {metadata_or_error}")
+                else:
+                    st.info(f"PDF metadata: {metadata_or_error}")
+                st.download_button(
+                    label="Download PDF",
+                    data=current_pdf_bytes,
+                    file_name=st.session_state.current_pdf,
+                    mime="application/pdf",
+                    key="download_pdf"
+                )
         else:
             st.info("Select or upload a PDF.")
     
