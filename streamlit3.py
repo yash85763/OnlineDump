@@ -67,14 +67,6 @@ st.markdown("""
         border-radius: 5px;
         margin: 5px 0;
     }
-    .clause-text {
-        cursor: pointer;
-        color: #0068c9;
-        text-decoration: underline;
-    }
-    .clause-text:hover {
-        color: #003087;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -322,12 +314,9 @@ def main():
             # Relevant clauses
             st.subheader("Relevant Clauses")
             for i, clause in enumerate(json_data.get("relevant_clauses", [])):
-                with st.expander(f"Clause {i+1}: {clause['type'].capitalize()}", key=f"clause_{i}"):
+                with st.expander(f"Clause {i+1}: {clause['type'].capitalize()}"):
                     st.write(f"**Type:** {clause['type']}")
-                    st.markdown(
-                        f"<span class='clause-text' id='clause_text_{i}'>{clause['text']}</span>",
-                        unsafe_allow_html=True
-                    )
+                    st.write(f"**Text:** {clause['text']}")
                     if st.button(f"Search clause {i+1} text", key=f"search_clause_{i}"):
                         st.session_state.search_text = clause['text']
                         st.success(f"Searching for clause {i+1}...")
