@@ -1,605 +1,237 @@
-import streamlit as st
-import json
 import os
-import concurrent.futures
-from functools import partial
-from datetime import datetime
-from typing import List, Dict, Any, Optional
-import re
+import json
+import base64
+import streamlit as st
+from pathlib import Path
+import pandas as pd
 
-# File paths
-DATA_PATH = "path/to/data"  # Adjust as needed
-context_json_file_path = os.path.join(DATA_PATH, "context")
-consolidated_ans_json_file_path = os.path.join(DATA_PATH, "consolidated")
+# Path for pre-loaded data (update these to your actual file paths)
+DEFAULT_PDF_PATH = "shimi_paper.pdf"
+DEFAULT_JSON_PATH = "shimi_paper.json"
 
-# Function to get latest regulation data (placeholder - implement your actual function)
-def get_latest_regulation_data():
-    # Your implementation here
-    return datetime.now().strftime("%Y-%m-%d")
+# Set page configuration
+st.set_page_config(
+    page_title="Research Paper Viewer",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Helper function to safely render markdown text
-def safe_markdown(text):
-    # Replace any characters that might break HTML rendering
-    if text is None:
-        return ""
-    
-    # Convert markdown to HTML safely
-    import re
-    
-    # Escape HTML special characters first
-    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-    
-    # Process code blocks with syntax highlighting
-    text = re.sub(r'```(\w*)\n(.*?)\n```', r'<pre><code class="language-\1">\2</code></pre>', text, flags=re.DOTALL)
-    
-    # Process inline code
-    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
-    
-    # Process bold text
-    text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
-    
-    # Process italic text
-    text = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', text)
-    
-    # Process bullet lists
-    text = re.sub(r'^\s*\*\s(.+)$', r'<li>\1</li>', text, flags=re.MULTILINE)
-    text = text.replace('<li>', '<ul><li>').replace('</li>', '</li></ul>')
-    
-    # Process numbered lists
-    text = re.sub(r'^\s*(\d+)\.\s(.+)$', r'<li>\2</li>', text, flags=re.MULTILINE)
-    text = text.replace('<li>', '<ol><li>').replace('</li>', '</li></ol>')
-    
-    # Process headers
-    text = re.sub(r'^###\s(.+)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
-    text = re.sub(r'^##\s(.+)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
-    text = re.sub(r'^#\s(.+)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
-    
-    # Process paragraphs - split by double newlines and wrap in <p> tags
-    paragraphs = []
-    for p in text.split('\n\n'):
-        if p.strip() and not (p.startswith('<h') or p.startswith('<ul>') or p.startswith('<ol>')):
-            paragraphs.append(f'<p>{p}</p>')
-        else:
-            paragraphs.append(p)
-    
-    text = '\n'.join(paragraphs)
-    
-    # Replace newlines with <br> tags inside paragraphs
-    paragraphs = []
-    for p in text.split('</p>'):
-        if p.startswith('<p>'):
-            p = p.replace('\n', '<br>')
-        paragraphs.append(p)
-    
-    text = '</p>'.join(paragraphs)
-    
-    return text
-
-# Load section mapping (assuming this function is defined elsewhere)
-# section_mapping = build_ecfr_section_mapping(ecfr_data)
-
-# Load context data
-with open(os.path.join(context_json_file_path, 'context.json'), 'r') as f:
-    context = json.load(f)
-
-# Load consolidated data with error handling
-consolidated_data_file = os.path.join(consolidated_ans_json_file_path, 'consolidated_data.json')
-if not os.path.exists(consolidated_data_file):
-    with open(consolidated_data_file, 'w') as f:
-        json.dump([], f)
-    consolidated_data = []
-else:
-    try:
-        with open(consolidated_data_file, 'r') as f:
-            consolidated_data = json.load(f)
-            if not isinstance(consolidated_data, list):
-                raise ValueError("Invalid JSON format: Root element must be a list")
-    except (json.JsonDecodeError, ValueError) as e:
-        st.error(f"Error loading consolidated data: {e}")
-        consolidated_data = []
-
-# Load QA data similarly
-qa_data_file = os.path.join(DATA_PATH, 'qa_new_data.json')
-if not os.path.exists(qa_data_file):
-    with open(qa_data_file, 'w') as f:
-        json.dump([], f)
-    qa_data = []
-else:
-    try:
-        with open(qa_data_file, 'r') as f:
-            qa_data = json.load(f)
-            if not isinstance(qa_data, list):
-                raise ValueError("Invalid JSON format: Root element must be a list")
-    except (json.JsonDecodeError, ValueError) as e:
-        st.error(f"Error loading QA data: {e}")
-        qa_data = []
-
-# Initialize session state
-if 'chat_history' not in st.session_state:
-    st.session_state['chat_history'] = []
-if 'custom_question' not in st.session_state:
-    st.session_state['custom_question'] = ''
-if 'submit_button_disabled' not in st.session_state:
-    st.session_state['submit_button_disabled'] = True
-if 'previous_questions' not in st.session_state:
-    st.session_state['previous_questions'] = []
-if 'previous_qa_pairs' not in st.session_state:
-    st.session_state['previous_qa_pairs'] = {}  # Dictionary to store question-answer pairs
-if 'current_qa' not in st.session_state:
-    st.session_state['current_qa'] = {"question": "", "answer": "", "section": "", "is_previous": False}
-if 'regulation_date' not in st.session_state:
-    st.session_state['regulation_date'] = "2025-03-06"  # Default date
-
-# Add default questions to the list of available questions
-default_question_options = [
-    'What does this regulation require our bank to do?', 
-    'What does this regulation prohibit our bank from doing?', 
-    'What does this regulation permit our bank to do? (drawing a distinction here between something that is permitted vs. other...)', 
-    'Other...'
-]
-
-# Function to find best match (placeholder)
-def find_best_match(question, data):
-    # Implement your matching logic here
-    return None
-
-# Custom CSS for the layout
+# Custom CSS for styling
 st.markdown("""
 <style>
     .main-container {
         display: flex;
         flex-direction: row;
     }
-    .stButton {
-        margin-bottom: 5px;
+    .pdf-viewer {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
     }
-    .stButton button {
-        width: 100%;
-        text-align: left;
-        padding: 8px;
-        border-radius: 4px;
-        background-color: #f8f9fa;
-        border: 1px solid #eee;
-    }
-    .stButton button:hover {
-        background-color: #f0f0f0;
-    }
-    .stButton button[data-active="true"] {
-        background-color: #e6f3ff;
-        border-left: 3px solid #2e74b5;
-    }
-    .scrollable-column {
-        height: 80vh;
+    .json-details {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
         overflow-y: auto;
     }
-    .date-display {
-        font-size: 0.8rem;
-        color: #666;
-        margin-top: 5px;
+    .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
         margin-bottom: 15px;
     }
-    .chat-container {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
+    .dict-button {
+        padding: 5px 10px;
+        background-color: #f0f2f6;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        cursor: pointer;
     }
-    .user-message {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 10px;
+    .dict-button:hover {
+        background-color: #ddd;
     }
-    .assistant-message {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 20px;
-    }
-    .assistant-message-previous {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 20px;
-        opacity: 0.7;
-    }
-    .user-icon {
-        background-color: #6c757d;
+    .active-button {
+        background-color: #0068c9;
         color: white;
-        border-radius: 50%;
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-right: 10px;
-        flex-shrink: 0;
     }
-    .bot-icon {
-        background-color: #0d6efd;
-        color: white;
-        border-radius: 50%;
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-right: 10px;
-        flex-shrink: 0;
+    .extract-text {
+        background-color: #f0f8ff;
+        padding: 15px;
+        border-radius: 5px;
+        border-left: 3px solid #0068c9;
+        margin: 10px 0;
     }
-    .message-content {
+    .key-info {
+        background-color: #f8f9fa;
         padding: 10px;
         border-radius: 5px;
-        max-width: calc(100% - 50px);
-        overflow-wrap: break-word;
-    }
-    .user-message .message-content {
-        background-color: #f1f1f1;
-    }
-    .assistant-message .message-content, .assistant-message-previous .message-content {
-        background-color: #e6f7ff;
-    }
-    .section-info {
-        font-style: italic;
-        margin: 5px 0 15px 42px;
-        color: #555;
-    }
-    .loading {
-        display: flex;
-        align-items: center;
-    }
-    .loading:after {
-        content: "...";
-        width: 24px;
-        text-align: left;
-        animation: dots 1.5s steps(5, end) infinite;
-    }
-    @keyframes dots {
-        0%, 20% { content: ""; }
-        40% { content: "."; }
-        60% { content: ".."; }
-        80%, 100% { content: "..."; }
-    }
-    
-    /* Markdown formatting within the message content */
-    .message-content p {
-        margin-bottom: 0.75rem;
-        line-height: 1.5;
-    }
-    .message-content h1, .message-content h2, .message-content h3 {
-        margin-top: 1rem;
-        margin-bottom: 0.5rem;
-        font-weight: bold;
-    }
-    .message-content h1 {
-        font-size: 1.5rem;
-    }
-    .message-content h2 {
-        font-size: 1.25rem;
-    }
-    .message-content h3 {
-        font-size: 1.1rem;
-    }
-    .message-content ul, .message-content ol {
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
-        padding-left: 1.5rem;
-    }
-    .message-content li {
-        margin-bottom: 0.25rem;
-    }
-    .message-content code {
-        font-family: monospace;
-        background-color: rgba(0,0,0,0.05);
-        padding: 0.1rem 0.2rem;
-        border-radius: 3px;
-        font-size: 0.9em;
-    }
-    .message-content pre {
-        background-color: rgba(0,0,0,0.05);
-        padding: 0.5rem;
-        border-radius: 5px;
-        margin: 0.5rem 0;
-        overflow-x: auto;
-    }
-    .message-content pre code {
-        background-color: transparent;
-        padding: 0;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Main UI
-st.title("Regulation K Interpreter")
+def display_pdf(pdf_bytes):
+    """Display PDF in an embedded viewer"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    pdf_display = f"""
+    <iframe 
+        src="data:application/pdf;base64,{base64_pdf}" 
+        width="100%" 
+        height="100%" 
+        style="height: 80vh;" 
+        type="application/pdf">
+    </iframe>
+    """
+    return pdf_display
 
-# Create two columns with custom widths
-col1, col2 = st.columns([3, 7])
+# Check if pre-loaded data exists
+def check_preloaded_data():
+    pdf_exists = os.path.exists(DEFAULT_PDF_PATH)
+    json_exists = os.path.exists(DEFAULT_JSON_PATH)
+    return pdf_exists, json_exists
 
-# Add scrolling to col2 and ensure content doesn't compound
-st.markdown("""
-<style>
-    [data-testid="column"]:nth-of-type(2) {
-        height: 80vh;
-        overflow-y: auto;
-    }
-    /* Clear all contents in the right column on rerun */
-    [data-testid="column"]:nth-of-type(2) > div {
-        height: auto !important;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Initialize session state variables
+if 'selected_extract_index' not in st.session_state:
+    st.session_state.selected_extract_index = 0
 
-# Function to handle question click - ensure this triggers an immediate display update
-def handle_question_click(idx):
-    if idx < len(st.session_state['previous_questions']):
-        question = st.session_state['previous_questions'][idx]
-        if question in st.session_state['previous_qa_pairs']:
-            qa_pair = st.session_state['previous_qa_pairs'][question]
-            st.session_state['current_qa'] = {
-                "question": question,
-                "answer": qa_pair['answer'],
-                "section": qa_pair['section'],
-                "is_previous": True  # Mark this as a previous answer
-            }
-            
-            # Immediately update the display in the right column
-            with col2:
-                right_col = st.empty()
-                with right_col.container():
-                    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-                    
-                    # Question with user icon
-                    st.markdown(f'''
-                    <div class="user-message">
-                        <div class="user-icon">👤</div>
-                        <div class="message-content">
-                            {question}
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                    
-                    # Display the section info if available
-                    if qa_pair['section'] and qa_pair['section'] != "All Sections":
-                        section = qa_pair['section']
-                        section_description = section_mapping.get(section, "")
-                        st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
-                    
-                    # Answer with bot icon (previous style) - use safe_markdown for the answer
-                    st.markdown(f'''
-                    <div class="assistant-message-previous">
-                        <div class="bot-icon">🤖</div>
-                        <div class="message-content">
-                            {safe_markdown(qa_pair['answer'])}
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
+if 'pdf_bytes' not in st.session_state:
+    st.session_state.pdf_bytes = None
 
-# Left column for selections and history
-with col1:
-    selected_regulation = st.selectbox("Select a regulation", ["Regulation K"], index=0)
+if 'json_data' not in st.session_state:
+    st.session_state.json_data = None
+
+def main():
+    # Check for pre-loaded data
+    pdf_exists, json_exists = check_preloaded_data()
     
-    # Button to get latest regulation data
-    if st.button("Get Latest Data"):
-        st.session_state['regulation_date'] = get_latest_regulation_data()
+    # Main layout with three columns
+    col1, col2, col3 = st.columns([25, 40, 35])
     
-    # Display regulation date
-    st.markdown(f'<div class="date-display">As of: {st.session_state["regulation_date"]}</div>', unsafe_allow_html=True)
-    
-    sections = list(context.keys())
-    selected_section = st.selectbox("Select query scope", ["All Sections"] + sections, index=0)
-    
-    # Combine default questions with previous questions from this session
-    all_questions = default_question_options.copy()
-    
-    selected_question = st.selectbox("Select a question", all_questions, index=0)
-    
-    if selected_question == "Other...":
-        st.session_state['custom_question'] = st.text_input("Enter your question", value=st.session_state['custom_question'])
-        question = st.session_state['custom_question'] if st.session_state['custom_question'] else None
-    else:
-        question = selected_question
-    
-    submit_button_disabled = False if question else True
-    
-    # Submit button
-    submit_clicked = st.button("Submit", key="submit_button", disabled=submit_button_disabled)
-    
-    # Display previous questions as clickable items
-    if st.session_state['previous_questions']:
-        st.markdown("### Previous Questions")
+    # Left pane for PDF upload and control options
+    with col1:
+        st.header("Research Paper")
         
-        for i, prev_q in enumerate(st.session_state['previous_questions']):
-            # Check if this is the current question being displayed
-            is_active = st.session_state['current_qa'].get('question') == prev_q
+        # Add a demo mode option
+        use_demo_data = st.checkbox("Use pre-loaded SHIMI paper", 
+                                    value=pdf_exists and json_exists)
+        
+        if use_demo_data and pdf_exists and json_exists:
+            # Load pre-existing data
+            if st.session_state.pdf_bytes is None:
+                with open(DEFAULT_PDF_PATH, 'rb') as f:
+                    st.session_state.pdf_bytes = f.read()
             
-            # Create a unique key for each question button using index
-            question_key = f"question_btn_{i}"
+            if st.session_state.json_data is None:
+                with open(DEFAULT_JSON_PATH, 'r') as f:
+                    st.session_state.json_data = json.load(f)
+                    
+            st.success("Pre-loaded SHIMI paper data is being used")
             
-            # Use a button with the question text
-            if st.button(
-                prev_q, 
-                key=question_key,
-                help="Click to view this previous question and answer",
-                use_container_width=True
-            ):
-                handle_question_click(i)
-
-# Right column for displaying the current Q&A
-with col2:
-    # Use st.empty() to completely replace previous content
-    right_col = st.empty()
-    
-    # Reset all content in the right column
-    with right_col.container():
-        if st.session_state['current_qa']['question']:
-            # Display only the current Q&A in chat format with icons
-            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-            
-            # Question with user icon
-            st.markdown(f'''
-            <div class="user-message">
-                <div class="user-icon">👤</div>
-                <div class="message-content">
-                    {st.session_state["current_qa"]["question"]}
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            # Display the section info if available
-            if st.session_state['current_qa'].get('section') and st.session_state['current_qa']['section'] != "All Sections":
-                section = st.session_state['current_qa']['section']
-                section_description = section_mapping.get(section, "")
-                st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
-            
-            # Answer with bot icon
-            is_previous = st.session_state['current_qa'].get('is_previous', False)
-            message_class = "assistant-message-previous" if is_previous else "assistant-message"
-            
-            st.markdown(f'''
-            <div class="{message_class}">
-                <div class="bot-icon">🤖</div>
-                <div class="message-content">
-                    {safe_markdown(st.session_state["current_qa"].get("answer", ""))}
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            st.markdown('</div>', unsafe_allow_html=True)
         else:
-            # Initial message
-            st.markdown('''
-            <div class="chat-container">
-                <div class="assistant-message">
-                    <div class="bot-icon">🤖</div>
-                    <div class="message-content">
-                        Select a question and click Submit, or click on a previous question from the list.
-                    </div>
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-
-# Process new submission
-if submit_clicked:
-    # First, update the right column to show the question and a loading indicator
+            # File uploader for PDF
+            uploaded_pdf = st.file_uploader(
+                "Upload Research PDF",
+                type="pdf",
+                key="pdf_uploader"
+            )
+            
+            # File uploader for JSON
+            uploaded_json = st.file_uploader(
+                "Upload JSON Extract",
+                type="json",
+                key="json_uploader"
+            )
+            
+            # Display status
+            if uploaded_pdf and uploaded_json:
+                st.success("Both PDF and JSON are loaded!")
+                # Store the uploaded data
+                st.session_state.pdf_bytes = uploaded_pdf.getvalue()
+                st.session_state.json_data = json.load(uploaded_json)
+            elif uploaded_pdf:
+                st.warning("PDF is loaded. Please upload the JSON extract.")
+                st.session_state.pdf_bytes = uploaded_pdf.getvalue()
+            elif uploaded_json:
+                st.warning("JSON extract is loaded. Please upload the PDF file.")
+                st.session_state.json_data = json.load(uploaded_json)
+            else:
+                st.info("Please upload both the PDF and its JSON extract.")
+    
+    # Middle pane for PDF viewer
     with col2:
-        right_col = st.empty()
-        with right_col.container():
-            # Display the question
-            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-            st.markdown(f'''
-            <div class="user-message">
-                <div class="user-icon">👤</div>
-                <div class="message-content">
-                    {question}
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            # Display the section info if available
-            if selected_section and selected_section != "All Sections":
-                section_description = section_mapping.get(selected_section, "")
-                st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
-            
-            # Show a spinner in the answer spot
-            answer_placeholder = st.empty()
-            with answer_placeholder:
-                st.markdown('''
-                <div class="assistant-message">
-                    <div class="bot-icon">🤖</div>
-                    <div class="message-content">
-                        <div class="loading">
-                            Generating answer...
-                        </div>
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Process the question
-    if selected_section == "All Sections":
-        answer = find_best_match(question, consolidated_data)
-        if answer:
-            final_answer = answer
+        st.header("PDF Viewer")
+        
+        if st.session_state.pdf_bytes is not None:
+            # Display the PDF
+            pdf_display = display_pdf(st.session_state.pdf_bytes)
+            st.markdown(f"<div class='pdf-viewer'>{pdf_display}</div>", unsafe_allow_html=True)
         else:
-            section_answers = []
-            for section, section_content in context.items():
-                try:
-                    # Process each section sequentially
-                    answers = llm_processor.answer_from_sections(section_content, [question])
-                    if answers and len(answers) > 0:
-                        section_answers.append(answers[0])
-                except Exception as e:
-                    st.error(f"Error processing section {section}: {e}")
+            st.info("Upload a PDF document to view it here.")
+    
+    # Right pane for JSON data display
+    with col3:
+        st.header("Paper Analysis")
+        
+        if st.session_state.json_data is not None:
+            json_data = st.session_state.json_data
             
-            if section_answers:
-                final_answer = llm_processor.consolidator(question, section_answers)
-            else:
-                final_answer = "No answers found from any section."
-    else:
-        # Process a single section
-        try:
-            answers = llm_processor.answer_from_sections(context[selected_section], [question])
-            if answers and len(answers) > 0:
-                final_answer = answers[0]
-            else:
-                final_answer = "No answer was generated for this question. Please try rephrasing it."
-        except Exception as e:
-            st.error(f"Error processing question: {e}")
-            final_answer = "An error occurred while processing your question. Please try again."
-    
-    # Update the answer display with the final answer
-    with right_col.container():
-        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-        st.markdown(f'''
-        <div class="user-message">
-            <div class="user-icon">👤</div>
-            <div class="message-content">
-                {question}
-            </div>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        # Display the section info if available
-        if selected_section and selected_section != "All Sections":
-            section_description = section_mapping.get(selected_section, "")
-            st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
-        
-        # Display the final answer - use safe_markdown for proper formatting
-        st.markdown(f'''
-        <div class="assistant-message">
-            <div class="bot-icon">🤖</div>
-            <div class="message-content">
-                {safe_markdown(final_answer)}
-            </div>
-        </div>
-        ''', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Add question to the previous questions list if it's not already there and not "Other..."
-    if question and question != "Other..." and question not in st.session_state['previous_questions']:
-        st.session_state['previous_questions'].append(question)
-    
-    # Store in previous QA pairs dictionary
-    st.session_state['previous_qa_pairs'][question] = {
-        "section": selected_section,
-        "answer": final_answer
-    }
-    
-    # Update current QA
-    st.session_state['current_qa'] = {
-        "question": question,
-        "answer": final_answer,
-        "section": selected_section,
-        "is_previous": False  # This is a new answer
-    }
-    
-    # Save to QA data
-    qa_data.append({
-        "question": question,
-        "section": selected_section,
-        "answer": final_answer
-    })
-    with open(qa_data_file, 'w') as f:
-        json.dump(qa_data, f, indent=4)
-    
-    # Clear custom question if it was used
-    if selected_question == "Other...":
-        st.session_state['custom_question'] = ''
+            # Display metadata
+            st.subheader("Document Information")
+            st.markdown(f"<div class='key-info'><strong>Title:</strong> {json_data['metadata']['title']}<br>"
+                       f"<strong>Author:</strong> {json_data['metadata']['authors']}<br>"
+                       f"<strong>Affiliation:</strong> {json_data['metadata']['affiliation']}<br>"
+                       f"<strong>Email:</strong> {json_data['metadata']['email']}</div>", 
+                       unsafe_allow_html=True)
+            
+            # Display abstract
+            st.subheader("Abstract")
+            st.markdown(f"<div class='extract-text'>{json_data['abstract']}</div>", unsafe_allow_html=True)
+            
+            # Display key terms if available
+            if json_data.get("key_terms"):
+                st.subheader("Key Terms")
+                st.write(", ".join(json_data["key_terms"]))
+            
+            # Display key findings
+            st.subheader("Key Findings")
+            for i, finding in enumerate(json_data.get("key_findings", [])):
+                st.markdown(f"• {finding}")
+            
+            # Display binary questions
+            st.subheader("Research Questions")
+            for q in json_data.get("binary_questions", []):
+                expander = st.expander(q["question"])
+                with expander:
+                    st.write(f"**Answer:** {q['answer']}")
+                    st.write(f"**Explanation:** {q['explanation']}")
+            
+            # Create buttons for extracts
+            st.subheader("Section Extracts")
+            extracts = json_data.get("extracts", [])
+            
+            # Create button row for extracts in chunks of 3
+            for i in range(0, len(extracts), 3):
+                cols = st.columns(3)
+                for j in range(3):
+                    idx = i + j
+                    if idx < len(extracts):
+                        # Use only the section number/name as the button label
+                        label = extracts[idx]["section"]
+                        if cols[j].button(label, key=f"extract_btn_{idx}"):
+                            st.session_state.selected_extract_index = idx
+            
+            # Display selected extract
+            if extracts and 0 <= st.session_state.selected_extract_index < len(extracts):
+                selected_extract = extracts[st.session_state.selected_extract_index]
+                st.markdown(f"<div class='extract-text'>{selected_extract['text']}</div>", unsafe_allow_html=True)
+                
+                with st.expander("View full section content"):
+                    st.text_area("", selected_extract["full_content"], height=300)
+            
+        else:
+            st.info("Upload the JSON extract to view the paper analysis.")
+
+if __name__ == "__main__":
+    main()
