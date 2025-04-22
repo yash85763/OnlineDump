@@ -5,6 +5,7 @@ import streamlit as st
 from pathlib import Path
 import pandas as pd
 import re
+import urllib.parse
 
 # Set page configuration
 st.set_page_config(
@@ -111,11 +112,31 @@ st.markdown("""
 def display_pdf_iframe(pdf_bytes, search_text=None):
     """Display PDF using a simple iframe with optional search text"""
     base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}'
+    pdf_display = f'<iframe id="pdfViewer" src="data:application/pdf;base64,{base64_pdf}'
     if search_text:
         sanitized_text = sanitize_search_text(search_text)
-        pdf_display += f'#search={sanitized_text}'
+        encoded_text = urllib.parse.quote(sanitized_text)
+        pdf_display += f'#search={encoded_text}'
     pdf_display += '" width="100%" height="600px" type="application/pdf"></iframe>'
+    
+    # Add JavaScript to trigger search (if supported)
+    if search_text:
+        js_script = f"""
+        <script>
+            document.getElementById('pdfViewer').addEventListener('load', function() {{
+                try {{
+                    this.contentWindow.postMessage({{
+                        type: 'search',
+                        query: '{sanitize_search_text(search_text)}'
+                    }}, '*');
+                }} catch (e) {{
+                    console.log('Error triggering PDF search:', e);
+                }}
+            }});
+        </script>
+        """
+        pdf_display += js_script
+    
     return pdf_display
 
 # Fallback PDF display using object tag
@@ -152,8 +173,15 @@ def check_preloaded_data():
 
 def sanitize_search_text(text):
     """Clean up text for searching in PDF"""
-    text = re.sub(r'\[\d+\]', '', text)  # Remove citation numbers
-    text = re.sub(r'\s+', ' ', text)     # Normalize spaces
+    if not text:
+        return ""
+    # Take first 50 characters to avoid long search strings
+    text = text[:50]
+    # Remove special characters, keep alphanumeric and spaces
+    text = re.sub(r'[^\w\s.]', '', text)
+    # Normalize spaces
+    text = re.sub(r'\s+', ' ', text)
+    # Remove leading/trailing spaces
     text = text.strip()
     return text
 
@@ -320,8 +348,11 @@ def main():
                 with st.expander(f"Clause {i+1}: {clause['type'].capitalize()}", key=f"clause_{i}"):
                     st.write(f"**Type:** {clause['type']}")
                     st.write(f"**Text:** {clause['text']}")
+                    if len(clause['text']) > 50:
+                        st.warning("Long text may not highlight fully in PDF viewer.")
                     if st.button("Highlight in PDF", key=f"highlight_{i}"):
                         st.session_state.search_text = clause['text']
+                        st.success(f"Searching for clause {i+1} in PDF...")
                         st.rerun()
             
         else:
