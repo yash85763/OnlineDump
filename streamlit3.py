@@ -1,511 +1,403 @@
-import streamlit as st
-import json
 import os
+import json
+import time
+import base64
+import streamlit as st
+from pathlib import Path
+import pandas as pd
+from typing import Optional, Dict, List, Any
+import tempfile
+import shutil
+from pdfminer.high_level import extract_text
 import concurrent.futures
-from functools import partial
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+import threading
+import streamlit.components.v1 as components
+import logging
 
-# File paths
-DATA_PATH = "path/to/data"  # Adjust as needed
-context_json_file_path = os.path.join(DATA_PATH, "context")
-consolidated_ans_json_file_path = os.path.join(DATA_PATH, "consolidated")
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-# Function to get latest regulation data (placeholder - implement your actual function)
-def get_latest_regulation_data():
-    # Your implementation here
-    return datetime.now().strftime("%Y-%m-%d")
+# Set page configuration
+st.set_page_config(
+    page_title="PDF Analyzer",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Helper function to process a single section with the LLM
-def process_section(section, section_content, question):
-    try:
-        # Don't use st.spinner in threads since it requires the Streamlit context
-        answers = llm_processor.answer_from_sections(section_content, [question])
-        if answers and len(answers) > 0:
-            return section, answers[0]
-        return section, None
-    except Exception as e:
-        # Return the error instead of showing it directly
-        return section, f"Error: {str(e)}"
-
-# Load section mapping (assuming this function is defined elsewhere)
-# section_mapping = build_ecfr_section_mapping(ecfr_data)
-
-# Load context data
-with open(os.path.join(context_json_file_path, 'context.json'), 'r') as f:
-    context = json.load(f)
-
-# Load consolidated data with error handling
-consolidated_data_file = os.path.join(consolidated_ans_json_file_path, 'consolidated_data.json')
-if not os.path.exists(consolidated_data_file):
-    with open(consolidated_data_file, 'w') as f:
-        json.dump([], f)
-    consolidated_data = []
-else:
-    try:
-        with open(consolidated_data_file, 'r') as f:
-            consolidated_data = json.load(f)
-            if not isinstance(consolidated_data, list):
-                raise ValueError("Invalid JSON format: Root element must be a list")
-    except (json.JsonDecodeError, ValueError) as e:
-        st.error(f"Error loading consolidated data: {e}")
-        consolidated_data = []
-
-# Load QA data similarly
-qa_data_file = os.path.join(DATA_PATH, 'qa_new_data.json')
-if not os.path.exists(qa_data_file):
-    with open(qa_data_file, 'w') as f:
-        json.dump([], f)
-    qa_data = []
-else:
-    try:
-        with open(qa_data_file, 'r') as f:
-            qa_data = json.load(f)
-            if not isinstance(qa_data, list):
-                raise ValueError("Invalid JSON format: Root element must be a list")
-    except (json.JsonDecodeError, ValueError) as e:
-        st.error(f"Error loading QA data: {e}")
-        qa_data = []
-
-# Initialize session state
-if 'chat_history' not in st.session_state:
-    st.session_state['chat_history'] = []
-if 'custom_question' not in st.session_state:
-    st.session_state['custom_question'] = ''
-if 'submit_button_disabled' not in st.session_state:
-    st.session_state['submit_button_disabled'] = True
-if 'previous_questions' not in st.session_state:
-    st.session_state['previous_questions'] = []
-if 'previous_qa_pairs' not in st.session_state:
-    st.session_state['previous_qa_pairs'] = {}  # Dictionary to store question-answer pairs
-if 'current_qa' not in st.session_state:
-    st.session_state['current_qa'] = {"question": "", "answer": "", "section": "", "is_previous": False}
-if 'regulation_date' not in st.session_state:
-    st.session_state['regulation_date'] = "2025-03-06"  # Default date
-
-# Add default questions to the list of available questions
-default_question_options = [
-    'What does this regulation require our bank to do?', 
-    'What does this regulation prohibit our bank from doing?', 
-    'What does this regulation permit our bank to do? (drawing a distinction here between something that is permitted vs. other...)', 
-    'Other...'
-]
-
-# Function to find best match (placeholder)
-def find_best_match(question, data):
-    # Implement your matching logic here
-    return None
-
-# Custom CSS for the layout
+# Custom CSS for styling
 st.markdown("""
 <style>
     .main-container {
         display: flex;
         flex-direction: row;
     }
-    .stButton {
-        margin-bottom: 5px;
+    .pdf-viewer {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
     }
-    .stButton button {
-        width: 100%;
-        text-align: left;
-        padding: 8px;
-        border-radius: 4px;
-        background-color: #f8f9fa;
-        border: 1px solid #eee;
-    }
-    .stButton button:hover {
-        background-color: #f0f0f0;
-    }
-    .stButton button[data-active="true"] {
-        background-color: #e6f3ff;
-        border-left: 3px solid #2e74b5;
-    }
-    .scrollable-column {
-        height: 80vh;
+    .json-details {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
         overflow-y: auto;
     }
-    .date-display {
-        font-size: 0.8rem;
-        color: #666;
-        margin-top: 5px;
+    .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
         margin-bottom: 15px;
     }
-    .chat-container {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
+    .dict-button {
+        padding: 5px 10px;
+        background-color: #f0f2f6;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        cursor: pointer;
     }
-    .user-message {
-        display: flex;
-        align-items: flex-start;
+    .dict-button:hover {
+        background-color: #ddd;
+    }
+    .active-button {
+        background-color: #0068c9;
+        color: white;
+    }
+    .progress-container {
         margin-bottom: 10px;
     }
-    .assistant-message {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 20px;
-    }
-    .assistant-message-previous {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 20px;
-        opacity: 0.7;
-    }
-    .user-icon {
-        background-color: #6c757d;
-        color: white;
-        border-radius: 50%;
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-right: 10px;
-        flex-shrink: 0;
-    }
-    .bot-icon {
-        background-color: #0d6efd;
-        color: white;
-        border-radius: 50%;
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-right: 10px;
-        flex-shrink: 0;
-    }
-    .message-content {
-        padding: 10px;
-        border-radius: 5px;
-        max-width: calc(100% - 50px);
-    }
-    .user-message .message-content {
-        background-color: #f1f1f1;
-    }
-    .assistant-message .message-content, .assistant-message-previous .message-content {
-        background-color: #e6f7ff;
-    }
-    .section-info {
-        font-style: italic;
-        margin: 5px 0 15px 42px;
-        color: #555;
-    }
-    .loading {
-        display: flex;
-        align-items: center;
-    }
-    .loading:after {
-        content: "...";
-        width: 24px;
-        text-align: left;
-        animation: dots 1.5s steps(5, end) infinite;
-    }
-    @keyframes dots {
-        0%, 20% { content: ""; }
-        40% { content: "."; }
-        60% { content: ".."; }
-        80%, 100% { content: "..."; }
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# Main UI
-st.title("Regulation K Interpreter")
+# Function to extract text from PDF
+def process_pdf(pdf_file, output_folder: str) -> str:
+    """Process a PDF file and save extracted text to a file"""
+    try:
+        # Create a temporary file to save the uploaded PDF
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+            tmp_file.write(pdf_file.getvalue())
+            tmp_path = tmp_file.name
 
-# Create two columns with custom widths
-col1, col2 = st.columns([3, 7])
+        # Extract text from PDF
+        extracted_text = extract_text(tmp_path)
+        
+        # Create output filename
+        pdf_name = Path(pdf_file.name).stem
+        output_text_path = os.path.join(output_folder, f"{pdf_name}.txt")
+        
+        # Save extracted text
+        with open(output_text_path, 'w', encoding="utf-8") as f:
+            f.write(extracted_text)
+            
+        # Clean up the temporary file
+        os.unlink(tmp_path)
+        
+        return output_text_path
+    
+    except Exception as e:
+        logging.error(f"Error processing PDF {pdf_file.name}: {e}")
+        return None
 
-# Add scrolling to col2 and ensure content doesn't compound
-st.markdown("""
-<style>
-    [data-testid="column"]:nth-of-type(2) {
-        height: 80vh;
-        overflow-y: auto;
-    }
-    /* Clear all contents in the right column on rerun */
-    [data-testid="column"]:nth-of-type(2) > div {
-        height: auto !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Function to handle question click - ensure this triggers an immediate display update
-def handle_question_click(idx):
-    if idx < len(st.session_state['previous_questions']):
-        question = st.session_state['previous_questions'][idx]
-        if question in st.session_state['previous_qa_pairs']:
-            qa_pair = st.session_state['previous_qa_pairs'][question]
-            st.session_state['current_qa'] = {
-                "question": question,
-                "answer": qa_pair['answer'],
-                "section": qa_pair['section'],
-                "is_previous": True  # Mark this as a previous answer
+# Function to process PDF and generate JSON
+def generate_json(pdf_file, text_path: str, output_folder: str, progress_callback=None) -> str:
+    """Generate JSON data from the extracted text"""
+    try:
+        # Simulate processing time with progress updates
+        total_steps = 5
+        pdf_name = Path(pdf_file.name).stem
+        
+        # Step 1: Initial processing
+        if progress_callback:
+            progress_callback(0.2)
+        time.sleep(0.5)  # Simulate processing
+        
+        # Step 2: Text analysis
+        if progress_callback:
+            progress_callback(0.4)
+        time.sleep(0.5)  # Simulate processing
+        
+        # Step 3: Information extraction
+        if progress_callback:
+            progress_callback(0.6)
+        time.sleep(0.5)  # Simulate processing
+        
+        # Step 4: Finalize data
+        if progress_callback:
+            progress_callback(0.8)
+        time.sleep(0.5)  # Simulate processing
+        
+        # Create sample JSON data (replace with actual extraction logic)
+        json_data = {
+            "filename": pdf_file.name,
+            "pages": 5,  # Replace with actual page count
+            "metadata": {
+                "title": f"Document: {pdf_name}",
+                "author": "Unknown",
+                "date": "2023-01-01"
+            },
+            "extracted_info": [
+                {"text": f"This is the first extracted section from {pdf_name}. It contains important information about the document."},
+                {"text": f"Second section discusses key findings in the {pdf_name} document with relevant analysis."},
+                {"text": f"Third section provides conclusions from the analysis of {pdf_name} with recommendations."}
+            ],
+            "key_metrics": {
+                "total_words": 1500,
+                "important_terms": ["term1", "term2", "term3"],
+                "sentiment": "positive",
+                "classification": "report"
             }
-            
-            # Immediately update the display in the right column
-            with col2:
-                right_col = st.empty()
-                with right_col.container():
-                    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-                    
-                    # Question with user icon
-                    st.markdown(f'''
-                    <div class="user-message">
-                        <div class="user-icon">👤</div>
-                        <div class="message-content">
-                            {question}
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                    
-                    # Display the section info if available
-                    if qa_pair['section'] and qa_pair['section'] != "All Sections":
-                        section = qa_pair['section']
-                        section_description = section_mapping.get(section, "")
-                        st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
-                    
-                    # Answer with bot icon (previous style)
-                    st.markdown(f'''
-                    <div class="assistant-message-previous">
-                        <div class="bot-icon">🤖</div>
-                        <div class="message-content">
-                            {qa_pair['answer']}
-                        </div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
+        }
+        
+        # Save JSON to file
+        json_path = os.path.join(output_folder, f"{pdf_name}.json")
+        with open(json_path, 'w', encoding="utf-8") as f:
+            json.dump(json_data, f, indent=4)
+        
+        # Step 5: Complete
+        if progress_callback:
+            progress_callback(1.0)
+        
+        return json_path
+    
+    except Exception as e:
+        logging.error(f"Error generating JSON for {pdf_file.name}: {e}")
+        if progress_callback:
+            progress_callback(1.0, error=True)
+        return None
 
-# Left column for selections and history
+# Function to display PDF
+def display_pdf(pdf_path: str):
+    """Display PDF file in Streamlit"""
+    try:
+        # Open and read the PDF file
+        with open(pdf_path, "rb") as f:
+            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+        
+        # Embed PDF viewer
+        pdf_display = f"""
+        <iframe 
+            src="data:application/pdf;base64,{base64_pdf}" 
+            width="100%" 
+            height="100%" 
+            style="height: 80vh;" 
+            type="application/pdf">
+        </iframe>
+        """
+        return pdf_display
+    except Exception as e:
+        logging.error(f"Error displaying PDF: {e}")
+        return f"<p>Error displaying PDF: {e}</p>"
+
+# Initialize session state variables
+if 'processed_pdfs' not in st.session_state:
+    st.session_state.processed_pdfs = {}  # {pdf_name: {"progress": 0.0, "json_path": None}}
+
+if 'selected_pdf' not in st.session_state:
+    st.session_state.selected_pdf = None
+
+if 'selected_dict_index' not in st.session_state:
+    st.session_state.selected_dict_index = 0
+
+if 'temp_dir' not in st.session_state:
+    # Create temporary directories for processing
+    st.session_state.temp_dir = tempfile.mkdtemp()
+    st.session_state.text_dir = os.path.join(st.session_state.temp_dir, "text")
+    st.session_state.json_dir = os.path.join(st.session_state.temp_dir, "json")
+    st.session_state.pdf_dir = os.path.join(st.session_state.temp_dir, "pdfs")
+    
+    # Create directories
+    os.makedirs(st.session_state.text_dir, exist_ok=True)
+    os.makedirs(st.session_state.json_dir, exist_ok=True)
+    os.makedirs(st.session_state.pdf_dir, exist_ok=True)
+
+# Function to update PDF processing progress
+def update_progress(pdf_name, progress, error=False):
+    if pdf_name in st.session_state.processed_pdfs:
+        st.session_state.processed_pdfs[pdf_name]["progress"] = progress
+        if error:
+            st.session_state.processed_pdfs[pdf_name]["error"] = True
+
+# Function to process uploaded PDF files
+def process_uploaded_pdf(uploaded_file):
+    pdf_name = uploaded_file.name
+    
+    # Initialize progress tracking
+    if pdf_name not in st.session_state.processed_pdfs:
+        st.session_state.processed_pdfs[pdf_name] = {
+            "progress": 0.0,
+            "json_path": None,
+            "pdf_path": None,
+            "error": False
+        }
+    
+    # Save the PDF to the temporary directory
+    pdf_path = os.path.join(st.session_state.pdf_dir, pdf_name)
+    with open(pdf_path, "wb") as f:
+        f.write(uploaded_file.getvalue())
+    
+    st.session_state.processed_pdfs[pdf_name]["pdf_path"] = pdf_path
+    
+    # Extract text from PDF
+    text_path = process_pdf(uploaded_file, st.session_state.text_dir)
+    if text_path:
+        # Generate JSON
+        progress_callback = lambda p, error=False: update_progress(pdf_name, p, error)
+        json_path = generate_json(uploaded_file, text_path, st.session_state.json_dir, progress_callback)
+        
+        if json_path:
+            st.session_state.processed_pdfs[pdf_name]["json_path"] = json_path
+            return True
+    
+    st.session_state.processed_pdfs[pdf_name]["error"] = True
+    return False
+
+# Main layout with three columns
+col1, col2, col3 = st.columns([25, 40, 35])
+
+# Left pane for PDF upload and selection
 with col1:
-    selected_regulation = st.selectbox("Select a regulation", ["Regulation K"], index=0)
+    st.header("PDF Documents")
     
-    # Button to get latest regulation data
-    if st.button("Get Latest Data"):
-        st.session_state['regulation_date'] = get_latest_regulation_data()
+    # File uploader
+    uploaded_files = st.file_uploader(
+        "Upload PDFs (max 20)",
+        type="pdf",
+        accept_multiple_files=True,
+        key="pdf_uploader"
+    )
     
-    # Display regulation date
-    st.markdown(f'<div class="date-display">As of: {st.session_state["regulation_date"]}</div>', unsafe_allow_html=True)
-    
-    sections = list(context.keys())
-    selected_section = st.selectbox("Select query scope", ["All Sections"] + sections, index=0)
-    
-    # Combine default questions with previous questions from this session
-    all_questions = default_question_options.copy()
-    
-    selected_question = st.selectbox("Select a question", all_questions, index=0)
-    
-    if selected_question == "Other...":
-        st.session_state['custom_question'] = st.text_input("Enter your question", value=st.session_state['custom_question'])
-        question = st.session_state['custom_question'] if st.session_state['custom_question'] else None
-    else:
-        question = selected_question
-    
-    submit_button_disabled = False if question else True
-    
-    # Submit button
-    submit_clicked = st.button("Submit", key="submit_button", disabled=submit_button_disabled)
-    
-    # Display previous questions as clickable items
-    if st.session_state['previous_questions']:
-        st.markdown("### Previous Questions")
+    if uploaded_files:
+        # Limit to 20 PDFs
+        if len(uploaded_files) > 20:
+            st.warning("Maximum 20 PDFs allowed. Only the first 20 will be processed.")
+            uploaded_files = uploaded_files[:20]
         
-        for i, prev_q in enumerate(st.session_state['previous_questions']):
-            # Check if this is the current question being displayed
-            is_active = st.session_state['current_qa'].get('question') == prev_q
-            
-            # Create a unique key for each question button using index
-            question_key = f"question_btn_{i}"
-            
-            # Use a button with the question text
-            if st.button(
-                prev_q, 
-                key=question_key,
-                help="Click to view this previous question and answer",
-                use_container_width=True
-            ):
-                handle_question_click(i)
+        # Process new PDFs
+        for pdf_file in uploaded_files:
+            if pdf_file.name not in st.session_state.processed_pdfs:
+                st.text(f"Processing: {pdf_file.name}")
+                # Start processing in a separate thread
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(process_uploaded_pdf, pdf_file)
+    
+    # Display processing progress and PDF selection
+    st.subheader("Document List")
+    for pdf_name, pdf_data in st.session_state.processed_pdfs.items():
+        # Progress bar for processing
+        col_prog, col_btn = st.columns([7, 3])
+        with col_prog:
+            progress = pdf_data["progress"]
+            progress_color = "#ff4b4b" if pdf_data.get("error", False) else "#00cc96"
+            st.progress(progress, text=f"{int(progress*100)}%")
+        
+        # Button to select PDF
+        with col_btn:
+            if st.button(f"View", key=f"btn_{pdf_name}"):
+                st.session_state.selected_pdf = pdf_name
+                st.session_state.selected_dict_index = 0
+                st.rerun()
 
-# Right column for displaying the current Q&A
+# Middle pane for PDF viewer
 with col2:
-    # Use st.empty() to completely replace previous content
-    right_col = st.empty()
+    st.header("PDF Viewer")
     
-    # Reset all content in the right column
-    with right_col.container():
-        if st.session_state['current_qa']['question']:
-            # Display only the current Q&A in chat format with icons
-            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-            
-            # Question with user icon
-            st.markdown(f'''
-            <div class="user-message">
-                <div class="user-icon">👤</div>
-                <div class="message-content">
-                    {st.session_state["current_qa"]["question"]}
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            # Display the section info if available
-            if st.session_state['current_qa'].get('section') and st.session_state['current_qa']['section'] != "All Sections":
-                section = st.session_state['current_qa']['section']
-                section_description = section_mapping.get(section, "")
-                st.markdown(f'<div class="section-info">Section: {section} {section_description}</div>', unsafe_allow_html=True)
-            
-            # Answer with bot icon
-            is_previous = st.session_state['current_qa'].get('is_previous', False)
-            message_class = "assistant-message-previous" if is_previous else "assistant-message"
-            
-            st.markdown(f'''
-            <div class="{message_class}">
-                <div class="bot-icon">🤖</div>
-                <div class="message-content">
-                    {st.session_state["current_qa"].get("answer", "")}
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            st.markdown('</div>', unsafe_allow_html=True)
+    # Display selected PDF
+    if st.session_state.selected_pdf and st.session_state.selected_pdf in st.session_state.processed_pdfs:
+        selected_data = st.session_state.processed_pdfs[st.session_state.selected_pdf]
+        pdf_path = selected_data["pdf_path"]
+        
+        if pdf_path and os.path.exists(pdf_path):
+            pdf_display = display_pdf(pdf_path)
+            st.markdown(f"<div class='pdf-viewer'>{pdf_display}</div>", unsafe_allow_html=True)
         else:
-            # Initial message
-            st.markdown('''
-            <div class="chat-container">
-                <div class="assistant-message">
-                    <div class="bot-icon">🤖</div>
-                    <div class="message-content">
-                        Select a question and click Submit, or click on a previous question from the list.
-                    </div>
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-
-# Process new submission
-if submit_clicked:
-    # First, update the right column to show the question and a loading indicator
-    with col2:
-        right_col = st.empty()
-        with right_col.container():
-            # Display the question
-            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-            st.markdown(f'''
-            <div class="user-message">
-                <div class="user-icon">👤</div>
-                <div class="message-content">
-                    {question}
-                </div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            # Display the section info if available
-            if selected_section and selected_section != "All Sections":
-                section_description = section_mapping.get(selected_section, "")
-                st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
-            
-            # Show a spinner in the answer spot
-            answer_placeholder = st.empty()
-            with answer_placeholder:
-                st.markdown('''
-                <div class="assistant-message">
-                    <div class="bot-icon">🤖</div>
-                    <div class="message-content">
-                        <div class="loading">
-                            Generating answer...
-                        </div>
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Process the question
-    if selected_section == "All Sections":
-        answer = find_best_match(question, consolidated_data)
-        if answer:
-            final_answer = answer
-        else:
-            section_answers = []
-            for section, section_content in context.items():
-                try:
-                    # Process each section sequentially
-                    answers = llm_processor.answer_from_sections(section_content, [question])
-                    if answers and len(answers) > 0:
-                        section_answers.append(answers[0])
-                except Exception as e:
-                    st.error(f"Error processing section {section}: {e}")
-            
-            if section_answers:
-                final_answer = llm_processor.consolidator(question, section_answers)
-            else:
-                final_answer = "No answers found from any section."
+            st.error("PDF file not available.")
     else:
-        # Process a single section
-        try:
-            answers = llm_processor.answer_from_sections(context[selected_section], [question])
-            if answers and len(answers) > 0:
-                final_answer = answers[0]
+        st.info("Select a PDF document from the left panel to view.")
+
+# Right pane for JSON details
+with col3:
+    st.header("Document Analysis")
+    
+    if st.session_state.selected_pdf and st.session_state.selected_pdf in st.session_state.processed_pdfs:
+        selected_data = st.session_state.processed_pdfs[st.session_state.selected_pdf]
+        json_path = selected_data["json_path"]
+        
+        if json_path and os.path.exists(json_path):
+            # Load JSON data
+            with open(json_path, 'r', encoding="utf-8") as f:
+                json_data = json.load(f)
+            
+            # Display key value at the top
+            st.subheader("Document Information")
+            st.write(f"**Title:** {json_data['metadata']['title']}")
+            
+            # Create buttons for dictionaries in extracted_info list
+            st.write("**Extracted Information:**")
+            
+            # Create button row for extracted info sections
+            extracted_info = json_data.get("extracted_info", [])
+            
+            st.markdown("<div class='button-row'>", unsafe_allow_html=True)
+            for i, item in enumerate(extracted_info):
+                # Get first 10 characters of text for button label
+                label = item.get("text", "")[:10] + "..."
+                
+                # Create button HTML with active state if selected
+                active_class = "active-button" if i == st.session_state.selected_dict_index else ""
+                button_html = f"""
+                <button class="dict-button {active_class}" 
+                        onclick="document.getElementById('hidden_button_{i}').click()">
+                    {label}
+                </button>
+                """
+                st.markdown(button_html, unsafe_allow_html=True)
+                
+                # Hidden button to handle the click event
+                if st.button(f"Select {i}", key=f"hidden_button_{i}", help="Hidden button"):
+                    st.session_state.selected_dict_index = i
+                    st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Display selected text
+            if extracted_info and 0 <= st.session_state.selected_dict_index < len(extracted_info):
+                selected_text = extracted_info[st.session_state.selected_dict_index].get("text", "")
+                st.markdown(f"<div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px;'>{selected_text}</div>", unsafe_allow_html=True)
+            
+            # Display table with key metrics
+            st.subheader("Key Metrics")
+            key_metrics = json_data.get("key_metrics", {})
+            
+            # Create a pandas DataFrame for display
+            metrics_data = []
+            for key, value in key_metrics.items():
+                if isinstance(value, list):
+                    value = ", ".join(value)
+                metrics_data.append({"Metric": key.replace("_", " ").title(), "Value": value})
+            
+            metrics_df = pd.DataFrame(metrics_data)
+            st.table(metrics_df)
+            
+        else:
+            if selected_data.get("error", False):
+                st.error("Error processing the PDF. Please try again.")
             else:
-                final_answer = "No answer was generated for this question. Please try rephrasing it."
-        except Exception as e:
-            st.error(f"Error processing question: {e}")
-            final_answer = "An error occurred while processing your question. Please try again."
-    
-    # Update the answer display with the final answer
-    with right_col.container():
-        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-        st.markdown(f'''
-        <div class="user-message">
-            <div class="user-icon">👤</div>
-            <div class="message-content">
-                {question}
-            </div>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        # Display the section info if available
-        if selected_section and selected_section != "All Sections":
-            section_description = section_mapping.get(selected_section, "")
-            st.markdown(f'<div class="section-info">Section: {selected_section} {section_description}</div>', unsafe_allow_html=True)
-        
-        # Display the final answer
-        st.markdown(f'''
-        <div class="assistant-message">
-            <div class="bot-icon">🤖</div>
-            <div class="message-content">
-                {final_answer}
-            </div>
-        </div>
-        ''', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Add question to the previous questions list if it's not already there and not "Other..."
-    if question and question != "Other..." and question not in st.session_state['previous_questions']:
-        st.session_state['previous_questions'].append(question)
-    
-    # Store in previous QA pairs dictionary
-    st.session_state['previous_qa_pairs'][question] = {
-        "section": selected_section,
-        "answer": final_answer
-    }
-    
-    # Update current QA
-    st.session_state['current_qa'] = {
-        "question": question,
-        "answer": final_answer,
-        "section": selected_section,
-        "is_previous": False  # This is a new answer
-    }
-    
-    # Save to QA data
-    qa_data.append({
-        "question": question,
-        "section": selected_section,
-        "answer": final_answer
-    })
-    with open(qa_data_file, 'w') as f:
-        json.dump(qa_data, f, indent=4)
-    
-    # Clear custom question if it was used
-    if selected_question == "Other...":
-        st.session_state['custom_question'] = ''
+                st.info("Document analysis in progress. Please wait.")
+    else:
+        st.info("Select a PDF document from the left panel to view analysis.")
+
+# Cleanup on session end
+def cleanup():
+    """Clean up temporary files when app is closed"""
+    if 'temp_dir' in st.session_state and os.path.exists(st.session_state.temp_dir):
+        shutil.rmtree(st.session_state.temp_dir)
+
+# Register cleanup function
+# Note: This only works when app is properly closed
+try:
+    atexit.register(cleanup)
+except:
+    pass
