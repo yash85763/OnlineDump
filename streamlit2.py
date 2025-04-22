@@ -344,14 +344,14 @@ def main():
                 if st.button("Navigate to Page"):
                     st.session_state.current_search_term = None
                     st.session_state.current_page = page_num
-                    st.experimental_rerun()
+                    st.rerun()  # Use st.rerun() instead of experimental_rerun()
             
             # Custom text search
             search_text = st.text_input("Search in PDF:")
             if st.button("Search") and search_text:
                 st.session_state.current_search_term = search_text
                 st.session_state.current_page = None
-                st.experimental_rerun()
+                st.rerun()  # Use st.rerun() instead of experimental_rerun()
     
     # Middle pane for PDF viewer
     with col2:
@@ -401,7 +401,7 @@ def main():
                 abstract_search = sanitize_search_text(json_data['abstract'][:50])
                 st.session_state.current_search_term = abstract_search
                 st.session_state.current_page = None
-                st.experimental_rerun()
+                st.rerun()  # Use st.rerun() instead of experimental_rerun()
                 
             st.markdown(f"<div class='extract-text'>{json_data['abstract']}</div>", unsafe_allow_html=True)
             
@@ -442,7 +442,7 @@ def main():
                             section_text = sanitize_search_text(extracts[idx]["section"])
                             st.session_state.current_search_term = section_text
                             st.session_state.current_page = None
-                            st.experimental_rerun()
+                            st.rerun()  # Use st.rerun() instead of experimental_rerun()
             
             # Display selected extract
             if extracts and 0 <= st.session_state.selected_extract_index < len(extracts):
@@ -453,7 +453,7 @@ def main():
                     extract_text = sanitize_search_text(selected_extract["text"][:50])
                     st.session_state.current_search_term = extract_text
                     st.session_state.current_page = None
-                    st.experimental_rerun()
+                    st.rerun()  # Use st.rerun() instead of experimental_rerun()
                 
                 st.markdown(f"<div class='extract-text'>{selected_extract['text']}</div>", unsafe_allow_html=True)
                 
