@@ -1,11 +1,17 @@
 import os
 import json
+import base64
 import streamlit as st
 from pathlib import Path
 import re
+import glob
+import tempfile
+import urllib.parse
 from PyPDF2 import PdfReader
 from io import BytesIO
-from streamlit_pdf_viewer import pdf_viewer
+from pdf_text_processor import PDFTextProcessor  # Assuming your custom class
+from ecfr_logger import ECFRLogger  # Assuming your custom class
+from contract_analyzer import ContractAnalyzer  # Assuming your custom class
 
 # Set page configuration
 st.set_page_config(
@@ -81,6 +87,42 @@ def validate_pdf(pdf_bytes):
     except Exception as e:
         return False, f"Invalid PDF: {str(e)}"
 
+# Function to display PDF using iframe
+def display_pdf_iframe(pdf_bytes, search_text=None):
+    """Display PDF with optional search text"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    pdf_display = f'<iframe id="pdfViewer" src="data:application/pdf;base64,{base64_pdf}'
+    if search_text:
+        sanitized_text = sanitize_search_text(search_text)
+        encoded_text = urllib.parse.quote(sanitized_text)
+        pdf_display += f'#search={encoded_text}'
+    pdf_display += '" width="100%" height="600px" type="application/pdf"></iframe>'
+    
+    if search_text:
+        js_script = f"""
+        <script>
+            document.getElementById('pdfViewer').addEventListener('load', function() {{
+                try {{
+                    this.contentWindow.postMessage({{
+                        type: 'search',
+                        query: '{sanitize_search_text(search_text)}'
+                    }}, '*');
+                }} catch (e) {{
+                    console.log('Error triggering PDF search:', e);
+                }}
+            }});
+        </script>
+        """
+        pdf_display += js_script
+    
+    return pdf_display
+
+# Fallback PDF display using object tag
+def display_pdf_object(pdf_bytes):
+    """Display PDF using object tag (fallback)"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    return f'<object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="600px"></object>'
+
 # Initialize session state
 if 'pdf_files' not in st.session_state:
     st.session_state.pdf_files = {}
@@ -92,6 +134,8 @@ if 'current_page' not in st.session_state:
     st.session_state.current_page = 1
 if 'search_text' not in st.session_state:
     st.session_state.search_text = None
+if 'analysis_status' not in st.session_state:
+    st.session_state.analysis_status = {}
 
 # Check for pre-loaded data
 def check_preloaded_data():
@@ -113,6 +157,31 @@ def set_current_pdf(pdf_name):
     st.session_state.current_pdf = pdf_name
     st.session_state.current_page = 1
     st.session_state.search_text = None
+
+def process_pdf(pdf_bytes, pdf_name, temp_dir, pdf_text_processor, contract_analyzer, logger):
+    """Process a single PDF and generate JSON"""
+    try:
+        file_stem = Path(pdf_name).stem
+        pdf_path = os.path.join(temp_dir, f"{file_stem}.pdf")
+        preprocessed_path = os.path.join(temp_dir, f"{file_stem}.txt")
+        output_path = os.path.join(temp_dir, f"{file_stem}.json")
+
+        # Save PDF to temporary file
+        with open(pdf_path, 'wb') as f:
+            f.write(pdf_bytes)
+
+        # Process PDF
+        contract_text = pdf_text_processor.process_pdf(pdf_path, preprocessed_path)
+        results = contract_analyzer.analyze_contract(contract_text, output_path)
+
+        # Load generated JSON
+        with open(output_path, 'r') as f:
+            json_data = json.load(f)
+
+        return True, json_data
+    except Exception as e:
+        logger.error(f"Error processing {pdf_name}: {str(e)}")
+        return False, str(e)
 
 def main():
     col1, col2, col3 = st.columns([25, 40, 35])
@@ -162,26 +231,39 @@ def main():
                     is_valid, metadata_or_error = validate_pdf(pdf_bytes)
                     if is_valid:
                         if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
-                            st.warning(f"{pdf.name} is larger than 1.5MB and may load slowly.")
+                            st.warning(f"{pdf.name} is larger than 1.5MB and may fail to display.")
                         st.session_state.pdf_files[pdf.name] = pdf_bytes
-                        if st.session_state.current_pdf is None:
-                            st.session_state.current_pdf = pdf.name
+                        st.session_state.analysis_status[pdf.name] = "Not processed"
                     else:
                         st.error(f"Failed to load {pdf.name}: {metadata_or_error}")
         
-        # JSON uploader
-        st.subheader("Upload JSON")
-        uploaded_jsons = st.file_uploader(
-            "Upload JSON Extracts",
-            type="json",
-            key="json_uploader",
-            accept_multiple_files=True
-        )
+        # Analyze PDFs button
+        if st.session_state.pdf_files and st.button("Analyze PDFs", key="analyze_button"):
+            pdf_text_processor = PDFTextProcessor()
+            logger = ECFRLogger()
+            contract_analyzer = ContractAnalyzer()
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                for pdf_name, pdf_bytes in st.session_state.pdf_files.items():
+                    if st.session_state.analysis_status.get(pdf_name) != "Processed":
+                        with st.spinner(f"Processing {pdf_name}..."):
+                            success, result = process_pdf(
+                                pdf_bytes, pdf_name, temp_dir, 
+                                pdf_text_processor, contract_analyzer, logger
+                            )
+                            if success:
+                                st.session_state.json_data[Path(pdf_name).stem] = result
+                                st.session_state.analysis_status[pdf_name] = "Processed"
+                                st.success(f"Analysis complete for {pdf_name}")
+                            else:
+                                st.session_state.analysis_status[pdf_name] = f"Failed: {result}"
+                                st.error(f"Failed to process {pdf_name}: {result}")
         
-        if uploaded_jsons:
-            for json_file in uploaded_jsons:
-                file_stem = Path(json_file.name).stem
-                st.session_state.json_data[file_stem] = json.load(json_file)
+        # Display analysis status
+        if st.session_state.analysis_status:
+            st.subheader("Analysis Status")
+            for pdf_name, status in st.session_state.analysis_status.items():
+                st.write(f"{pdf_name}: {status}")
         
         # PDF selection buttons
         if st.session_state.pdf_files:
@@ -219,27 +301,27 @@ def main():
             st.subheader(f"Viewing: {st.session_state.current_pdf}")
             
             try:
-                pdf_viewer(
-                    input=current_pdf_bytes,
-                    width="100%",  # Responsive width
-                    height=600,
-                    search=st.session_state.search_text,
-                    key=f"pdf_viewer_{st.session_state.current_pdf}"
-                )
+                pdf_display = display_pdf_iframe(current_pdf_bytes, st.session_state.search_text)
+                st.markdown(pdf_display, unsafe_allow_html=True)
             except Exception as e:
-                st.error(f"Error displaying PDF: {e}")
-                is_valid, metadata_or_error = validate_pdf(current_pdf_bytes)
-                if not is_valid:
-                    st.error(f"Validation failed: {metadata_or_error}")
-                else:
-                    st.info(f"PDF metadata: {metadata_or_error}")
-                st.download_button(
-                    label="Download PDF",
-                    data=current_pdf_bytes,
-                    file_name=st.session_state.current_pdf,
-                    mime="application/pdf",
-                    key="download_pdf"
-                )
+                st.error(f"Error with iframe: {e}")
+                try:
+                    pdf_display = display_pdf_object(current_pdf_bytes)
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Error with object tag: {e}")
+                    is_valid, metadata_or_error = validate_pdf(current_pdf_bytes)
+                    if not is_valid:
+                        st.error(f"Validation failed: {metadata_or_error}")
+                    else:
+                        st.info(f"PDF metadata: {metadata_or_error}")
+                    st.download_button(
+                        label="Download PDF",
+                        data=current_pdf_bytes,
+                        file_name=st.session_state.current_pdf,
+                        mime="application/pdf",
+                        key="download_pdf"
+                    )
         else:
             st.info("Select or upload a PDF.")
     
@@ -294,7 +376,7 @@ def main():
                         st.rerun()
             
         else:
-            st.info("Select a PDF and upload its JSON data.")
+            st.info("Select a PDF and ensure analysis is complete.")
 
 if __name__ == "__main__":
     main()
