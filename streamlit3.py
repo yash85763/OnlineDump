@@ -209,6 +209,7 @@ def main():
                                     value=pdf_exists and json_exists,
                                     key="use_demo_data")
         
+        # Handle SHIMI paper based on checkbox state
         if use_demo_data and pdf_exists and json_exists:
             if "shimi_paper.pdf" not in st.session_state.pdf_files:
                 with open("shimi_paper.pdf", 'rb') as f:
@@ -216,6 +217,7 @@ def main():
                     is_valid, metadata_or_error = validate_pdf(pdf_bytes)
                     if is_valid:
                         st.session_state.pdf_files["shimi_paper.pdf"] = pdf_bytes
+                        st.session_state.analysis_status["shimi_paper.pdf"] = "Not processed"
                     else:
                         st.error(f"Pre-loaded SHIMI paper failed: {metadata_or_error}")
                     
@@ -227,6 +229,16 @@ def main():
                 st.session_state.current_pdf = "shimi_paper.pdf"
                 
             st.success("Using pre-loaded SHIMI paper")
+        else:
+            # Remove SHIMI paper if unchecked
+            if "shimi_paper.pdf" in st.session_state.pdf_files:
+                del st.session_state.pdf_files["shimi_paper.pdf"]
+            if "shimi_paper" in st.session_state.json_data:
+                del st.session_state.json_data["shimi_paper"]
+            if "shimi_paper.pdf" in st.session_state.analysis_status:
+                del st.session_state.analysis_status["shimi_paper.pdf"]
+            if st.session_state.current_pdf == "shimi_paper.pdf":
+                st.session_state.current_pdf = None
             
         # PDF uploader
         st.subheader("Upload PDFs")
