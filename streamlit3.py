@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for styling
+# Custom CSS for styling and scrollable panes
 st.markdown("""
 <style>
     .pdf-viewer {
@@ -28,8 +28,16 @@ st.markdown("""
         border-radius: 5px;
         padding: 10px;
         height: 85vh;
+        overflow-y: auto;
     }
     .json-details {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
+        overflow-y: auto;
+    }
+    .left-pane {
         border: 1px solid #ddd;
         border-radius: 5px;
         padding: 10px;
@@ -201,6 +209,7 @@ def main():
     
     # Left pane: PDF upload and controls
     with col1:
+        st.markdown('<div class="left-pane">', unsafe_allow_html=True)
         st.header("Contracts")
         
         # Demo mode
@@ -316,9 +325,12 @@ def main():
                 st.session_state.current_page = page_num
                 st.session_state.search_text = None
                 st.rerun()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Middle pane: PDF viewer
     with col2:
+        st.markdown('<div class="pdf-viewer">', unsafe_allow_html=True)
         st.header("PDF Viewer")
         
         if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
@@ -349,9 +361,11 @@ def main():
                     )
         else:
             st.info("Select or upload a PDF.")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Right pane: JSON data display
     with col3:
+        st.markdown('<div class="json-details">', unsafe_allow_html=True)
         st.header("Contract Analysis")
         
         file_stem = Path(st.session_state.current_pdf).stem if st.session_state.current_pdf else None
@@ -402,6 +416,7 @@ def main():
             
         else:
             st.info("Select a PDF and ensure analysis is complete.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
