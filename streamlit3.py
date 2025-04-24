@@ -103,6 +103,16 @@ def validate_pdf(pdf_bytes):
     except Exception as e:
         return False, f"Invalid PDF: {str(e)}"
 
+# Function to validate JSON
+def validate_json(json_path):
+    """Validate JSON file"""
+    try:
+        with open(json_path, 'r') as f:
+            json.load(f)
+        return True, None
+    except Exception as e:
+        return False, f"Invalid JSON: {str(e)}"
+
 # Function to display PDF using iframe
 def display_pdf_iframe(pdf_bytes, search_text=None):
     """Display PDF with optional search text"""
@@ -155,11 +165,37 @@ if 'analysis_status' not in st.session_state:
 if 'processing_messages' not in st.session_state:
     st.session_state.processing_messages = {}
 
-# Check for pre-loaded data
-def check_preloaded_data():
-    pdf_exists = os.path.exists("shimi_paper.pdf")
-    json_exists = os.path.exists("shimi_paper.json")
-    return pdf_exists, json_exists
+# Function to load pre-loaded PDFs and JSONs
+def load_preloaded_data(preload_folder="./preloaded_contracts"):
+    """Load pre-loaded PDFs and JSONs from specified folder"""
+    pdf_files = glob.glob(os.path.join(preload_folder, "*.pdf"))
+    preloaded_files = []
+    logger = ECFRLogger()
+    
+    for pdf_path in pdf_files:
+        pdf_name = os.path.basename(pdf_path)
+        file_stem = Path(pdf_name).stem
+        json_path = os.path.join(preload_folder, f"{file_stem}.json")
+        
+        # Validate PDF
+        with open(pdf_path, 'rb') as f:
+            pdf_bytes = f.read()
+            is_valid_pdf, metadata_or_error = validate_pdf(pdf_bytes)
+            if not is_valid_pdf:
+                logger.error(f"Pre-loaded PDF {pdf_name} failed: {metadata_or_error}")
+                continue
+            
+        # Check for corresponding JSON
+        json_exists = os.path.exists(json_path)
+        if json_exists:
+            is_valid_json, json_error = validate_json(json_path)
+            if not is_valid_json:
+                logger.error(f"Pre-loaded JSON for {pdf_name} failed: {json_error}")
+                continue
+        
+        preloaded_files.append((pdf_name, pdf_bytes, json_exists, json_path))
+    
+    return preloaded_files
 
 def sanitize_search_text(text):
     """Clean up text for PDF search"""
@@ -237,43 +273,39 @@ def main():
             st.markdown('<div class="left-pane">', unsafe_allow_html=True)
             st.header("Contracts")
             
-            # Demo mode
-            pdf_exists, json_exists = check_preloaded_data()
-            use_demo_data = st.checkbox("Use pre-loaded SHIMI paper", 
-                                        value=pdf_exists and json_exists,
-                                        key="use_demo_data")
+            # Pre-loaded PDFs dropdown
+            st.subheader("Pre-loaded PDFs")
+            preloaded_files = load_preloaded_data()
+            preloaded_pdf_names = [pdf_name for pdf_name, _, _, _ in preloaded_files]
+            preloaded_pdf_names.insert(0, "Select a pre-loaded PDF")
             
-            # Handle SHIMI paper based on checkbox state
-            if use_demo_data and pdf_exists and json_exists:
-                if "shimi_paper.pdf" not in st.session_state.pdf_files:
-                    with open("shimi_paper.pdf", 'rb') as f:
-                        pdf_bytes = f.read()
-                        is_valid, metadata_or_error = validate_pdf(pdf_bytes)
-                        if is_valid:
-                            st.session_state.pdf_files["shimi_paper.pdf"] = pdf_bytes
-                            st.session_state.analysis_status["shimi_paper.pdf"] = "Not processed"
-                        else:
-                            st.error(f"Pre-loaded SHIMI paper failed: {metadata_or_error}")
+            selected_preloaded_pdf = st.selectbox(
+                "Choose a pre-loaded PDF",
+                preloaded_pdf_names,
+                key="preloaded_pdf_select"
+            )
+            
+            if selected_preloaded_pdf and selected_preloaded_pdf != "Select a pre-loaded PDF":
+                for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
+                    if pdf_name == selected_preloaded_pdf:
+                        file_stem = Path(pdf_name).stem
+                        if pdf_name not in st.session_state.pdf_files:
+                            st.session_state.pdf_files[pdf_name] = pdf_bytes
+                            st.session_state.analysis_status[pdf_name] = "Not processed"
+                            if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
+                                st.warning(f"{pdf_name} is larger than 1.5MB and may fail to display.")
                         
-                if "shimi_paper.json" not in st.session_state.json_data:
-                    with open("shimi_paper.json", 'r') as f:
-                        st.session_state.json_data["shimi_paper"] = json.load(f)
-                
-                if st.session_state.current_pdf is None:
-                    st.session_state.current_pdf = "shimi_paper.pdf"
-                    
-                st.success("Using pre-loaded SHIMI paper")
-            else:
-                # Remove SHIMI paper if unchecked
-                if "shimi_paper.pdf" in st.session_state.pdf_files:
-                    del st.session_state.pdf_files["shimi_paper.pdf"]
-                if "shimi_paper" in st.session_state.json_data:
-                    del st.session_state.json_data["shimi_paper"]
-                if "shimi_paper.pdf" in st.session_state.analysis_status:
-                    del st.session_state.analysis_status["shimi_paper.pdf"]
-                if st.session_state.current_pdf == "shimi_paper.pdf":
-                    st.session_state.current_pdf = None
-                
+                        if json_exists and file_stem not in st.session_state.json_data:
+                            with open(json_path, 'r') as f:
+                                st.session_state.json_data[file_stem] = json.load(f)
+                            st.session_state.analysis_status[pdf_name] = "Processed"
+                        
+                        if st.session_state.current_pdf is None:
+                            st.session_state.current_pdf = pdf_name
+                        
+                        st.success(f"Loaded pre-loaded PDF: {pdf_name}")
+                        break
+            
             # PDF uploader
             st.subheader("Upload PDFs")
             uploaded_pdfs = st.file_uploader(
