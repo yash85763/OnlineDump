@@ -23,12 +23,21 @@ st.set_page_config(
 # Custom CSS for styling and scrollable panes
 st.markdown("""
 <style>
+    .left-pane {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
+        overflow-y: auto;
+        box-sizing: border-box;
+    }
     .pdf-viewer {
         border: 1px solid #ddd;
         border-radius: 5px;
         padding: 10px;
         height: 85vh;
         overflow-y: auto;
+        box-sizing: border-box;
     }
     .json-details {
         border: 1px solid #ddd;
@@ -36,13 +45,7 @@ st.markdown("""
         padding: 10px;
         height: 85vh;
         overflow-y: auto;
-    }
-    .left-pane {
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        padding: 10px;
-        height: 85vh;
-        overflow-y: auto;
+        box-sizing: border-box;
     }
     .extract-text {
         background-color: #f0f8ff;
@@ -209,214 +212,217 @@ def main():
     
     # Left pane: PDF upload and controls
     with col1:
-        st.markdown('<div class="left-pane">', unsafe_allow_html=True)
-        st.header("Contracts")
-        
-        # Demo mode
-        pdf_exists, json_exists = check_preloaded_data()
-        use_demo_data = st.checkbox("Use pre-loaded SHIMI paper", 
-                                    value=pdf_exists and json_exists,
-                                    key="use_demo_data")
-        
-        # Handle SHIMI paper based on checkbox state
-        if use_demo_data and pdf_exists and json_exists:
-            if "shimi_paper.pdf" not in st.session_state.pdf_files:
-                with open("shimi_paper.pdf", 'rb') as f:
-                    pdf_bytes = f.read()
-                    is_valid, metadata_or_error = validate_pdf(pdf_bytes)
-                    if is_valid:
-                        st.session_state.pdf_files["shimi_paper.pdf"] = pdf_bytes
-                        st.session_state.analysis_status["shimi_paper.pdf"] = "Not processed"
-                    else:
-                        st.error(f"Pre-loaded SHIMI paper failed: {metadata_or_error}")
-                    
-            if "shimi_paper.json" not in st.session_state.json_data:
-                with open("shimi_paper.json", 'r') as f:
-                    st.session_state.json_data["shimi_paper"] = json.load(f)
+        with st.container():
+            st.markdown('<div class="left-pane">', unsafe_allow_html=True)
+            st.header("Contracts")
             
-            if st.session_state.current_pdf is None:
-                st.session_state.current_pdf = "shimi_paper.pdf"
+            # Demo mode
+            pdf_exists, json_exists = check_preloaded_data()
+            use_demo_data = st.checkbox("Use pre-loaded SHIMI paper", 
+                                        value=pdf_exists and json_exists,
+                                        key="use_demo_data")
+            
+            # Handle SHIMI paper based on checkbox state
+            if use_demo_data and pdf_exists and json_exists:
+                if "shimi_paper.pdf" not in st.session_state.pdf_files:
+                    with open("shimi_paper.pdf", 'rb') as f:
+                        pdf_bytes = f.read()
+                        is_valid, metadata_or_error = validate_pdf(pdf_bytes)
+                        if is_valid:
+                            st.session_state.pdf_files["shimi_paper.pdf"] = pdf_bytes
+                            st.session_state.analysis_status["shimi_paper.pdf"] = "Not processed"
+                        else:
+                            st.error(f"Pre-loaded SHIMI paper failed: {metadata_or_error}")
+                        
+                if "shimi_paper.json" not in st.session_state.json_data:
+                    with open("shimi_paper.json", 'r') as f:
+                        st.session_state.json_data["shimi_paper"] = json.load(f)
                 
-            st.success("Using pre-loaded SHIMI paper")
-        else:
-            # Remove SHIMI paper if unchecked
-            if "shimi_paper.pdf" in st.session_state.pdf_files:
-                del st.session_state.pdf_files["shimi_paper.pdf"]
-            if "shimi_paper" in st.session_state.json_data:
-                del st.session_state.json_data["shimi_paper"]
-            if "shimi_paper.pdf" in st.session_state.analysis_status:
-                del st.session_state.analysis_status["shimi_paper.pdf"]
-            if st.session_state.current_pdf == "shimi_paper.pdf":
-                st.session_state.current_pdf = None
-            
-        # PDF uploader
-        st.subheader("Upload PDFs")
-        uploaded_pdfs = st.file_uploader(
-            "Upload Contract PDFs",
-            type="pdf",
-            key="pdf_uploader",
-            accept_multiple_files=True
-        )
-        
-        if uploaded_pdfs:
-            for pdf in uploaded_pdfs:
-                if pdf.name not in st.session_state.pdf_files:
-                    pdf_bytes = pdf.getvalue()
-                    is_valid, metadata_or_error = validate_pdf(pdf_bytes)
-                    if is_valid:
-                        if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
-                            st.warning(f"{pdf.name} is larger than 1.5MB and may fail to display.")
-                        st.session_state.pdf_files[pdf.name] = pdf_bytes
-                        st.session_state.analysis_status[pdf.name] = "Not processed"
-                    else:
-                        st.error(f"Failed to load {pdf.name}: {metadata_or_error}")
-        
-        # Analyze PDFs button
-        if st.session_state.pdf_files and st.button("Analyze PDFs", key="analyze_button"):
-            pdf_text_processor = PDFTextProcessor()
-            logger = ECFRLogger()
-            contract_analyzer = ContractAnalyzer()
-            
-            with tempfile.TemporaryDirectory() as temp_dir:
-                for pdf_name, pdf_bytes in st.session_state.pdf_files.items():
-                    if st.session_state.analysis_status.get(pdf_name) != "Processed":
-                        with st.spinner(f"Processing {pdf_name}..."):
-                            success, result = process_pdf(
-                                pdf_bytes, pdf_name, temp_dir, 
-                                pdf_text_processor, contract_analyzer, logger
-                            )
-                            if success:
-                                st.session_state.json_data[Path(pdf_name).stem] = result
-                                st.session_state.analysis_status[pdf_name] = "Processed"
-                                st.success(f"Analysis complete for {pdf_name}")
-                            else:
-                                st.session_state.analysis_status[pdf_name] = result
-                                st.error(f"Failed to process {pdf_name}: {result}")
-        
-        # Display analysis status
-        if st.session_state.analysis_status:
-            st.subheader("Analysis Status")
-            for pdf_name, status in st.session_state.analysis_status.items():
-                st.write(f"{pdf_name}: {status}")
-        
-        # PDF selection buttons
-        if st.session_state.pdf_files:
-            st.subheader("Available PDFs")
-            for pdf_name in st.session_state.pdf_files.keys():
-                if st.button(pdf_name, key=f"pdf_btn_{pdf_name}", 
-                           type="primary" if pdf_name == st.session_state.current_pdf else "secondary",
-                           use_container_width=True):
-                    set_current_pdf(pdf_name)
-                    st.rerun()
-        
-        # Page navigation
-        if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
-            st.subheader("Page Navigation")
-            num_pages = 10
-            page_num = st.number_input(
-                "Go to page:", 
-                min_value=1, 
-                max_value=num_pages, 
-                value=st.session_state.current_page,
-                step=1,
-                key="page_navigator"
+                if st.session_state.current_pdf is None:
+                    st.session_state.current_pdf = "shimi_paper.pdf"
+                    
+                st.success("Using pre-loaded SHIMI paper")
+            else:
+                # Remove SHIMI paper if unchecked
+                if "shimi_paper.pdf" in st.session_state.pdf_files:
+                    del st.session_state.pdf_files["shimi_paper.pdf"]
+                if "shimi_paper" in st.session_state.json_data:
+                    del st.session_state.json_data["shimi_paper"]
+                if "shimi_paper.pdf" in st.session_state.analysis_status:
+                    del st.session_state.analysis_status["shimi_paper.pdf"]
+                if st.session_state.current_pdf == "shimi_paper.pdf":
+                    st.session_state.current_pdf = None
+                
+            # PDF uploader
+            st.subheader("Upload PDFs")
+            uploaded_pdfs = st.file_uploader(
+                "Upload Contract PDFs",
+                type="pdf",
+                key="pdf_uploader",
+                accept_multiple_files=True
             )
-            if st.button("Navigate", key="nav_button"):
-                st.session_state.current_page = page_num
-                st.session_state.search_text = None
-                st.rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+            
+            if uploaded_pdfs:
+                for pdf in uploaded_pdfs:
+                    if pdf.name not in st.session_state.pdf_files:
+                        pdf_bytes = pdf.getvalue()
+                        is_valid, metadata_or_error = validate_pdf(pdf_bytes)
+                        if is_valid:
+                            if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
+                                st.warning(f"{pdf.name} is larger than 1.5MB and may fail to display.")
+                            st.session_state.pdf_files[pdf.name] = pdf_bytes
+                            st.session_state.analysis_status[pdf.name] = "Not processed"
+                        else:
+                            st.error(f"Failed to load {pdf.name}: {metadata_or_error}")
+            
+            # Analyze PDFs button
+            if st.session_state.pdf_files and st.button("Analyze PDFs", key="analyze_button"):
+                pdf_text_processor = PDFTextProcessor()
+                logger = ECFRLogger()
+                contract_analyzer = ContractAnalyzer()
+                
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    for pdf_name, pdf_bytes in st.session_state.pdf_files.items():
+                        if st.session_state.analysis_status.get(pdf_name) != "Processed":
+                            with st.spinner(f"Processing {pdf_name}..."):
+                                success, result = process_pdf(
+                                    pdf_bytes, pdf_name, temp_dir, 
+                                    pdf_text_processor, contract_analyzer, logger
+                                )
+                                if success:
+                                    st.session_state.json_data[Path(pdf_name).stem] = result
+                                    st.session_state.analysis_status[pdf_name] = "Processed"
+                                    st.success(f"Analysis complete for {pdf_name}")
+                                else:
+                                    st.session_state.analysis_status[pdf_name] = result
+                                    st.error(f"Failed to process {pdf_name}: {result}")
+            
+            # Display analysis status
+            if st.session_state.analysis_status:
+                st.subheader("Analysis Status")
+                for pdf_name, status in st.session_state.analysis_status.items():
+                    st.write(f"{pdf_name}: {status}")
+            
+            # PDF selection buttons
+            if st.session_state.pdf_files:
+                st.subheader("Available PDFs")
+                for pdf_name in st.session_state.pdf_files.keys():
+                    if st.button(pdf_name, key=f"pdf_btn_{pdf_name}", 
+                               type="primary" if pdf_name == st.session_state.current_pdf else "secondary",
+                               use_container_width=True):
+                        set_current_pdf(pdf_name)
+                        st.rerun()
+            
+            # Page navigation
+            if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
+                st.subheader("Page Navigation")
+                num_pages = 10
+                page_num = st.number_input(
+                    "Go to page:", 
+                    min_value=1, 
+                    max_value=num_pages, 
+                    value=st.session_state.current_page,
+                    step=1,
+                    key="page_navigator"
+                )
+                if st.button("Navigate", key="nav_button"):
+                    st.session_state.current_page = page_num
+                    st.session_state.search_text = None
+                    st.rerun()
+            
+            st.markdown('</div>', unsafe_allow_html=True)
     
     # Middle pane: PDF viewer
     with col2:
-        st.markdown('<div class="pdf-viewer">', unsafe_allow_html=True)
-        st.header("PDF Viewer")
-        
-        if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
-            current_pdf_bytes = st.session_state.pdf_files[st.session_state.current_pdf]
-            st.subheader(f"Viewing: {st.session_state.current_pdf}")
+        with st.container():
+            st.markdown('<div class="pdf-viewer">', unsafe_allow_html=True)
+            st.header("PDF Viewer")
             
-            try:
-                pdf_display = display_pdf_iframe(current_pdf_bytes, st.session_state.search_text)
-                st.markdown(pdf_display, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Error with iframe: {e}")
+            if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
+                current_pdf_bytes = st.session_state.pdf_files[st.session_state.current_pdf]
+                st.subheader(f"Viewing: {st.session_state.current_pdf}")
+                
                 try:
-                    pdf_display = display_pdf_object(current_pdf_bytes)
+                    pdf_display = display_pdf_iframe(current_pdf_bytes, st.session_state.search_text)
                     st.markdown(pdf_display, unsafe_allow_html=True)
                 except Exception as e:
-                    st.error(f"Error with object tag: {e}")
-                    is_valid, metadata_or_error = validate_pdf(current_pdf_bytes)
-                    if not is_valid:
-                        st.error(f"Validation failed: {metadata_or_error}")
-                    else:
-                        st.info(f"PDF metadata: {metadata_or_error}")
-                    st.download_button(
-                        label="Download PDF",
-                        data=current_pdf_bytes,
-                        file_name=st.session_state.current_pdf,
-                        mime="application/pdf",
-                        key="download_pdf"
-                    )
-        else:
-            st.info("Select or upload a PDF.")
-        st.markdown('</div>', unsafe_allow_html=True)
+                    st.error(f"Error with iframe: {e}")
+                    try:
+                        pdf_display = display_pdf_object(current_pdf_bytes)
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"Error with object tag: {e}")
+                        is_valid, metadata_or_error = validate_pdf(current_pdf_bytes)
+                        if not is_valid:
+                            st.error(f"Validation failed: {metadata_or_error}")
+                        else:
+                            st.info(f"PDF metadata: {metadata_or_error}")
+                        st.download_button(
+                            label="Download PDF",
+                            data=current_pdf_bytes,
+                            file_name=st.session_state.current_pdf,
+                            mime="application/pdf",
+                            key="download_pdf"
+                        )
+            else:
+                st.info("Select or upload a PDF.")
+            st.markdown('</div>', unsafe_allow_html=True)
     
     # Right pane: JSON data display
     with col3:
-        st.markdown('<div class="json-details">', unsafe_allow_html=True)
-        st.header("Contract Analysis")
-        
-        file_stem = Path(st.session_state.current_pdf).stem if st.session_state.current_pdf else None
-        if file_stem and file_stem in st.session_state.json_data:
-            json_data = st.session_state.json_data[file_stem]
+        with st.container():
+            st.markdown('<div class="json-details">', unsafe_allow_html=True)
+            st.header("Contract Analysis")
             
-            # Form number
-            st.subheader("Form Number")
-            st.markdown(f"<div class='extract-text'>{json_data.get('form_number', 'Not available')}</div>", 
-                       unsafe_allow_html=True)
-            
-            # Summary
-            st.subheader("Summary")
-            st.markdown(f"<div class='extract-text'>{json_data.get('summary', 'No summary available')}</div>", 
-                       unsafe_allow_html=True)
-            
-            # Contract status
-            st.subheader("Contract Status")
-            binary_keys = {
-                'data_usage_mentioned': 'Data Usage Mentioned',
-                'data_limitations_exists': 'Data Limitations Exists',
-                'pi_clause': 'Presence of PI Clause',
-                'ci_clause': 'Presence of CI Clause'
-            }
-            
-            for key, label in binary_keys.items():
-                status = json_data.get(key, False)
-                button_class = 'status-button-true' if status else 'status-button-false'
-                st.markdown(f"<div class='{button_class}'>{label}: {status}</div>", 
+            file_stem = Path(st.session_state.current_pdf).stem if st.session_state.current_pdf else None
+            if file_stem and file_stem in st.session_state.json_data:
+                json_data = st.session_state.json_data[file_stem]
+                
+                # Form number
+                st.subheader("Form Number")
+                st.markdown(f"<div class='extract-text'>{json_data.get('form_number', 'Not available')}</div>", 
                            unsafe_allow_html=True)
-            
-            # Relevant clauses
-            st.subheader("Relevant Clauses")
-            for i, clause in enumerate(json_data.get("relevant_clauses", [])):
-                with st.expander(f"Clause {i+1}: {clause['type'].capitalize()}"):
-                    st.write(f"**Type:** {clause['type']}")
-                    st.write(f"**Text:** {clause['text']}")
-                    if st.button(f"Search clause {i+1} text", key=f"search_clause_{i}"):
-                        st.session_state.search_text = clause['text']
-                        st.success(f"Searching for clause {i+1}...")
-                        st.rerun()
-                    if len(clause['text']) > 100:
-                        st.warning("Text longer than 100 characters may not highlight fully.")
-                    if st.button("Highlight in PDF", key=f"highlight_{i}"):
-                        st.session_state.search_text = clause['text']
-                        st.success(f"Searching for clause {i+1}...")
-                        st.rerun()
-            
-        else:
-            st.info("Select a PDF and ensure analysis is complete.")
-        st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Summary
+                st.subheader("Summary")
+                st.markdown(f"<div class='extract-text'>{json_data.get('summary', 'No summary available')}</div>", 
+                           unsafe_allow_html=True)
+                
+                # Contract status
+                st.subheader("Contract Status")
+                binary_keys = {
+                    'data_usage_mentioned': 'Data Usage Mentioned',
+                    'data_limitations_exists': 'Data Limitations Exists',
+                    'pi_clause': 'Presence of PI Clause',
+                    'ci_clause': 'Presence of CI Clause'
+                }
+                
+                for key, label in binary_keys.items():
+                    status = json_data.get(key, False)
+                    button_class = 'status-button-true' if status else 'status-button-false'
+                    st.markdown(f"<div class='{button_class}'>{label}: {status}</div>", 
+                               unsafe_allow_html=True)
+                
+                # Relevant clauses
+                st.subheader("Relevant Clauses")
+                for i, clause in enumerate(json_data.get("relevant_clauses", [])):
+                    with st.expander(f"Clause {i+1}: {clause['type'].capitalize()}"):
+                        st.write(f"**Type:** {clause['type']}")
+                        st.write(f"**Text:** {clause['text']}")
+                        if st.button(f"Search clause {i+1} text", key=f"search_clause_{i}"):
+                            st.session_state.search_text = clause['text']
+                            st.success(f"Searching for clause {i+1}...")
+                            st.rerun()
+                        if len(clause['text']) > 100:
+                            st.warning("Text longer than 100 characters may not highlight fully.")
+                        if st.button("Highlight in PDF", key=f"highlight_{i}"):
+                            st.session_state.search_text = clause['text']
+                            st.success(f"Searching for clause {i+1}...")
+                            st.rerun()
+                
+            else:
+                st.info("Select a PDF and ensure analysis is complete.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
