@@ -159,7 +159,7 @@ def set_current_pdf(pdf_name):
     st.session_state.search_text = None
 
 def process_pdf(pdf_bytes, pdf_name, temp_dir, pdf_text_processor, contract_analyzer, logger):
-    """Process a single PDF and generate JSON"""
+    """Process a single PDF and generate JSON with retries for ContractAnalyzer"""
     try:
         file_stem = Path(pdf_name).stem
         pdf_path = os.path.join(temp_dir, f"{file_stem}.pdf")
@@ -170,9 +170,22 @@ def process_pdf(pdf_bytes, pdf_name, temp_dir, pdf_text_processor, contract_anal
         with open(pdf_path, 'wb') as f:
             f.write(pdf_bytes)
 
-        # Process PDF
+        # Process PDF text
         contract_text = pdf_text_processor.process_pdf(pdf_path, preprocessed_path)
-        results = contract_analyzer.analyze_contract(contract_text, output_path)
+
+        # Retry ContractAnalyzer up to 2 times
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                results = contract_analyzer.analyze_contract(contract_text, output_path)
+                break  # Exit loop on success
+            except Exception as e:
+                if attempt < max_retries:
+                    logger.warning(f"Retry {attempt + 1}/{max_retries} for {pdf_name}: {str(e)}")
+                    continue
+                else:
+                    logger.error(f"Failed after {max_retries} retries for {pdf_name}: {str(e)}")
+                    return False, "An error occurred. Please submit another PDF or reach out to Support."
 
         # Load generated JSON
         with open(output_path, 'r') as f:
@@ -181,7 +194,7 @@ def process_pdf(pdf_bytes, pdf_name, temp_dir, pdf_text_processor, contract_anal
         return True, json_data
     except Exception as e:
         logger.error(f"Error processing {pdf_name}: {str(e)}")
-        return False, str(e)
+        return False, "An error occurred. Please submit another PDF or reach out to Support."
 
 def main():
     col1, col2, col3 = st.columns([25, 40, 35])
@@ -256,7 +269,7 @@ def main():
                                 st.session_state.analysis_status[pdf_name] = "Processed"
                                 st.success(f"Analysis complete for {pdf_name}")
                             else:
-                                st.session_state.analysis_status[pdf_name] = f"Failed: {result}"
+                                st.session_state.analysis_status[pdf_name] = result
                                 st.error(f"Failed to process {pdf_name}: {result}")
         
         # Display analysis status
