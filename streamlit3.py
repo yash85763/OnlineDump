@@ -165,17 +165,21 @@ if 'analysis_status' not in st.session_state:
 if 'processing_messages' not in st.session_state:
     st.session_state.processing_messages = {}
 
-# Function to load pre-loaded PDFs and JSONs
-def load_preloaded_data(preload_folder="./preloaded_contracts"):
-    """Load pre-loaded PDFs and JSONs from specified folder"""
-    pdf_files = glob.glob(os.path.join(preload_folder, "*.pdf"))
+# Function to load pre-loaded PDFs and JSONs from separate folders
+def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./preloaded_contracts/jsons"):
+    """Load pre-loaded PDFs and JSONs from separate folders"""
+    pdf_files = glob.glob(os.path.join(pdf_folder, "*.pdf"))
+    json_files = glob.glob(os.path.join(json_folder, "*.json"))
     preloaded_files = []
     logger = ECFRLogger()
+    
+    # Create a set of JSON stems for matching
+    json_stems = {Path(json_path).stem for json_path in json_files}
     
     for pdf_path in pdf_files:
         pdf_name = os.path.basename(pdf_path)
         file_stem = Path(pdf_name).stem
-        json_path = os.path.join(preload_folder, f"{file_stem}.json")
+        json_path = os.path.join(json_folder, f"{file_stem}.json") if file_stem in json_stems else None
         
         # Validate PDF
         with open(pdf_path, 'rb') as f:
@@ -186,7 +190,7 @@ def load_preloaded_data(preload_folder="./preloaded_contracts"):
                 continue
             
         # Check for corresponding JSON
-        json_exists = os.path.exists(json_path)
+        json_exists = json_path and os.path.exists(json_path)
         if json_exists:
             is_valid_json, json_error = validate_json(json_path)
             if not is_valid_json:
@@ -275,9 +279,13 @@ def main():
             
             # Pre-loaded PDFs dropdown
             st.subheader("Pre-loaded PDFs")
-            preloaded_files = load_preloaded_data()
+            preloaded_files = load_preloaded_data(
+                pdf_folder="./preloaded_contracts/pdfs",
+                json_folder="./preloaded_contracts/jsons"
+            )
             preloaded_pdf_names = [pdf_name for pdf_name, _, _, _ in preloaded_files]
             preloaded_pdf_names.insert(0, "Select a pre-loaded PDF")
+            preloaded_pdf_names.append("Load all pre-loaded PDFs")
             
             selected_preloaded_pdf = st.selectbox(
                 "Choose a pre-loaded PDF",
@@ -286,25 +294,49 @@ def main():
             )
             
             if selected_preloaded_pdf and selected_preloaded_pdf != "Select a pre-loaded PDF":
-                for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
-                    if pdf_name == selected_preloaded_pdf:
+                if selected_preloaded_pdf == "Load all pre-loaded PDFs":
+                    loaded_pdfs = []
+                    for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
                         file_stem = Path(pdf_name).stem
                         if pdf_name not in st.session_state.pdf_files:
                             st.session_state.pdf_files[pdf_name] = pdf_bytes
                             st.session_state.analysis_status[pdf_name] = "Not processed"
                             if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
                                 st.warning(f"{pdf_name} is larger than 1.5MB and may fail to display.")
+                            loaded_pdfs.append(pdf_name)
                         
                         if json_exists and file_stem not in st.session_state.json_data:
                             with open(json_path, 'r') as f:
                                 st.session_state.json_data[file_stem] = json.load(f)
                             st.session_state.analysis_status[pdf_name] = "Processed"
                         
-                        if st.session_state.current_pdf is None:
+                        if st.session_state.current_pdf is None and loaded_pdfs:
                             st.session_state.current_pdf = pdf_name
-                        
-                        st.success(f"Loaded pre-loaded PDF: {pdf_name}")
-                        break
+                    
+                    if loaded_pdfs:
+                        st.success(f"Loaded pre-loaded PDFs: {', '.join(loaded_pdfs)}")
+                    else:
+                        st.warning("No valid pre-loaded PDFs found.")
+                else:
+                    for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
+                        if pdf_name == selected_preloaded_pdf:
+                            file_stem = Path(pdf_name).stem
+                            if pdf_name not in st.session_state.pdf_files:
+                                st.session_state.pdf_files[pdf_name] = pdf_bytes
+                                st.session_state.analysis_status[pdf_name] = "Not processed"
+                                if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
+                                    st.warning(f"{pdf_name} is larger than 1.5MB and may fail to display.")
+                            
+                            if json_exists and file_stem not in st.session_state.json_data:
+                                with open(json_path, 'r') as f:
+                                    st.session_state.json_data[file_stem] = json.load(f)
+                                st.session_state.analysis_status[pdf_name] = "Processed"
+                            
+                            if st.session_state.current_pdf is None:
+                                st.session_state.current_pdf = pdf_name
+                            
+                            st.success(f"Loaded pre-loaded PDF: {pdf_name}")
+                            break
             
             # PDF uploader
             st.subheader("Upload PDFs")
