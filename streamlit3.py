@@ -83,6 +83,11 @@ st.markdown("""
         border-radius: 5px;
         margin: 5px 0;
     }
+    .processing-message {
+        color: #0068c9;
+        font-size: 14px;
+        margin: 5px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -147,6 +152,8 @@ if 'search_text' not in st.session_state:
     st.session_state.search_text = None
 if 'analysis_status' not in st.session_state:
     st.session_state.analysis_status = {}
+if 'processing_messages' not in st.session_state:
+    st.session_state.processing_messages = {}
 
 # Check for pre-loaded data
 def check_preloaded_data():
@@ -169,7 +176,7 @@ def set_current_pdf(pdf_name):
     st.session_state.current_page = 1
     st.session_state.search_text = None
 
-def process_pdf(pdf_bytes, pdf_name, temp_dir, pdf_text_processor, contract_analyzer, logger):
+def process_pdf(pdf_bytes, pdf_name, temp_dir, pdf_text_processor, contract_analyzer, logger, message_placeholder):
     """Process a single PDF and generate JSON with retries for ContractAnalyzer"""
     try:
         file_stem = Path(pdf_name).stem
@@ -183,6 +190,20 @@ def process_pdf(pdf_bytes, pdf_name, temp_dir, pdf_text_processor, contract_anal
 
         # Process PDF text
         contract_text = pdf_text_processor.process_pdf(pdf_path, preprocessed_path)
+        logger.info(f"Text extracted from {pdf_name}")
+        st.session_state.processing_messages[pdf_name].append("Text extracted from PDF")
+        message_placeholder.markdown(
+            "\n".join([f"<div class='processing-message'>{msg}</div>" for msg in st.session_state.processing_messages[pdf_name]]),
+            unsafe_allow_html=True
+        )
+
+        # Analyze contract
+        st.session_state.processing_messages[pdf_name].append("Analyzing the document")
+        message_placeholder.markdown(
+            "\n".join([f"<div class='processing-message'>{msg}</div>" for msg in st.session_state.processing_messages[pdf_name]]),
+            unsafe_allow_html=True
+        )
+        logger.info(f"Analyzing the document {pdf_name}")
 
         # Retry ContractAnalyzer up to 2 times
         max_retries = 2
@@ -276,26 +297,33 @@ def main():
                             st.error(f"Failed to load {pdf.name}: {metadata_or_error}")
             
             # Analyze PDFs button
-            if st.session_state.pdf_files and st.button("Analyze PDFs", key="analyze_button"):
-                pdf_text_processor = PDFTextProcessor()
-                logger = ECFRLogger()
-                contract_analyzer = ContractAnalyzer()
-                
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    for pdf_name, pdf_bytes in st.session_state.pdf_files.items():
-                        if st.session_state.analysis_status.get(pdf_name) != "Processed":
-                            with st.spinner(f"Processing {pdf_name}..."):
-                                success, result = process_pdf(
-                                    pdf_bytes, pdf_name, temp_dir, 
-                                    pdf_text_processor, contract_analyzer, logger
-                                )
-                                if success:
-                                    st.session_state.json_data[Path(pdf_name).stem] = result
-                                    st.session_state.analysis_status[pdf_name] = "Processed"
-                                    st.success(f"Analysis complete for {pdf_name}")
-                                else:
-                                    st.session_state.analysis_status[pdf_name] = result
-                                    st.error(f"Failed to process {pdf_name}: {result}")
+            if st.session_state.pdf_files:
+                if st.button("Analyze PDFs", key="analyze_button"):
+                    pdf_text_processor = PDFTextProcessor()
+                    logger = ECFRLogger()
+                    contract_analyzer = ContractAnalyzer()
+                    
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        for pdf_name, pdf_bytes in st.session_state.pdf_files.items():
+                            if st.session_state.analysis_status.get(pdf_name) != "Processed":
+                                # Initialize processing messages for this PDF
+                                st.session_state.processing_messages[pdf_name] = []
+                                with st.spinner(f"Processing {pdf_name}..."):
+                                    message_placeholder = st.empty()
+                                    success, result = process_pdf(
+                                        pdf_bytes, pdf_name, temp_dir, 
+                                        pdf_text_processor, contract_analyzer, logger, message_placeholder
+                                    )
+                                    if success:
+                                        st.session_state.json_data[Path(pdf_name).stem] = result
+                                        st.session_state.analysis_status[pdf_name] = "Processed"
+                                        st.success(f"Analysis complete for {pdf_name}")
+                                    else:
+                                        st.session_state.analysis_status[pdf_name] = result
+                                        st.error(f"Failed to process {pdf_name}: {result}")
+                                    # Clear processing messages after completion
+                                    st.session_state.processing_messages[pdf_name] = []
+                                    message_placeholder.empty()
             
             # Display analysis status
             if st.session_state.analysis_status:
