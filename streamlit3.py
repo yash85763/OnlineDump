@@ -167,11 +167,34 @@ if 'processing_messages' not in st.session_state:
 
 # Function to load pre-loaded PDFs and JSONs from separate folders
 def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./preloaded_contracts/jsons"):
-    """Load pre-loaded PDFs and JSONs from separate folders"""
+    """Load pre-loaded PDFs and JSONs from separate folders, creating folders if they don't exist"""
+    logger = ECFRLogger()
+    
+    # Create folders if they don't exist
+    os.makedirs(pdf_folder, exist_ok=True)
+    os.makedirs(json_folder, exist_ok=True)
+    
+    # Load PDF and JSON files
     pdf_files = glob.glob(os.path.join(pdf_folder, "*.pdf"))
     json_files = glob.glob(os.path.join(json_folder, "*.json"))
     preloaded_files = []
-    logger = ECFRLogger()
+    
+    # Check if folders exist and contain files
+    if not os.path.exists(pdf_folder):
+        logger.error(f"PDF folder does not exist: {pdf_folder}")
+        st.warning(f"PDF folder does not exist: {pdf_folder}")
+        return preloaded_files
+    if not pdf_files:
+        logger.error(f"No PDF files found in {pdf_folder}")
+        st.warning(f"No pre-loaded PDFs found in {pdf_folder}. Please add PDFs to the folder.")
+        return preloaded_files
+    
+    if not os.path.exists(json_folder):
+        logger.error(f"JSON folder does not exist: {json_folder}")
+        st.warning(f"JSON folder does not exist: {json_folder}")
+    if not json_files:
+        logger.warning(f"No JSON files found in {json_folder}. No preprocessed data available.")
+        st.warning(f"No preprocessed JSONs found in {json_folder}.")
     
     # Create a set of JSON stems for matching
     json_stems = {Path(json_path).stem for json_path in json_files}
@@ -198,6 +221,10 @@ def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./
                 continue
         
         preloaded_files.append((pdf_name, pdf_bytes, json_exists, json_path))
+    
+    if not preloaded_files:
+        logger.error(f"No valid pre-loaded PDFs found in {pdf_folder} after validation.")
+        st.warning(f"No valid pre-loaded PDFs found in {pdf_folder}.")
     
     return preloaded_files
 
@@ -283,9 +310,10 @@ def main():
                 pdf_folder="./preloaded_contracts/pdfs",
                 json_folder="./preloaded_contracts/jsons"
             )
-            preloaded_pdf_names = [pdf_name for pdf_name, _, _, _ in preloaded_files]
-            preloaded_pdf_names.insert(0, "Select a pre-loaded PDF")
-            preloaded_pdf_names.append("Load all pre-loaded PDFs")
+            preloaded_pdf_names = [pdf_name for pdf_name, _, _, _ in preloaded_files] if preloaded_files else ["No pre-loaded PDFs available"]
+            if preloaded_files:
+                preloaded_pdf_names.insert(0, "Select a pre-loaded PDF")
+                preloaded_pdf_names.append("Load all pre-loaded PDFs")
             
             selected_preloaded_pdf = st.selectbox(
                 "Choose a pre-loaded PDF",
@@ -293,7 +321,7 @@ def main():
                 key="preloaded_pdf_select"
             )
             
-            if selected_preloaded_pdf and selected_preloaded_pdf != "Select a pre-loaded PDF":
+            if selected_preloaded_pdf and selected_preloaded_pdf != "Select a pre-loaded PDF" and selected_preloaded_pdf != "No pre-loaded PDFs available":
                 if selected_preloaded_pdf == "Load all pre-loaded PDFs":
                     loaded_pdfs = []
                     for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
