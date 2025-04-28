@@ -167,7 +167,7 @@ if 'processing_messages' not in st.session_state:
 
 # Function to load pre-loaded PDFs and JSONs from separate folders
 def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./preloaded_contracts/jsons"):
-    """Load pre-loaded PDFs and JSONs from separate folders, creating folders if they don't exist"""
+    """Load pre-loaded PDFs and JSONs from separate folders, creating folders if they don't exist, and search current directory if none found"""
     logger = ECFRLogger()
     
     # Create folders if they don't exist
@@ -183,18 +183,35 @@ def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./
     if not os.path.exists(pdf_folder):
         logger.error(f"PDF folder does not exist: {pdf_folder}")
         st.warning(f"PDF folder does not exist: {pdf_folder}")
-        return preloaded_files
     if not pdf_files:
-        logger.error(f"No PDF files found in {pdf_folder}")
-        st.warning(f"No pre-loaded PDFs found in {pdf_folder}. Please add PDFs to the folder.")
-        return preloaded_files
+        logger.warning(f"No PDF files found in {pdf_folder}. Searching current directory for preloaded_contracts/pdfs...")
+        # Search current directory for preloaded_contracts/pdfs
+        current_dir = os.getcwd()
+        alt_pdf_folder = os.path.join(current_dir, "preloaded_contracts", "pdfs")
+        pdf_files = glob.glob(os.path.join(alt_pdf_folder, "*.pdf"))
+        if not pdf_files:
+            logger.error(f"No PDF files found in {alt_pdf_folder}")
+            st.warning(f"No pre-loaded PDFs found in {pdf_folder} or {alt_pdf_folder}. Please add PDFs to either folder.")
+            return preloaded_files
+        else:
+            logger.info(f"Found PDF files in {alt_pdf_folder}")
+            pdf_folder = alt_pdf_folder
     
     if not os.path.exists(json_folder):
         logger.error(f"JSON folder does not exist: {json_folder}")
         st.warning(f"JSON folder does not exist: {json_folder}")
     if not json_files:
-        logger.warning(f"No JSON files found in {json_folder}. No preprocessed data available.")
-        st.warning(f"No preprocessed JSONs found in {json_folder}.")
+        logger.warning(f"No JSON files found in {json_folder}. Searching current directory for preloaded_contracts/jsons...")
+        # Search current directory for preloaded_contracts/jsons
+        current_dir = os.getcwd()
+        alt_json_folder = os.path.join(current_dir, "preloaded_contracts", "jsons")
+        json_files = glob.glob(os.path.join(alt_json_folder, "*.json"))
+        if not json_files:
+            logger.warning(f"No JSON files found in {alt_json_folder}. No preprocessed data available.")
+            st.warning(f"No preprocessed JSONs found in {json_folder} or {alt_json_folder}.")
+        else:
+            logger.info(f"Found JSON files in {alt_json_folder}")
+            json_folder = alt_json_folder
     
     # Create a set of JSON stems for matching
     json_stems = {Path(json_path).stem for json_path in json_files}
