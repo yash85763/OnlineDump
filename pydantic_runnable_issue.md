@@ -213,4 +213,86 @@ fill_color = list(color_map.get(color, (1, 1, 0)))
 fill_color[3] = highlight_opacity  # Set the alpha/opacity
 ```
 
-These enhancements will make the highlighting feature much more user-friendly and effective for visualizing the matching text in the PDFs. The yellow highlights will make it immediately clear which parts of the document match the selected clause.​​​​​​​​​​​​​​​​
+
+
+I'll update the contract status display to handle the three-value `pi_clause` field with appropriate color coding. Here's how to modify your code:
+
+```python
+# Update the contract status display in the right pane section
+# Replace the binary_keys and status button code with this:
+
+# Define color coding for different status values
+def get_status_class(key, value):
+    """Returns the appropriate CSS class based on the key and value"""
+    if key == 'pi_clause':
+        if value == 'yes':
+            return 'status-button-yes'  # Green
+        elif value == 'no':
+            return 'status-button-no'   # Red
+        else:  # 'missing' or any other value
+            return 'status-button-missing'  # Yellow
+    else:
+        # For binary fields, use the original true/false classes
+        return 'status-button-true' if value else 'status-button-false'
+
+# Add these CSS classes to your styles section
+st.markdown("""
+<style>
+    /* Add these new status button classes */
+    .status-button-yes {
+        background-color: #28a745;  /* Green */
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .status-button-no {
+        background-color: #dc3545;  /* Red */
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .status-button-missing {
+        background-color: #ffc107;  /* Yellow */
+        color: black;
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    /* Keep your existing status button classes */
+    /* ... */
+</style>
+""", unsafe_allow_html=True)
+
+# Display status fields
+st.subheader("Contract Status")
+status_fields = {
+    'data_usage_mentioned': 'Data Usage Mentioned',
+    'data_limitations_exists': 'Data Limitations Exists',
+    'pi_clause': 'Presence of PI Clause',
+    'ci_clause': 'Presence of CI Clause'
+}
+
+for key, label in status_fields.items():
+    value = json_data.get(key, False if key != 'pi_clause' else 'missing')
+    button_class = get_status_class(key, value)
+    
+    # Display the status
+    st.markdown(f"<div class='{button_class}'>{label}: {value}</div>", 
+              unsafe_allow_html=True)
+```
+
+This code:
+
+1. Creates a `get_status_class` function that returns different CSS classes based on the field and its value
+2. Adds three new CSS classes for the three possible values of `pi_clause`
+3. Updates the status fields display to handle both binary values and the three-state `pi_clause`
+
+The key improvements:
+- Green background for `pi_clause: yes`
+- Red background for `pi_clause: no`
+- Yellow background for `pi_clause: missing` (with black text for better readability on yellow)
+- Original behavior for binary fields (green for true, red for false)
+
+This approach maintains backward compatibility with your existing binary fields while properly supporting the new three-state field.​​​​​​​​​​​​​​​​
