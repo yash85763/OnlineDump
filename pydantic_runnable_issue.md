@@ -1,4 +1,4 @@
-I'll help you implement PDF clause highlighting using PyMuPDF (fitz). This is an excellent choice since PyMuPDF offers better highlighting capabilities than the current solution with iframe search parameters.
+no I'll help you implement PDF clause highlighting using PyMuPDF (fitz). This is an excellent choice since PyMuPDF offers better highlighting capabilities than the current solution with iframe search parameters.
 
 Here's how to implement it:
 
@@ -112,4 +112,105 @@ These changes will:
 
 The PyMuPDF approach is more reliable than the iframe search parameter because it actually modifies the PDF to include highlight annotations, making the highlights persistent and visible regardless of the PDF viewer used.
 
-Would you like me to explain any part of this implementation in more detail?​​​​​​​​​​​​​​​​
+Would you like me to explain any part of this implementation in more detail?​​​​​​
+
+
+Yes, I can definitely help you upgrade the PDF highlighting functionality to use a yellow color for better visibility. The good news is that PyMuPDF already supports colored highlighting, and we just need to modify the parameters in the highlighting function.
+
+Here's how to improve the highlighting code:
+
+```python
+def highlight_text_in_pdf(pdf_bytes, search_text, output_filename=None):
+    """
+    Highlight specific text in a PDF using PyMuPDF with yellow highlighting
+    Returns the bytes of the highlighted PDF
+    """
+    if not search_text or not pdf_bytes:
+        return pdf_bytes
+    
+    # Load PDF from bytes
+    try:
+        mem_pdf = BytesIO(pdf_bytes)
+        doc = fitz.open(stream=mem_pdf, filetype="pdf")
+        
+        # Search and highlight text
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text_instances = page.search_for(search_text)
+            
+            # Add yellow highlights for each found text instance
+            for inst in text_instances:
+                # Create highlight annotation with yellow color
+                highlight = page.add_highlight_annot(inst)
+                # RGB values for yellow (1,1,0), but we can adjust opacity with the 4th value
+                highlight.set_colors(stroke=(0, 0, 0, 0), fill=(1, 1, 0, 0.5))
+                highlight.update()
+        
+        # Save the highlighted PDF
+        output_stream = BytesIO()
+        doc.save(output_stream)
+        doc.close()
+        
+        # Return the highlighted PDF bytes
+        return output_stream.getvalue()
+    except Exception as e:
+        st.error(f"Error highlighting PDF: {str(e)}")
+        return pdf_bytes
+```
+
+The key changes here are:
+
+1. Using `set_colors()` with the appropriate parameters:
+   - `stroke=(0, 0, 0, 0)` - Sets the outline to transparent
+   - `fill=(1, 1, 0, 0.5)` - Sets the fill color to yellow with 50% opacity
+
+If you want a more vibrant yellow, you can adjust the opacity or use slightly different values. For example:
+- Brighter yellow: `fill=(1, 0.9, 0, 0.7)`
+- Softer yellow: `fill=(1, 1, 0.7, 0.4)`
+
+You can also add these improvements to make the highlighting more user-friendly:
+
+1. Add an option for the user to select highlight color:
+```python
+# Add to the right panel where you have the highlight button
+highlight_color = st.select_slider(
+    "Highlight color",
+    options=["Yellow", "Green", "Blue", "Pink", "Orange"],
+    value="Yellow",
+    key=f"highlight_color_{i}"
+)
+
+# Then modify the highlight_text_in_pdf function to accept the color
+def highlight_text_in_pdf(pdf_bytes, search_text, color="Yellow", output_filename=None):
+    # Color mapping
+    color_map = {
+        "Yellow": (1, 1, 0, 0.5),      # Yellow
+        "Green": (0, 1, 0, 0.5),       # Green
+        "Blue": (0, 0.7, 1, 0.5),      # Blue
+        "Pink": (1, 0.7, 0.7, 0.5),    # Pink
+        "Orange": (1, 0.6, 0, 0.5)     # Orange
+    }
+    
+    fill_color = color_map.get(color, (1, 1, 0, 0.5))  # Default to yellow
+    
+    # Rest of function as before, but use fill_color in set_colors:
+    highlight.set_colors(stroke=(0, 0, 0, 0), fill=fill_color)
+```
+
+2. Add a brightness slider for the highlight:
+```python
+highlight_opacity = st.slider(
+    "Highlight brightness", 
+    min_value=0.3, 
+    max_value=0.8, 
+    value=0.5, 
+    step=0.1,
+    key=f"highlight_opacity_{i}"
+)
+
+# Then modify the color to use this opacity:
+fill_color = list(color_map.get(color, (1, 1, 0)))
+fill_color[3] = highlight_opacity  # Set the alpha/opacity
+```
+
+These enhancements will make the highlighting feature much more user-friendly and effective for visualizing the matching text in the PDFs. The yellow highlights will make it immediately clear which parts of the document match the selected clause.​​​​​​​​​​​​​​​​
