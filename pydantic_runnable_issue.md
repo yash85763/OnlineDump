@@ -115,184 +115,134 @@ The PyMuPDF approach is more reliable than the iframe search parameter because i
 Would you like me to explain any part of this implementation in more detail?​​​​​​
 
 
-Yes, I can definitely help you upgrade the PDF highlighting functionality to use a yellow color for better visibility. The good news is that PyMuPDF already supports colored highlighting, and we just need to modify the parameters in the highlighting function.
 
-Here's how to improve the highlighting code:
+I'll update the text search functionality to use fuzzy matching instead of exact matching, which will make it more flexible for finding similar text in the PDF. PyMuPDF doesn't have built-in fuzzy matching, but we can implement it using the `difflib` module, which is part of Python's standard library.
+
+Here's how to modify the highlighting function to use fuzzy matching with a 90% similarity threshold:
 
 ```python
-def highlight_text_in_pdf(pdf_bytes, search_text, output_filename=None):
+import difflib
+
+def highlight_text_in_pdf(pdf_bytes, search_text, color="Yellow", similarity_threshold=0.9, output_filename=None):
     """
-    Highlight specific text in a PDF using PyMuPDF with yellow highlighting
-    Returns the bytes of the highlighted PDF
+    Highlight text in a PDF using PyMuPDF with fuzzy matching.
+    Highlights text that has at least 90% similarity to the search text.
+    
+    Args:
+        pdf_bytes: The PDF file as bytes
+        search_text: The text to search for
+        color: Highlight color name
+        similarity_threshold: Minimum similarity ratio (0.0 to 1.0)
+        output_filename: Optional filename to save the highlighted PDF
+        
+    Returns:
+        The highlighted PDF as bytes
     """
     if not search_text or not pdf_bytes:
         return pdf_bytes
     
-    # Load PDF from bytes
+    # Color mapping
+    color_map = {
+        "Yellow": (1, 1, 0, 0.5),
+        "Green": (0, 1, 0, 0.5),
+        "Blue": (0, 0.7, 1, 0.5),
+        "Pink": (1, 0.7, 0.7, 0.5),
+        "Orange": (1, 0.6, 0, 0.5)
+    }
+    fill_color = color_map.get(color, (1, 1, 0, 0.5))
+    
     try:
+        # Load PDF from bytes
         mem_pdf = BytesIO(pdf_bytes)
         doc = fitz.open(stream=mem_pdf, filetype="pdf")
         
-        # Search and highlight text
+        # For each page in the PDF
         for page_num in range(len(doc)):
             page = doc[page_num]
-            text_instances = page.search_for(search_text)
             
-            # Add yellow highlights for each found text instance
-            for inst in text_instances:
-                # Create highlight annotation with yellow color
-                highlight = page.add_highlight_annot(inst)
-                # RGB values for yellow (1,1,0), but we can adjust opacity with the 4th value
-                highlight.set_colors(stroke=(0, 0, 0, 0), fill=(1, 1, 0, 0.5))
-                highlight.update()
+            # Get all text blocks on the page
+            text_blocks = page.get_text("blocks")
+            
+            for block in text_blocks:
+                block_text = block[4]  # Text content is in index 4
+                
+                # Skip very short blocks
+                if len(block_text) < 3:
+                    continue
+                
+                # Use difflib to compute similarity ratio
+                similarity = difflib.SequenceMatcher(None, block_text.lower(), search_text.lower()).ratio()
+                
+                # If the block has high similarity, or contains the search text
+                if similarity >= similarity_threshold or search_text.lower() in block_text.lower():
+                    # Get the block rectangle coordinates
+                    rect = fitz.Rect(block[:4])
+                    
+                    # Create highlight annotation
+                    highlight = page.add_highlight_annot(rect)
+                    highlight.set_colors(stroke=(0, 0, 0, 0), fill=fill_color)
+                    highlight.update()
+                    
+                    # Also search for exact matches within this block to highlight precisely
+                    # This helps when the block contains multiple sentences
+                    words = page.search_for(search_text, clip=rect)
+                    for word_rect in words:
+                        word_highlight = page.add_highlight_annot(word_rect)
+                        word_highlight.set_colors(stroke=(0, 0, 0, 0), fill=fill_color)
+                        word_highlight.update()
         
         # Save the highlighted PDF
         output_stream = BytesIO()
         doc.save(output_stream)
         doc.close()
         
-        # Return the highlighted PDF bytes
         return output_stream.getvalue()
+    
     except Exception as e:
         st.error(f"Error highlighting PDF: {str(e)}")
         return pdf_bytes
 ```
 
-The key changes here are:
+This improved function:
 
-1. Using `set_colors()` with the appropriate parameters:
-   - `stroke=(0, 0, 0, 0)` - Sets the outline to transparent
-   - `fill=(1, 1, 0, 0.5)` - Sets the fill color to yellow with 50% opacity
+1. Uses `difflib.SequenceMatcher` to calculate the similarity ratio between each text block and the search text
+2. Highlights blocks that have at least 90% similarity (configurable via the `similarity_threshold` parameter)
+3. Also highlights blocks that contain the search text as a substring, even if overall similarity is lower
+4. Performs a second pass with exact matching to highlight specific words within matched blocks
 
-If you want a more vibrant yellow, you can adjust the opacity or use slightly different values. For example:
-- Brighter yellow: `fill=(1, 0.9, 0, 0.7)`
-- Softer yellow: `fill=(1, 1, 0.7, 0.4)`
+When you call this function, you can specify the similarity threshold:
 
-You can also add these improvements to make the highlighting more user-friendly:
-
-1. Add an option for the user to select highlight color:
 ```python
-# Add to the right panel where you have the highlight button
-highlight_color = st.select_slider(
-    "Highlight color",
-    options=["Yellow", "Green", "Blue", "Pink", "Orange"],
-    value="Yellow",
-    key=f"highlight_color_{i}"
+# When highlighting a clause:
+highlighted_pdf = highlight_text_in_pdf(
+    current_pdf_bytes, 
+    clause['text'], 
+    color="Yellow", 
+    similarity_threshold=0.9
+)
+```
+
+You can also add a slider in the UI to let users adjust the similarity threshold:
+
+```python
+# Add this to the UI where you have the highlight button
+similarity_threshold = st.slider(
+    "Match precision", 
+    min_value=0.7, 
+    max_value=1.0, 
+    value=0.9, 
+    step=0.05,
+    key=f"similarity_threshold_{i}",
+    help="Lower values find more matches but may include false positives. Higher values require closer matches."
 )
 
-# Then modify the highlight_text_in_pdf function to accept the color
-def highlight_text_in_pdf(pdf_bytes, search_text, color="Yellow", output_filename=None):
-    # Color mapping
-    color_map = {
-        "Yellow": (1, 1, 0, 0.5),      # Yellow
-        "Green": (0, 1, 0, 0.5),       # Green
-        "Blue": (0, 0.7, 1, 0.5),      # Blue
-        "Pink": (1, 0.7, 0.7, 0.5),    # Pink
-        "Orange": (1, 0.6, 0, 0.5)     # Orange
-    }
-    
-    fill_color = color_map.get(color, (1, 1, 0, 0.5))  # Default to yellow
-    
-    # Rest of function as before, but use fill_color in set_colors:
-    highlight.set_colors(stroke=(0, 0, 0, 0), fill=fill_color)
-```
-
-2. Add a brightness slider for the highlight:
-```python
-highlight_opacity = st.slider(
-    "Highlight brightness", 
-    min_value=0.3, 
-    max_value=0.8, 
-    value=0.5, 
-    step=0.1,
-    key=f"highlight_opacity_{i}"
+# Then pass this value to the highlight function
+highlighted_pdf = highlight_text_in_pdf(
+    current_pdf_bytes, 
+    clause['text'], 
+    color=highlight_color,
+    similarity_threshold=similarity_threshold
 )
-
-# Then modify the color to use this opacity:
-fill_color = list(color_map.get(color, (1, 1, 0)))
-fill_color[3] = highlight_opacity  # Set the alpha/opacity
 ```
 
-
-
-I'll update the contract status display to handle the three-value `pi_clause` field with appropriate color coding. Here's how to modify your code:
-
-```python
-# Update the contract status display in the right pane section
-# Replace the binary_keys and status button code with this:
-
-# Define color coding for different status values
-def get_status_class(key, value):
-    """Returns the appropriate CSS class based on the key and value"""
-    if key == 'pi_clause':
-        if value == 'yes':
-            return 'status-button-yes'  # Green
-        elif value == 'no':
-            return 'status-button-no'   # Red
-        else:  # 'missing' or any other value
-            return 'status-button-missing'  # Yellow
-    else:
-        # For binary fields, use the original true/false classes
-        return 'status-button-true' if value else 'status-button-false'
-
-# Add these CSS classes to your styles section
-st.markdown("""
-<style>
-    /* Add these new status button classes */
-    .status-button-yes {
-        background-color: #28a745;  /* Green */
-        color: white;
-        padding: 5px 10px;
-        border-radius: 5px;
-        margin: 5px 0;
-    }
-    .status-button-no {
-        background-color: #dc3545;  /* Red */
-        color: white;
-        padding: 5px 10px;
-        border-radius: 5px;
-        margin: 5px 0;
-    }
-    .status-button-missing {
-        background-color: #ffc107;  /* Yellow */
-        color: black;
-        padding: 5px 10px;
-        border-radius: 5px;
-        margin: 5px 0;
-    }
-    /* Keep your existing status button classes */
-    /* ... */
-</style>
-""", unsafe_allow_html=True)
-
-# Display status fields
-st.subheader("Contract Status")
-status_fields = {
-    'data_usage_mentioned': 'Data Usage Mentioned',
-    'data_limitations_exists': 'Data Limitations Exists',
-    'pi_clause': 'Presence of PI Clause',
-    'ci_clause': 'Presence of CI Clause'
-}
-
-for key, label in status_fields.items():
-    value = json_data.get(key, False if key != 'pi_clause' else 'missing')
-    button_class = get_status_class(key, value)
-    
-    # Display the status
-    st.markdown(f"<div class='{button_class}'>{label}: {value}</div>", 
-              unsafe_allow_html=True)
-```
-
-This code:
-
-1. Creates a `get_status_class` function that returns different CSS classes based on the field and its value
-2. Adds three new CSS classes for the three possible values of `pi_clause`
-3. Updates the status fields display to handle both binary values and the three-state `pi_clause`
-
-The key improvements:
-- Green background for `pi_clause: yes`
-- Red background for `pi_clause: no`
-- Yellow background for `pi_clause: missing` (with black text for better readability on yellow)
-- Original behavior for binary fields (green for true, red for false)
-
-This approach maintains backward compatibility with your existing binary fields while properly supporting the new three-state field.​​​​​​​​​​​​​​​​
+This fuzzy matching approach will be much more effective at finding relevant text in PDFs, especially when the extracted text might have minor differences from the original PDF content due to extraction errors or formatting issues.​​​​​​​​​​​​​​​​
