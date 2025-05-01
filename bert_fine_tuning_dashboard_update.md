@@ -177,12 +177,53 @@ if st.session_state.pdf_files:
      - Users interact with the table visually, but clicks are simulated by manually selecting the PDF in the selectbox (see testing instructions).
    - On selection change, update `st.session_state.selected_pdf`, set the current PDF, and analyze if needed:
      ```python
-     if selected_pdf and selected_pdf != st.session_state.selected_pdf:
-         st.session_state.selected_pdf = selected_pdf
-         set_current_pdf(selected_pdf)
-         if st.session_state.analysis_status.get(selected_pdf) != "Processed":
-             # Analysis logic
-         st.rerun()
+     # Replace the "Display PDF table" section (within `with col1:`) in the `main` function
+# Display PDF table
+if st.session_state.pdf_files:
+    st.subheader("Available PDFs")
+    pdf_df = pd.DataFrame({'PDF Name': list(st.session_state.pdf_files.keys())})
+    gb = GridOptionsBuilder.from_dataframe(pdf_df)
+    gb.configure_selection(selection_mode="single", use_checkbox=False, pre_selected_rows=[])
+    gb.configure_grid_options(domLayout='normal')
+    gb.configure_default_column(fontSize=24)
+    gridOptions = gb.build()
+    
+    grid_response = AgGrid(
+        pdf_df,
+        gridOptions=gridOptions,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        height=200,
+        fit_columns_on_grid_load=True,
+        theme='streamlit',
+        key="pdf_grid"
+    )
+    
+    selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+    if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+        selected_pdf = selected_rows.iloc[0]['PDF Name']
+        if selected_pdf != st.session_state.get('current_pdf'):
+            set_current_pdf(selected_pdf)
+            if st.session_state.analysis_status.get(selected_pdf) != "Processed":
+                pdf_text_processor = PDFTextProcessor()
+                logger = ECFRLogger()
+                contract_analyzer = ContractAnalyzer()
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    st.session_state.processing_messages[selected_pdf] = []
+                    with st.spinner(f"Processing {selected_pdf}..."):
+                        message_placeholder = st.empty()
+                        success, result = process_pdf(
+                            st.session_state.pdf_files[selected_pdf], selected_pdf, temp_dir, 
+                            pdf_text_processor, contract_analyzer, logger, message_placeholder
+                        )
+                        if success:
+                            st.session_state.json_data[Path(selected_pdf).stem] = result
+                            st.session_state.analysis_status[selected_pdf] = "Processed"
+                            st.success(f"Analysis complete for {selected_pdf}")
+                        else:
+                            st.session_state.analysis_status[selected_pdf] = result
+                            st.error(f"Failed to process {selected_pdf}: {result}")
+                        st.session_state.processing_messages[selected_pdf] = []
+                        message_placeholder.empty()
      ```
 
 3. **Automatic Analysis and Display**:
