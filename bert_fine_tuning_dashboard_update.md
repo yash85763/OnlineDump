@@ -6,6 +6,99 @@ I’ll update the `streamlit.py` code to:
 3. **Automatic Analysis and Display**: On cell click, analyze the PDF if unprocessed, show it in the PDF viewer, and display the analysis in the right pane.
 4. **Preserve Existing Functionality**: Maintain scrollable panes, processing messages, pre-loaded PDFs/JSONs, folder creation, fallback directory search, and `pi_clause` styling.
 
+```
+st.markdown("""
+<style>
+    .left-pane {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        min-height: 85vh;
+        overflow-y: auto;
+        box-sizing: border-box;
+    }
+    .pdf-viewer {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
+        overflow-y: auto;
+        box-sizing: border-box;
+    }
+    .json-details {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 10px;
+        height: 85vh;
+        overflow-y: auto;
+        box-sizing: border-box;
+    }
+    .extract-text {
+        background-color: #f0f8ff;
+        padding: 15px;
+        border-radius: 5px;
+        border-left: 3px solid #0068c9;
+        margin: 10px 0;
+    }
+    .stButton>button {
+        width: 100%;
+        text-align: left;
+        padding: 8px;
+        margin: 0;
+        border: 1px solid #ddd;
+        border-radius: 0;
+        background-color: #ffffff;
+        color: #000000;
+        transition: background-color 0.2s;
+    }
+    .stButton>button:hover {
+        background-color: #e6f3ff;
+    }
+    .stButton>button.selected {
+        background-color: #0068c9;
+        color: white;
+    }
+    .pdf-table-container {
+        margin-top: 10px;
+        border: 1px solid #ddd;
+    }
+    .pdf-table-header {
+        background-color: #f2f2f2;
+        padding: 8px;
+        font-weight: bold;
+        border-bottom: 1px solid #ddd;
+    }
+    .status-button-true {
+        background-color: #28a745;
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .status-button-false {
+        background-color: #dc3545;
+        color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .status-button-missing {
+        background-color: #ffc107;
+        color: black;
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .processing-message {
+        color: #0068c9;
+        font-size: 14px;
+        margin: 5px 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+```
+
+
 ### Diagnosis
 - **Buttons Still Visible**:
   - The hidden `st.button` elements in the previous code (used for click handling) are rendering visibly due to `use_container_width=True` and `type="secondary"`, despite being intended as hidden triggers.
