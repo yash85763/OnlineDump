@@ -128,17 +128,13 @@ I’ll provide the updated left pane code (within `with col1:`) to replace the b
 Replace the left pane code (within `with col1:`) in the `main` function with:
 
 ```python
-# Add at the top of the file, after existing imports
-import pandas as pd
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-
-# Replace the "Display PDF table" section in the left pane (within `with col1:`) in the `main` function
+# Replace the entire "Display PDF table" section (within `with col1:`) in the `main` function
 # Display PDF table
 if st.session_state.pdf_files:
     st.subheader("Available PDFs")
     pdf_df = pd.DataFrame({'PDF Name': list(st.session_state.pdf_files.keys())})
     gb = GridOptionsBuilder.from_dataframe(pdf_df)
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_selection(selection_mode="single", use_checkbox=False, pre_selected_rows=[])
     gb.configure_grid_options(domLayout='normal')
     gridOptions = gb.build()
     
@@ -148,12 +144,13 @@ if st.session_state.pdf_files:
         update_mode=GridUpdateMode.SELECTION_CHANGED,
         height=200,
         fit_columns_on_grid_load=True,
-        theme='streamlit'
+        theme='streamlit',
+        key="pdf_grid"
     )
     
-    selected_rows = grid_response['selected_rows']
-    if selected_rows:
-        selected_pdf = selected_rows[0]['PDF Name']
+    selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+    if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+        selected_pdf = selected_rows.iloc[0]['PDF Name']
         if selected_pdf != st.session_state.get('current_pdf'):
             set_current_pdf(selected_pdf)
             if st.session_state.analysis_status.get(selected_pdf) != "Processed":
