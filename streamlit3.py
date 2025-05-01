@@ -27,7 +27,7 @@ st.markdown("""
         border: 1px solid #ddd;
         border-radius: 5px;
         padding: 10px;
-        height: 85vh;
+        min-height: 85vh;
         overflow-y: auto;
         box-sizing: border-box;
     }
@@ -54,18 +54,27 @@ st.markdown("""
         border-left: 3px solid #0068c9;
         margin: 10px 0;
     }
-    .stButton>button {
+    .pdf-table {
         width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
     }
-    .pdf-select-button {
-        margin-bottom: 5px;
+    .pdf-table th {
+        background-color: #f2f2f2;
         padding: 8px;
+        border: 1px solid #ddd;
         text-align: left;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
     }
-    .pdf-select-button.selected {
+    .pdf-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    .pdf-table td:hover {
+        background-color: #e6f3ff;
+    }
+    .pdf-table td.selected {
         background-color: #0068c9;
         color: white;
     }
@@ -79,6 +88,13 @@ st.markdown("""
     .status-button-false {
         background-color: #dc3545;
         color: white;
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+    }
+    .status-button-missing {
+        background-color: #ffc107;
+        color: black;
         padding: 5px 10px;
         border-radius: 5px;
         margin: 5px 0;
@@ -164,62 +180,36 @@ if 'analysis_status' not in st.session_state:
     st.session_state.analysis_status = {}
 if 'processing_messages' not in st.session_state:
     st.session_state.processing_messages = {}
+if 'selected_pdf' not in st.session_state:
+    st.session_state.selected_pdf = None
+if 'pdf_table_key' not in st.session_state:
+    st.session_state.pdf_table_key = 0
 
-# Function to load pre-loaded PDFs and JSONs from separate folders
+# Function to load pre-loaded PDFs and JSONs
 def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./preloaded_contracts/jsons"):
-    """Load pre-loaded PDFs and JSONs from separate folders, creating folders if they don't exist, and search current directory if none found"""
-    logger = ECFRLogger()
-    
-    # Create folders if they don't exist
+    """Load pre-loaded PDFs and JSONs from specified folders"""
+    # Create directories if they don't exist
     os.makedirs(pdf_folder, exist_ok=True)
     os.makedirs(json_folder, exist_ok=True)
     
-    # Load PDF and JSON files
     pdf_files = glob.glob(os.path.join(pdf_folder, "*.pdf"))
-    json_files = glob.glob(os.path.join(json_folder, "*.json"))
-    preloaded_files = []
     
-    # Check if folders exist and contain files
-    if not os.path.exists(pdf_folder):
-        logger.error(f"PDF folder does not exist: {pdf_folder}")
-        st.warning(f"PDF folder does not exist: {pdf_folder}")
+    # Fallback: if no PDFs in subfolders, check main preloaded_contracts folder
     if not pdf_files:
-        logger.warning(f"No PDF files found in {pdf_folder}. Searching current directory for preloaded_contracts/pdfs...")
-        # Search current directory for preloaded_contracts/pdfs
-        current_dir = os.getcwd()
-        alt_pdf_folder = os.path.join(current_dir, "preloaded_contracts", "pdfs")
-        pdf_files = glob.glob(os.path.join(alt_pdf_folder, "*.pdf"))
-        if not pdf_files:
-            logger.error(f"No PDF files found in {alt_pdf_folder}")
-            st.warning(f"No pre-loaded PDFs found in {pdf_folder} or {alt_pdf_folder}. Please add PDFs to either folder.")
-            return preloaded_files
-        else:
-            logger.info(f"Found PDF files in {alt_pdf_folder}")
-            pdf_folder = alt_pdf_folder
+        pdf_files = glob.glob("./preloaded_contracts/*.pdf")
     
-    if not os.path.exists(json_folder):
-        logger.error(f"JSON folder does not exist: {json_folder}")
-        st.warning(f"JSON folder does not exist: {json_folder}")
-    if not json_files:
-        logger.warning(f"No JSON files found in {json_folder}. Searching current directory for preloaded_contracts/jsons...")
-        # Search current directory for preloaded_contracts/jsons
-        current_dir = os.getcwd()
-        alt_json_folder = os.path.join(current_dir, "preloaded_contracts", "jsons")
-        json_files = glob.glob(os.path.join(alt_json_folder, "*.json"))
-        if not json_files:
-            logger.warning(f"No JSON files found in {alt_json_folder}. No preprocessed data available.")
-            st.warning(f"No preprocessed JSONs found in {json_folder} or {alt_json_folder}.")
-        else:
-            logger.info(f"Found JSON files in {alt_json_folder}")
-            json_folder = alt_json_folder
-    
-    # Create a set of JSON stems for matching
-    json_stems = {Path(json_path).stem for json_path in json_files}
+    preloaded_files = []
+    logger = ECFRLogger()
     
     for pdf_path in pdf_files:
         pdf_name = os.path.basename(pdf_path)
         file_stem = Path(pdf_name).stem
-        json_path = os.path.join(json_folder, f"{file_stem}.json") if file_stem in json_stems else None
+        
+        # Try to find JSON in the specified json_folder first
+        json_path = os.path.join(json_folder, f"{file_stem}.json")
+        # Fallback: check if JSON exists in same directory as PDF
+        if not os.path.exists(json_path):
+            json_path = os.path.join(os.path.dirname(pdf_path), f"{file_stem}.json")
         
         # Validate PDF
         with open(pdf_path, 'rb') as f:
@@ -230,7 +220,7 @@ def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./
                 continue
             
         # Check for corresponding JSON
-        json_exists = json_path and os.path.exists(json_path)
+        json_exists = os.path.exists(json_path)
         if json_exists:
             is_valid_json, json_error = validate_json(json_path)
             if not is_valid_json:
@@ -238,10 +228,6 @@ def load_preloaded_data(pdf_folder="./preloaded_contracts/pdfs", json_folder="./
                 continue
         
         preloaded_files.append((pdf_name, pdf_bytes, json_exists, json_path))
-    
-    if not preloaded_files:
-        logger.error(f"No valid pre-loaded PDFs found in {pdf_folder} after validation.")
-        st.warning(f"No valid pre-loaded PDFs found in {pdf_folder}.")
     
     return preloaded_files
 
@@ -405,50 +391,85 @@ def main():
                         else:
                             st.error(f"Failed to load {pdf.name}: {metadata_or_error}")
             
-            # Analyze PDFs button
+            # Display PDF table
             if st.session_state.pdf_files:
-                if st.button("Analyze PDFs", key="analyze_button"):
-                    pdf_text_processor = PDFTextProcessor()
-                    logger = ECFRLogger()
-                    contract_analyzer = ContractAnalyzer()
-                    
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        for pdf_name, pdf_bytes in st.session_state.pdf_files.items():
-                            if st.session_state.analysis_status.get(pdf_name) != "Processed":
-                                # Initialize processing messages for this PDF
-                                st.session_state.processing_messages[pdf_name] = []
-                                with st.spinner(f"Processing {pdf_name}..."):
-                                    message_placeholder = st.empty()
-                                    success, result = process_pdf(
-                                        pdf_bytes, pdf_name, temp_dir, 
-                                        pdf_text_processor, contract_analyzer, logger, message_placeholder
-                                    )
-                                    if success:
-                                        st.session_state.json_data[Path(pdf_name).stem] = result
-                                        st.session_state.analysis_status[pdf_name] = "Processed"
-                                        st.success(f"Analysis complete for {pdf_name}")
-                                    else:
-                                        st.session_state.analysis_status[pdf_name] = result
-                                        st.error(f"Failed to process {pdf_name}: {result}")
-                                    # Clear processing messages after completion
-                                    st.session_state.processing_messages[pdf_name] = []
-                                    message_placeholder.empty()
+                st.subheader("Available PDFs")
+                
+                # Create HTML table with proper click handling
+                table_html = '''
+                    <table class="pdf-table">
+                        <tr><th>PDF Name</th></tr>
+                '''
+                
+                for i, pdf_name in enumerate(st.session_state.pdf_files.keys()):
+                    selected_class = 'selected' if pdf_name == st.session_state.current_pdf else ''
+                    table_html += f'''
+                        <tr>
+                            <td class="{selected_class}" onclick="document.getElementById('pdf_select_key').value='{i}'; document.getElementById('pdf_select_form').submit();">
+                                {pdf_name}
+                            </td>
+                        </tr>
+                    '''
+                table_html += '</table>'
+                
+                # Insert hidden form for click handling
+                table_html += f'''
+                    <form id="pdf_select_form" method="post" action="/?pdf_table_key={st.session_state.pdf_table_key}">
+                        <input type="hidden" id="pdf_select_key" name="pdf_select_key" value="">
+                    </form>
+                '''
+                st.markdown(table_html, unsafe_allow_html=True)
+                
+                # Handle form submission
+                query_params = st.experimental_get_query_params()
+                if 'pdf_table_key' in query_params and st.session_state.pdf_table_key == int(query_params['pdf_table_key'][0]):
+                    form_data = st.experimental_get_query_params()
+                    if 'pdf_select_key' in form_data:
+                        try:
+                            idx = int(form_data['pdf_select_key'][0])
+                            pdf_names = list(st.session_state.pdf_files.keys())
+                            if idx < len(pdf_names):
+                                selected_pdf = pdf_names[idx]
+                                # Handle click here
+                                st.session_state.selected_pdf = selected_pdf
+                                set_current_pdf(selected_pdf)
+                                
+                                # Check if analysis needed
+                                if st.session_state.analysis_status.get(selected_pdf) != "Processed":
+                                    pdf_text_processor = PDFTextProcessor()
+                                    logger = ECFRLogger()
+                                    contract_analyzer = ContractAnalyzer()
+                                    
+                                    with tempfile.TemporaryDirectory() as temp_dir:
+                                        st.session_state.processing_messages[selected_pdf] = []
+                                        with st.spinner(f"Processing {selected_pdf}..."):
+                                            message_placeholder = st.empty()
+                                            success, result = process_pdf(
+                                                st.session_state.pdf_files[selected_pdf], selected_pdf, temp_dir, 
+                                                pdf_text_processor, contract_analyzer, logger, message_placeholder
+                                            )
+                                            if success:
+                                                st.session_state.json_data[Path(selected_pdf).stem] = result
+                                                st.session_state.analysis_status[selected_pdf] = "Processed"
+                                                st.success(f"Analysis complete for {selected_pdf}")
+                                            else:
+                                                st.session_state.analysis_status[selected_pdf] = result
+                                                st.error(f"Failed to process {selected_pdf}: {result}")
+                                            st.session_state.processing_messages[selected_pdf] = []
+                                            message_placeholder.empty()
+                                
+                                # Clear query params to prevent re-execution
+                                st.experimental_set_query_params()
+                                st.session_state.pdf_table_key += 1
+                                st.rerun()
+                        except:
+                            pass
             
             # Display analysis status
             if st.session_state.analysis_status:
                 st.subheader("Analysis Status")
                 for pdf_name, status in st.session_state.analysis_status.items():
                     st.write(f"{pdf_name}: {status}")
-            
-            # PDF selection buttons
-            if st.session_state.pdf_files:
-                st.subheader("Available PDFs")
-                for pdf_name in st.session_state.pdf_files.keys():
-                    if st.button(pdf_name, key=f"pdf_btn_{pdf_name}", 
-                               type="primary" if pdf_name == st.session_state.current_pdf else "secondary",
-                               use_container_width=True):
-                        set_current_pdf(pdf_name)
-                        st.rerun()
             
             # Page navigation
             if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
@@ -535,8 +556,22 @@ def main():
                 }
                 
                 for key, label in binary_keys.items():
-                    status = json_data.get(key, False)
-                    button_class = 'status-button-true' if status else 'status-button-false'
+                    value = json_data.get(key, None)
+                    
+                    # Handle different types of values, including "missing"
+                    if value is True or (isinstance(value, str) and value.lower() in ["yes", "true", "1"]):
+                        status = "True"
+                        button_class = 'status-button-true'
+                    elif value is False or (isinstance(value, str) and value.lower() in ["no", "false", "0"]):
+                        status = "False" 
+                        button_class = 'status-button-false'
+                    elif value in ["missing", "Missing", "MISSING", "Absent"]:
+                        status = "Missing"
+                        button_class = 'status-button-missing'
+                    else:
+                        status = str(value) if value is not None else "None"
+                        button_class = 'status-button-missing'
+                    
                     st.markdown(f"<div class='{button_class}'>{label}: {status}</div>", 
                                unsafe_allow_html=True)
                 
