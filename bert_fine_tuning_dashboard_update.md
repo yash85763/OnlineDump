@@ -160,9 +160,80 @@ if st.session_state.pdf_files:
 
 2. **Fixed Clickable Table Cells**:
    - Simplified the HTML table by removing `onclick` events, as they were unreliable in Streamlit’s sandbox:
-     ```python
-     table_html += f'<tr><td class="{selected_class}">{pdf_name}</td></tr>'
-     ```
+```python
+
+# Replace the relevant parts in the "Pre-loaded PDFs" section (within `with col1:`) in the `main` function
+# Inside the "Load all pre-loaded PDFs" block
+if selected_preloaded_pdf == "Load all pre-loaded PDFs":
+    loaded_pdfs = []
+    for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
+        file_stem = Path(pdf_name).stem
+        if pdf_name not in st.session_state.pdf_files:
+            st.session_state.pdf_files[pdf_name] = pdf_bytes
+            st.session_state.analysis_status[pdf_name] = "Not processed"
+            if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
+                warning_placeholder = st.empty()
+                warning_placeholder.warning(f"{pdf_name} is larger than 1.5MB and may fail to display.")
+                time.sleep(1)
+                warning_placeholder.empty()
+            loaded_pdfs.append(pdf_name)
+        
+        if json_exists and file_stem not in st.session_state.json_data:
+            with open(json_path, 'r') as f:
+                st.session_state.json_data[file_stem] = json.load(f)
+            st.session_state.analysis_status[pdf_name] = "Processed"
+        
+        if st.session_state.current_pdf is None and loaded_pdfs:
+            st.session_state.current_pdf = pdf_name
+    
+    if loaded_pdfs:
+        st.success(f"Loaded pre-loaded PDFs: {', '.join(loaded_pdfs)}")
+    else:
+        st.warning("No valid pre-loaded PDFs found.")
+
+# Inside the individual pre-loaded PDF selection block
+else:
+    for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
+        if pdf_name == selected_preloaded_pdf:
+            file_stem = Path(pdf_name).stem
+            if pdf_name not in st.session_state.pdf_files:
+                st.session_state.pdf_files[pdf_name] = pdf_bytes
+                st.session_state.analysis_status[pdf_name] = "Not processed"
+                if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
+                    warning_placeholder = st.empty()
+                    warning_placeholder.warning(f"{pdf_name} is larger than 1.5MB and may fail to display.")
+                    time.sleep(1)
+                    warning_placeholder.empty()
+            
+            if json_exists and file_stem not in st.session_state.json_data:
+                with open(json_path, 'r') as f:
+                    st.session_state.json_data[file_stem] = json.load(f)
+                st.session_state.analysis_status[pdf_name] = "Processed"
+            
+            if st.session_state.current_pdf is None:
+                st.session_state.current_pdf = pdf_name
+            
+            st.success(f"Loaded pre-loaded PDF: {pdf_name}")
+            break
+
+# Replace the relevant part in the "PDF uploader" section (within `with col1:`) in the `main` function
+if uploaded_pdfs:
+    for pdf in uploaded_pdfs:
+        if pdf.name not in st.session_state.pdf_files:
+            pdf_bytes = pdf.getvalue()
+            is_valid, metadata_or_error = validate_pdf(pdf_bytes)
+            if is_valid:
+                if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
+                    warning_placeholder = st.empty()
+                    warning_placeholder.warning(f"{pdf.name} is larger than 1.5MB and may fail to display.")
+                    time.sleep(1)
+                    warning_placeholder.empty()
+                st.session_state.pdf_files[pdf.name] = pdf_bytes
+                st.session_state.analysis_status[pdf.name] = "Not processed"
+            else:
+                st.error(f"Failed to load {pdf.name}: {metadata_or_error}")
+
+```
    - Added a hidden `st.selectbox` to handle PDF selection:
      ```python
      selected_pdf = st.selectbox(
