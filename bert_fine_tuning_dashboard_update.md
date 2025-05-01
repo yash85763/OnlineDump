@@ -221,51 +221,47 @@ with col1:
         # Display PDF table
         if st.session_state.pdf_files:
             st.subheader("Available PDFs")
-            # Initialize selected_pdf if not set
-            if 'selected_pdf' not in st.session_state:
-                st.session_state.selected_pdf = None
-            
-            # Create HTML table
             table_html = '<table class="pdf-table"><tr><th>PDF Name</th></tr>'
             for pdf_name in st.session_state.pdf_files.keys():
                 selected_class = 'selected' if pdf_name == st.session_state.current_pdf else ''
-                table_html += f'<tr><td class="{selected_class}">{pdf_name}</td></tr>'
+                table_html += f'<tr><td class="{selected_class}" onclick="document.getElementById(\'hidden_pdf_{pdf_name}\').click()">{pdf_name}</td></tr>'
             table_html += '</table>'
             st.markdown(table_html, unsafe_allow_html=True)
             
-            # Handle PDF selection and analysis
-            selected_pdf = st.selectbox(
-                "Hidden selectbox for PDF selection",
-                [""] + list(st.session_state.pdf_files.keys()),
-                index=0,
-                key="pdf_select_hidden",
-                label_visibility="collapsed"
-            )
-            if selected_pdf and selected_pdf != st.session_state.selected_pdf:
-                st.session_state.selected_pdf = selected_pdf
-                set_current_pdf(selected_pdf)
-                if st.session_state.analysis_status.get(selected_pdf) != "Processed":
-                    pdf_text_processor = PDFTextProcessor()
-                    logger = ECFRLogger()
-                    contract_analyzer = ContractAnalyzer()
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        st.session_state.processing_messages[selected_pdf] = []
-                        with st.spinner(f"Processing {selected_pdf}..."):
-                            message_placeholder = st.empty()
-                            success, result = process_pdf(
-                                st.session_state.pdf_files[selected_pdf], selected_pdf, temp_dir, 
-                                pdf_text_processor, contract_analyzer, logger, message_placeholder
-                            )
-                            if success:
-                                st.session_state.json_data[Path(selected_pdf).stem] = result
-                                st.session_state.analysis_status[selected_pdf] = "Processed"
-                                st.success(f"Analysis complete for {selected_pdf}")
-                            else:
-                                st.session_state.analysis_status[selected_pdf] = result
-                                st.error(f"Failed to process {selected_pdf}: {result}")
-                            st.session_state.processing_messages[selected_pdf] = []
-                            message_placeholder.empty()
-                st.rerun()
+            # Hidden buttons for click handling
+            for pdf_name in st.session_state.pdf_files.keys():
+                button_key = f"hidden_pdf_{pdf_name}"
+                if button_key not in st.session_state:
+                    st.session_state[button_key] = False
+                with st.container():
+                    st.markdown('<div class="hidden-button">', unsafe_allow_html=True)
+                    if st.button(pdf_name, key=button_key, help="Hidden button for PDF selection"):
+                        st.session_state[button_key] = True
+                        set_current_pdf(pdf_name)
+                        if st.session_state.analysis_status.get(pdf_name) != "Processed":
+                            pdf_text_processor = PDFTextProcessor()
+                            logger = ECFRLogger()
+                            contract_analyzer = ContractAnalyzer()
+                            with tempfile.TemporaryDirectory() as temp_dir:
+                                st.session_state.processing_messages[pdf_name] = []
+                                with st.spinner(f"Processing {pdf_name}..."):
+                                    message_placeholder = st.empty()
+                                    success, result = process_pdf(
+                                        st.session_state.pdf_files[pdf_name], pdf_name, temp_dir, 
+                                        pdf_text_processor, contract_analyzer, logger, message_placeholder
+                                    )
+                                    if success:
+                                        st.session_state.json_data[Path(pdf_name).stem] = result
+                                        st.session_state.analysis_status[pdf_name] = "Processed"
+                                        st.success(f"Analysis complete for {pdf_name}")
+                                    else:
+                                        st.session_state.analysis_status[pdf_name] = result
+                                        st.error(f"Failed to process {pdf_name}: {result}")
+                                    st.session_state.processing_messages[pdf_name] = []
+                                    message_placeholder.empty()
+                        st.session_state[button_key] = False
+                        st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
         
         # Display analysis status
         if st.session_state.analysis_status:
