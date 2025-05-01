@@ -128,168 +128,55 @@ I’ll provide the updated left pane code (within `with col1:`) to replace the b
 Replace the left pane code (within `with col1:`) in the `main` function with:
 
 ```python
-# Left pane: PDF upload and controls
-with col1:
-    with st.container():
-        st.markdown('<div class="left-pane">', unsafe_allow_html=True)
-        st.header("Contracts")
-        
-        # Pre-loaded PDFs dropdown
-        st.subheader("Pre-loaded PDFs")
-        preloaded_files = load_preloaded_data(
-            pdf_folder="./preloaded_contracts/pdfs",
-            json_folder="./preloaded_contracts/jsons"
-        )
-        preloaded_pdf_names = [pdf_name for pdf_name, _, _, _ in preloaded_files] if preloaded_files else ["No pre-loaded PDFs available"]
-        if preloaded_files:
-            preloaded_pdf_names.insert(0, "Select a pre-loaded PDF")
-            preloaded_pdf_names.append("Load all pre-loaded PDFs")
-        
-        selected_preloaded_pdf = st.selectbox(
-            "Choose a pre-loaded PDF",
-            preloaded_pdf_names,
-            key="preloaded_pdf_select"
-        )
-        
-        if selected_preloaded_pdf and selected_preloaded_pdf != "Select a pre-loaded PDF" and selected_preloaded_pdf != "No pre-loaded PDFs available":
-            if selected_preloaded_pdf == "Load all pre-loaded PDFs":
-                loaded_pdfs = []
-                for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
-                    file_stem = Path(pdf_name).stem
-                    if pdf_name not in st.session_state.pdf_files:
-                        st.session_state.pdf_files[pdf_name] = pdf_bytes
-                        st.session_state.analysis_status[pdf_name] = "Not processed"
-                        if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
-                            st.warning(f"{pdf_name} is larger than 1.5MB and may fail to display.")
-                        loaded_pdfs.append(pdf_name)
-                    
-                    if json_exists and file_stem not in st.session_state.json_data:
-                        with open(json_path, 'r') as f:
-                            st.session_state.json_data[file_stem] = json.load(f)
-                        st.session_state.analysis_status[pdf_name] = "Processed"
-                    
-                    if st.session_state.current_pdf is None and loaded_pdfs:
-                        st.session_state.current_pdf = pdf_name
-                
-                if loaded_pdfs:
-                    st.success(f"Loaded pre-loaded PDFs: {', '.join(loaded_pdfs)}")
-                else:
-                    st.warning("No valid pre-loaded PDFs found.")
-            else:
-                for pdf_name, pdf_bytes, json_exists, json_path in preloaded_files:
-                    if pdf_name == selected_preloaded_pdf:
-                        file_stem = Path(pdf_name).stem
-                        if pdf_name not in st.session_state.pdf_files:
-                            st.session_state.pdf_files[pdf_name] = pdf_bytes
-                            st.session_state.analysis_status[pdf_name] = "Not processed"
-                            if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
-                                st.warning(f"{pdf_name} is larger than 1.5MB and may fail to display.")
-                        
-                        if json_exists and file_stem not in st.session_state.json_data:
-                            with open(json_path, 'r') as f:
-                                st.session_state.json_data[file_stem] = json.load(f)
-                            st.session_state.analysis_status[pdf_name] = "Processed"
-                        
-                        if st.session_state.current_pdf is None:
-                            st.session_state.current_pdf = pdf_name
-                        
-                        st.success(f"Loaded pre-loaded PDF: {pdf_name}")
-                        break
-        
-        # PDF uploader
-        st.subheader("Upload PDFs")
-        uploaded_pdfs = st.file_uploader(
-            "Upload Contract PDFs",
-            type="pdf",
-            key="pdf_uploader",
-            accept_multiple_files=True
-        )
-        
-        if uploaded_pdfs:
-            for pdf in uploaded_pdfs:
-                if pdf.name not in st.session_state.pdf_files:
-                    pdf_bytes = pdf.getvalue()
-                    is_valid, metadata_or_error = validate_pdf(pdf_bytes)
-                    if is_valid:
-                        if len(pdf_bytes) > 1500 * 1024:  # 1500 KB
-                            st.warning(f"{pdf.name} is larger than 1.5MB and may fail to display.")
-                        st.session_state.pdf_files[pdf.name] = pdf_bytes
-                        st.session_state.analysis_status[pdf.name] = "Not processed"
-                    else:
-                        st.error(f"Failed to load {pdf.name}: {metadata_or_error}")
-        
-        # Display PDF table
-        # Replace the "Display PDF table" section in the left pane (within `with col1:`) in the `main` function
+# Add at the top of the file, after existing imports
+import pandas as pd
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-        # Display PDF table
-        if st.session_state.pdf_files:
-            st.subheader("Available PDFs")
-            table_html = '<table class="pdf-table"><tr><th>PDF Name</th></tr>'
-            for pdf_name in st.session_state.pdf_files.keys():
-                selected_class = 'selected' if pdf_name == st.session_state.current_pdf else ''
-                table_html += f'<tr><td class="{selected_class}">{pdf_name}</td></tr>'
-            table_html += '</table>'
-            st.markdown(table_html, unsafe_allow_html=True)
-            
-            # Hidden selectbox for click handling
-            selected_pdf = st.selectbox(
-                "Hidden selectbox for PDF selection",
-                [""] + list(st.session_state.pdf_files.keys()),
-                index=0,
-                key="pdf_select_hidden",
-                label_visibility="collapsed"
-            )
-            
-            if selected_pdf and selected_pdf != st.session_state.get('selected_pdf'):
-                st.session_state.selected_pdf = selected_pdf
-                set_current_pdf(selected_pdf)
-                if st.session_state.analysis_status.get(selected_pdf) != "Processed":
-                    pdf_text_processor = PDFTextProcessor()
-                    logger = ECFRLogger()
-                    contract_analyzer = ContractAnalyzer()
-                    with tempfile.TemporaryDirectory() as temp_dir:
+# Replace the "Display PDF table" section in the left pane (within `with col1:`) in the `main` function
+# Display PDF table
+if st.session_state.pdf_files:
+    st.subheader("Available PDFs")
+    pdf_df = pd.DataFrame({'PDF Name': list(st.session_state.pdf_files.keys())})
+    gb = GridOptionsBuilder.from_dataframe(pdf_df)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_grid_options(domLayout='normal')
+    gridOptions = gb.build()
+    
+    grid_response = AgGrid(
+        pdf_df,
+        gridOptions=gridOptions,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        height=200,
+        fit_columns_on_grid_load=True,
+        theme='streamlit'
+    )
+    
+    selected_rows = grid_response['selected_rows']
+    if selected_rows:
+        selected_pdf = selected_rows[0]['PDF Name']
+        if selected_pdf != st.session_state.get('current_pdf'):
+            set_current_pdf(selected_pdf)
+            if st.session_state.analysis_status.get(selected_pdf) != "Processed":
+                pdf_text_processor = PDFTextProcessor()
+                logger = ECFRLogger()
+                contract_analyzer = ContractAnalyzer()
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    st.session_state.processing_messages[selected_pdf] = []
+                    with st.spinner(f"Processing {selected_pdf}..."):
+                        message_placeholder = st.empty()
+                        success, result = process_pdf(
+                            st.session_state.pdf_files[selected_pdf], selected_pdf, temp_dir, 
+                            pdf_text_processor, contract_analyzer, logger, message_placeholder
+                        )
+                        if success:
+                            st.session_state.json_data[Path(selected_pdf).stem] = result
+                            st.session_state.analysis_status[selected_pdf] = "Processed"
+                            st.success(f"Analysis complete for {selected_pdf}")
+                        else:
+                            st.session_state.analysis_status[selected_pdf] = result
+                            st.error(f"Failed to process {selected_pdf}: {result}")
                         st.session_state.processing_messages[selected_pdf] = []
-                        with st.spinner(f"Processing {selected_pdf}..."):
-                            message_placeholder = st.empty()
-                            success, result = process_pdf(
-                                st.session_state.pdf_files[selected_pdf], selected_pdf, temp_dir, 
-                                pdf_text_processor, contract_analyzer, logger, message_placeholder
-                            )
-                            if success:
-                                st.session_state.json_data[Path(selected_pdf).stem] = result
-                                st.session_state.analysis_status[selected_pdf] = "Processed"
-                                st.success(f"Analysis complete for {selected_pdf}")
-                            else:
-                                st.session_state.analysis_status[selected_pdf] = result
-                                st.error(f"Failed to process {selected_pdf}: {result}")
-                            st.session_state.processing_messages[selected_pdf] = []
-                            message_placeholder.empty()
-                st.rerun()
-        
-        # Display analysis status
-        if st.session_state.analysis_status:
-            st.subheader("Analysis Status")
-            for pdf_name, status in st.session_state.analysis_status.items():
-                st.write(f"{pdf_name}: {status}")
-        
-        # Page navigation
-        if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
-            st.subheader("Page Navigation")
-            num_pages = 10
-            page_num = st.number_input(
-                "Go to page:", 
-                min_value=1, 
-                max_value=num_pages, 
-                value=st.session_state.current_page,
-                step=1,
-                key="page_navigator"
-            )
-            if st.button("Navigate", key="nav_button"):
-                st.session_state.current_page = page_num
-                st.session_state.search_text = None
-                st.rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+                        message_placeholder.empty()
 ```
 
 ### Key Changes
