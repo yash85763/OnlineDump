@@ -1,443 +1,366 @@
-from typing import Optional, List, Dict
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
-from urllib.parse import urljoin
-import xml.etree.ElementTree as ET
+"""
+PDF Paragraph Similarity Comparison
+
+This script implements and compares multiple methods for finding similar paragraphs within a PDF file:
+1. Cosine Similarity with TF-IDF
+2. BM25 Similarity
+3. Embedding-based Semantic Similarity (using Sentence Transformers)
+4. Word-to-word Similarity (using Jaccard similarity)
+
+The script reads a PDF file, extracts paragraphs, and compares them to a query paragraph
+using different similarity measures, then presents the results.
+"""
+
+import os
 import re
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from typing import List, Dict, Tuple, Any
+from collections import Counter
+import math
+import time
 
-from utils import LLMProcessor, get_reference_context, parse_reference, write_regulation_to_file
-from utils.logger import logger
+# For PDF handling
+import PyPDF2
 
-class ECFRAPIWrapper:
-    def __init__(self, base_url: str = "https://www.ecfr.gov/api/versioner/v1/", openai_api_key: Optional[str] = None):
-        """
-        Initialize the eCFR API wrapper.
-        
-        Args:
-            base_url (str): Base URL for the eCFR API
-            openai_api_key (str, optional): OpenAI API key for LLM processing
-        """
-        self.base_url = base_url
-        self.headers = {"accept": "application/xml"}
-        self.llm_processor = LLMProcessor(openai_api_key) if openai_api_key else None
+# For text processing
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
 
-    def resolve_references(self, text: str, date: str, title: str, is_referenced_content: bool = False) -> str:
-        """
-        Find and resolve references in the text.
-        """
-        logger.info(f"\nProcessing references for title {title} on date {date}")
-        if is_referenced_content:
-            logger.debug("Skipping nested reference processing")
-            return text
-        if is_referenced_content:
-            return text
+# For embeddings
+from sentence_transformers import SentenceTransformer
 
-        reference_pattern = r'(?:as defined in |see )?(?:§\s*\d+\.\d+\s*(?:of this chapter)?)'
-        references = list(re.finditer(reference_pattern, text))
-        
-        resolved_text = text
-        for ref in reversed(references):
-            reference_text = ref.group(0)
-            parsed_ref = parse_reference(reference_text)
-            
-            if parsed_ref:
-                context_before, ref_text, context_after = get_reference_context(text, ref)
-                full_context = f"{context_before} {ref_text} {context_after}"
-                
-                referenced_content = self.get_referenced_content(
-                    date=date,
-                    title=title,
-                    part=parsed_ref['part'],
-                    section=parsed_ref['section']
-                )
-                
-                if referenced_content:
-                    if self.llm_processor:
-                        # Check content length and use appropriate processing method
-                        tokens = len(self.llm_processor.encoding.encode(referenced_content))
-                        if tokens > 15000:  # If content is very large
-                            relevant_content = self.llm_processor.split_and_process_large_content(
-                                original_context=full_context,
-                                reference_text=reference_text,
-                                referenced_content=referenced_content
-                            )
-                        else:
-                            relevant_content = self.llm_processor.process_reference(
-                                original_context=full_context,
-                                reference_text=reference_text,
-                                referenced_content=referenced_content
-                            )
-                    else:
-                        relevant_content = referenced_content
-                    
-                    replacement = f"{reference_text} [Relevant reference: {relevant_content}]"
-                    start, end = ref.span()
-                    resolved_text = resolved_text[:start] + replacement + resolved_text[end:]
-        
-        return resolved_text
+# For BM25
+from rank_bm25 import BM25Okapi
 
-    def get_structured_regulation(self, **kwargs) -> List[Dict]:
-        """
-        Get regulation content in a structured format with resolved references.
-        
-        Args:
-            **kwargs: Same arguments as get_regulation()
-            
-        Returns:
-            List[Dict]: List of dictionaries containing structured regulation data
-        """
-        response = self.get_regulation(**kwargs)
-        structured_data = self.parse_regulation_content(response['xml_content'])
-        
-        for entry in structured_data:
-            entry['section_text'] = self.resolve_references(
-                text=entry['section_text'],
-                date=kwargs['date'],
-                title=kwargs['title'],
-                is_referenced_content=False
-            )
-        
-        return structured_data
+# Download required NLTK resources
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
+
+class PDFSimilarityTester:
+    """
+    A class to test various similarity methods for finding paragraphs in a PDF
+    that are similar to a query paragraph.
+    """
     
+    def __init__(self, pdf_path: str):
+        """
+        Initialize the tester with a PDF file path.
+        
+        Args:
+            pdf_path: Path to the PDF file
+        """
+        self.pdf_path = pdf_path
+        self.paragraphs = []
+        self.stemmer = PorterStemmer()
+        self.stop_words = set(stopwords.words('english'))
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Extract paragraphs from the PDF
+        self.extract_paragraphs()
+        
+        # Create TF-IDF and Count vectorizers
+        self.tfidf_vectorizer = TfidfVectorizer(stop_words='english')
+        self.count_vectorizer = CountVectorizer(stop_words='english')
+        
+        # Create document matrices
+        if self.paragraphs:
+            self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(self.paragraphs)
+            self.count_matrix = self.count_vectorizer.fit_transform(self.paragraphs)
+            
+            # Create BM25 model
+            tokenized_paragraphs = [self.preprocess_text(para) for para in self.paragraphs]
+            self.bm25 = BM25Okapi(tokenized_paragraphs)
+            
+            # Create embedding matrix
+            self.paragraph_embeddings = self.embedding_model.encode(self.paragraphs)
     
-    def get_regulation(
-        self,
-        date: str,
-        title: str,
-        subtitle: Optional[str] = None,
-        chapter: Optional[str] = None,
-        subchapter: Optional[str] = None,
-        part: Optional[str] = None,
-        subpart: Optional[str] = None,
-        section: Optional[str] = None,
-        appendix: Optional[str] = None
-    ) -> Dict:
-        """
-        Retrieve regulation content from the eCFR API.
-        
-        Args:
-            date (str): Date in YYYY-MM-DD format (Required)
-            title (str): Title number (Required)
-            subtitle (str, optional): Uppercase letter: 'A', 'B', 'C'
-            chapter (str, optional): Roman Numerals and digits 0-9, 'I', 'X', '1'
-            subchapter (str, optional): Uppercase letters with optional underscore or dash
-            part (str, optional): Uppercase letters with optional underscore or dash
-            subpart (str, optional): Generally an uppercase letter
-            section (str, optional): Generally a number followed by dot and number (e.g., '121.1')
-            appendix (str, optional): Multiple formats: 'A', 'III', 'App. A'
-            
-        Returns:
-            Dict: Response containing the regulation data and metadata
-            
-        Raises:
-            ValueError: If the date format is invalid
-            requests.exceptions.RequestException: If the API request fails
-        """
-        # Validate date format
+    def extract_paragraphs(self):
+        """Extract paragraphs from the PDF file."""
         try:
-            datetime.strptime(date, '%Y-%m-%d')
-        except ValueError:
-            raise ValueError("Invalid date format. Use YYYY-MM-DD")
-
-        # Construct the endpoint URL
-        endpoint = f"full/{date}/title-{title}.xml"
-        
-        # Add optional parameters
-        params = {}
-        if subtitle:
-            params['subtitle'] = subtitle
-        if chapter:
-            params['chapter'] = chapter
-        if subchapter:
-            params['subchapter'] = subchapter
-        if part:
-            params['part'] = part
-        if subpart:
-            params['subpart'] = subpart
-        if section:
-            params['section'] = section
-        if appendix:
-            params['appendix'] = appendix
-
-        try:
-            # Make the API request
-            url = urljoin(self.base_url, endpoint)
-            response = requests.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-
-            # Parse XML response
-            xml_content = response.text
-            root = ET.fromstring(xml_content)
-
-            return {
-                'status_code': response.status_code,
-                'xml_content': xml_content,
-                'parsed_xml': root,
-                'headers': dict(response.headers)
-            }
-
-        except requests.exceptions.RequestException as e:
-            raise requests.exceptions.RequestException(f"API request failed: {str(e)}")
-        except ET.ParseError as e:
-            raise ValueError(f"Failed to parse XML response: {str(e)}")
-
-    def parse_reference(self, reference_text: str) -> Optional[Dict[str, str]]:
-        """
-        Parse a reference string like "§ 217.12 of this chapter" into components.
-        
-        Args:
-            reference_text (str): The reference text to parse
-            
-        Returns:
-            Optional[Dict[str, str]]: Dictionary with part and section numbers, or None if parsing fails
-        """
-        import re
-        
-        # Match patterns like "§ 217.12" or "section 217.12"
-        pattern = r'§\s*(\d+)\.(\d+)'
-        match = re.search(pattern, reference_text)
-        
-        if match:
-            return {
-                'part': match.group(1),
-                'section': match.group(1) + '.' + match.group(2)
-            }
-        return None
-
-    def get_referenced_content(self, date: str, title: str, part: str, section: str) -> Optional[str]:
-        """
-        Fetch content for a referenced section.
-        
-        Args:
-            date (str): Date for the regulation
-            title (str): Title number
-            part (str): Part number
-            section (str): Section number
-            
-        Returns:
-            Optional[str]: The referenced section's content, or None if not found
-        """
-        try:
-            response = self.get_regulation(
-                date=date,
-                title=title,
-                part=part
-            )
-            
-            soup = BeautifulSoup(response['xml_content'], 'xml')
-            referenced_section = soup.find('DIV8', attrs={'N': section})
-            
-            if referenced_section:
-                # Get the section title if available
-                section_title = referenced_section.find('HEAD').text.strip() if referenced_section.find('HEAD') else ''
+            with open(self.pdf_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                text = ""
                 
-                # Process paragraphs
-                paragraphs = []
-                for p in referenced_section.find_all(['P', 'FP']):
-                    text = p.text.strip()
-                    if text:
-                        paragraphs.append(text)
+                # Extract text from all pages
+                for page in reader.pages:
+                    text += page.extract_text() + "\n"
                 
-                # Format the content with the title if available
-                content = ' '.join(paragraphs)
-                if section_title:
-                    content = f"{section_title}: {content}"
+                # Split text into paragraphs (using double newlines as separator)
+                raw_paragraphs = re.split(r'\n\s*\n', text)
                 
-                return content
-            
-            return None
-            
+                # Clean paragraphs (remove extra whitespace, etc.)
+                self.paragraphs = [
+                    re.sub(r'\s+', ' ', para).strip() 
+                    for para in raw_paragraphs 
+                    if para.strip()
+                ]
+                
+                print(f"Extracted {len(self.paragraphs)} paragraphs from PDF.")
         except Exception as e:
-            print(f"Error fetching referenced content: {str(e)}")
-            return None
-
-    def parse_regulation_content(self, xml_content: str) -> List[Dict]:
+            print(f"Error extracting paragraphs from PDF: {e}")
+    
+    def preprocess_text(self, text: str) -> List[str]:
         """
-        Parse the XML content and return structured data, handling any level of the hierarchy.
+        Preprocess text: tokenize, remove stopwords, and stem.
         
         Args:
-            xml_content (str): The XML content to parse
-                
+            text: Input text
+            
         Returns:
-            List[Dict]: List of dictionaries containing structured regulation data
+            List of preprocessed tokens
         """
-        soup = BeautifulSoup(xml_content, 'xml')
-        print("Starting XML parsing...")
-        structured_data = []
+        # Tokenize
+        tokens = word_tokenize(text.lower())
         
-        def extract_metadata(element) -> Dict:
-            """Extract common metadata from an element."""
-            metadata = {
-                'number': element.attrs.get('N', ''),
-                'title': element.find('HEAD').text.strip() if element.find('HEAD') else '',
-            }
-            
-            # Extract AUTH/SOURCE info if present
-            auth = element.find('AUTH')
-            source = element.find('SOURCE')
-            metadata['authority'] = auth.text.strip() if auth else ''
-            metadata['source'] = source.text.strip() if source else ''
-            
-            return metadata
-
-        def process_section(section_element, parent_metadata={}) -> Dict:
-            """Process a section (DIV8) element and its contents."""
-            metadata = extract_metadata(section_element)
-            
-            # Build standardized output structure
-            section_data = {
-                'subpart': parent_metadata.get('subpart_number', ''),
-                'subpart_title': parent_metadata.get('subpart_title', ''),
-                'section': metadata['number'],
-                'section_title': metadata['title'],
-                'source': metadata['source'],
-            }
-            
-            # Process paragraphs
-            paragraphs = []
-            for p in section_element.find_all(['P', 'FP']):
-                text = p.text.strip()
-                if text:
-                    paragraphs.append(text)
-            section_data['section_text'] = '\n'.join(paragraphs)
-            
-            # Process footnotes
-            footnotes = []
-            for ftnt in section_element.find_all('FTNT'):
-                ftnt_text = ftnt.text.strip()
-                if ftnt_text:
-                    footnotes.append(ftnt_text)
-            section_data['footnotes'] = footnotes
-            
-            return section_data
-
-        def process_subpart(subpart_element, parent_metadata={}) -> List[Dict]:
-            """Process a subpart (DIV6) element and its sections."""
-            subpart_data = []
-            metadata = extract_metadata(subpart_element)
-            
-            subpart_metadata = {
-                **parent_metadata,
-                'subpart_number': metadata['number'],
-                'subpart_title': metadata['title']
-            }
-            
-            # Process sections within subpart
-            for section in subpart_element.find_all('DIV8', recursive=False):
-                section_data = process_section(section, subpart_metadata)
-                subpart_data.append(section_data)
-                
-            return subpart_data
-
-        def process_part(part_element) -> List[Dict]:
-            """Process a part (DIV5) element and its children."""
-            part_data = []
-            metadata = extract_metadata(part_element)
-            part_metadata = {'part_number': metadata['number']}
-            
-            # Process direct sections (if any)
-            for section in part_element.find_all('DIV8', recursive=False):
-                section_data = process_section(section, part_metadata)
-                part_data.append(section_data)
-            
-            # Process subparts
-            for subpart in part_element.find_all('DIV6', recursive=False):
-                subpart_data = process_subpart(subpart, part_metadata)
-                part_data.extend(subpart_data)
-                
-            return part_data
-
-        def process_chapter(chapter_element) -> List[Dict]:
-            """Process a chapter (DIV4) element and its parts."""
-            chapter_data = []
-            metadata = extract_metadata(chapter_element)
-            chapter_metadata = {'chapter_number': metadata['number']}
-            
-            # Process parts
-            for part in chapter_element.find_all('DIV5', recursive=False):
-                part_data = process_part(part)
-                chapter_data.extend(part_data)
-                
-            return chapter_data
-
-        # Get the root element and determine its type
-        root = soup.find()
-        if not root:
-            print("No content found")
-            return []
-
-        print(f"Processing root element: {root.name}")
+        # Remove stopwords and stem
+        tokens = [
+            self.stemmer.stem(token) 
+            for token in tokens 
+            if token.isalnum() and token not in self.stop_words
+        ]
         
-        # Process based on root element type
-        if root.name == 'DIV8':  # Section
-            structured_data.append(process_section(root))
-        elif root.name == 'DIV6':  # Subpart
-            structured_data.extend(process_subpart(root))
-        elif root.name == 'DIV5':  # Part
-            structured_data.extend(process_part(root))
-        elif root.name == 'DIV4':  # Chapter
-            structured_data.extend(process_chapter(root))
-        elif root.name == 'TITLE':  # Full title
-            for chapter in root.find_all('DIV4', recursive=False):
-                structured_data.extend(process_chapter(chapter))
-        else:
-            print(f"Unexpected root element type: {root.name}")
-        
-        print(f"Successfully parsed {len(structured_data)} content items")
-        return structured_data
-
-    def get_regulation_metadata(self, xml_content: str) -> Dict:
+        return tokens
+    
+    def get_cosine_similarity(self, query: str) -> List[Tuple[int, float]]:
         """
-        Extract metadata from the regulation XML.
+        Calculate cosine similarity between query and paragraphs using TF-IDF.
         
         Args:
-            xml_content (str): The XML content to parse
-                
+            query: Query paragraph
+            
         Returns:
-            Dict: Dictionary containing metadata about the regulation
+            List of (paragraph_index, similarity_score) tuples
         """
-        soup = BeautifulSoup(xml_content, 'xml')
-        metadata = {
-            'structure_level': None,
-            'title_number': None,
-            'chapter_number': None,
-            'part_number': None,
-            'subpart_number': None,
-            'section_number': None
+        # Transform query using fitted vectorizer
+        query_vector = self.tfidf_vectorizer.transform([query])
+        
+        # Calculate cosine similarity between query and all paragraphs
+        similarities = cosine_similarity(query_vector, self.tfidf_matrix)[0]
+        
+        # Create list of (paragraph_index, similarity_score) tuples
+        results = [(i, sim) for i, sim in enumerate(similarities)]
+        
+        # Sort by similarity score in descending order
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        return results
+    
+    def get_bm25_similarity(self, query: str) -> List[Tuple[int, float]]:
+        """
+        Calculate BM25 similarity between query and paragraphs.
+        
+        Args:
+            query: Query paragraph
+            
+        Returns:
+            List of (paragraph_index, similarity_score) tuples
+        """
+        # Preprocess query
+        tokenized_query = self.preprocess_text(query)
+        
+        # Get BM25 scores
+        scores = self.bm25.get_scores(tokenized_query)
+        
+        # Create list of (paragraph_index, similarity_score) tuples
+        results = [(i, score) for i, score in enumerate(scores)]
+        
+        # Sort by similarity score in descending order
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        return results
+    
+    def get_embedding_similarity(self, query: str) -> List[Tuple[int, float]]:
+        """
+        Calculate semantic similarity between query and paragraphs using embeddings.
+        
+        Args:
+            query: Query paragraph
+            
+        Returns:
+            List of (paragraph_index, similarity_score) tuples
+        """
+        # Get query embedding
+        query_embedding = self.embedding_model.encode([query])[0]
+        
+        # Calculate cosine similarity between query embedding and paragraph embeddings
+        similarities = cosine_similarity(
+            [query_embedding], 
+            self.paragraph_embeddings
+        )[0]
+        
+        # Create list of (paragraph_index, similarity_score) tuples
+        results = [(i, sim) for i, sim in enumerate(similarities)]
+        
+        # Sort by similarity score in descending order
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        return results
+    
+    def get_jaccard_similarity(self, query: str) -> List[Tuple[int, float]]:
+        """
+        Calculate word-to-word similarity using Jaccard similarity.
+        
+        Args:
+            query: Query paragraph
+            
+        Returns:
+            List of (paragraph_index, similarity_score) tuples
+        """
+        # Preprocess query
+        query_tokens = set(self.preprocess_text(query))
+        
+        results = []
+        
+        # Calculate Jaccard similarity for each paragraph
+        for i, para in enumerate(self.paragraphs):
+            para_tokens = set(self.preprocess_text(para))
+            
+            # Calculate Jaccard similarity: |A ∩ B| / |A ∪ B|
+            intersection = len(query_tokens.intersection(para_tokens))
+            union = len(query_tokens.union(para_tokens))
+            
+            similarity = intersection / union if union > 0 else 0
+            results.append((i, similarity))
+        
+        # Sort by similarity score in descending order
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        return results
+    
+    def find_similar_paragraphs(self, query: str, top_n: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Find similar paragraphs to the query using multiple methods.
+        
+        Args:
+            query: Query paragraph
+            top_n: Number of top similar paragraphs to return
+            
+        Returns:
+            Dictionary with results for each method
+        """
+        methods = {
+            'Cosine Similarity (TF-IDF)': self.get_cosine_similarity,
+            'BM25': self.get_bm25_similarity,
+            'Embedding Similarity': self.get_embedding_similarity,
+            'Jaccard Similarity': self.get_jaccard_similarity
         }
         
-        # Determine the structure level and gather relevant metadata
-        root = soup.find()
-        if root:
-            metadata['structure_level'] = root.name
-            
-            # Extract title number if available
-            title_element = soup.find('TITLE')
-            if title_element:
-                metadata['title_number'] = title_element.get('N')
-                
-            # Extract other identifiers based on the root level
-            if root.name == 'DIV4':  # Chapter
-                metadata['chapter_number'] = root.get('N')
-            elif root.name == 'DIV5':  # Part
-                metadata['part_number'] = root.get('N')
-            elif root.name == 'DIV6':  # Subpart
-                metadata['subpart_number'] = root.get('N')
-            elif root.name == 'DIV8':  # Section
-                metadata['section_number'] = root.get('N')
+        results = {}
+        performance = {}
         
-        return metadata
-
-    def get_regulation_text(self, **kwargs) -> str:
+        for method_name, method_func in methods.items():
+            start_time = time.time()
+            method_results = method_func(query)
+            end_time = time.time()
+            
+            # Get top N results
+            top_results = method_results[:top_n]
+            
+            # Format results
+            formatted_results = [
+                {
+                    'paragraph_id': idx,
+                    'similarity_score': score,
+                    'paragraph_text': self.paragraphs[idx][:200] + "..." if len(self.paragraphs[idx]) > 200 else self.paragraphs[idx]
+                }
+                for idx, score in top_results
+            ]
+            
+            results[method_name] = formatted_results
+            performance[method_name] = end_time - start_time
+        
+        return results, performance
+    
+    def compare_methods(self, query: str, top_n: int = 5):
         """
-        Get only the text content of the regulation.
+        Compare different similarity methods and display results.
         
         Args:
-            **kwargs: Same arguments as get_regulation()
-            
-        Returns:
-            str: Plain text content of the regulation
+            query: Query paragraph
+            top_n: Number of top similar paragraphs to display
         """
-        response = self.get_regulation(**kwargs)
-        return response['xml_content']
+        print(f"\n{'='*80}\nQuery: {query[:100]}...\n{'='*80}\n")
+        
+        # Get results from all methods
+        results, performance = self.find_similar_paragraphs(query, top_n)
+        
+        # Display results for each method
+        for method, method_results in results.items():
+            print(f"\n{'-'*80}\nMethod: {method} (Execution time: {performance[method]:.4f} seconds)\n{'-'*80}")
+            
+            for i, result in enumerate(method_results):
+                print(f"{i+1}. Paragraph {result['paragraph_id']} (Score: {result['similarity_score']:.4f})")
+                print(f"   {result['paragraph_text']}\n")
+        
+        # Create and display a comparison chart
+        self.plot_comparison(results, query)
+    
+    def plot_comparison(self, results: Dict[str, List[Dict[str, Any]]], query: str):
+        """
+        Plot a comparison of different methods.
+        
+        Args:
+            results: Results from different methods
+            query: Query paragraph
+        """
+        # Extract methods and top paragraph IDs
+        methods = list(results.keys())
+        top_paragraph_ids = []
+        
+        for method in methods:
+            top_paragraph_ids.append([r['paragraph_id'] for r in results[method]])
+        
+        # Create a figure
+        plt.figure(figsize=(12, 8))
+        
+        # Plot similarity scores for top paragraphs for each method
+        for i, method in enumerate(methods):
+            scores = [r['similarity_score'] for r in results[method]]
+            plt.plot(range(1, len(scores) + 1), scores, marker='o', label=method)
+        
+        plt.title('Comparison of Similarity Methods')
+        plt.xlabel('Rank')
+        plt.ylabel('Similarity Score')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.7)
+        
+        # Display the plot
+        plt.tight_layout()
+        plt.savefig('similarity_comparison.png')
+        print("Comparison chart saved as 'similarity_comparison.png'")
+
+
+def main():
+    """Main function to run the similarity tests."""
+    # Example usage
+    pdf_path = input("Enter the path to the PDF file: ")
+    
+    if not os.path.exists(pdf_path):
+        print(f"Error: File '{pdf_path}' not found.")
+        return
+    
+    # Create tester
+    tester = PDFSimilarityTester(pdf_path)
+    
+    # Get query paragraph
+    query = input("\nEnter the query paragraph: ")
+    
+    # Get number of top results to display
+    try:
+        top_n = int(input("\nEnter the number of top similar paragraphs to display: "))
+    except ValueError:
+        top_n = 5
+        print(f"Using default value: {top_n}")
+    
+    # Compare methods
+    tester.compare_methods(query, top_n)
+
+
+if __name__ == "__main__":
+    main()
