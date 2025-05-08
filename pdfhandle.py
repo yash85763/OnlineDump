@@ -21,11 +21,11 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional, Any
 from sklearn.cluster import KMeans
 
-# Try importing fitz (PyMuPDF)
+# Try importing pdfplumber instead of PyMuPDF
 try:
-    import fitz  # PyMuPDF
+    import pdfplumber
 except ImportError:
-    raise ImportError("PyMuPDF is required. Install it with 'pip install pymupdf'")
+    raise ImportError("pdfplumber is required. Install it with 'pip install pdfplumber'")
 
 # Optional: Import libraries for embeddings
 try:
@@ -125,38 +125,39 @@ class PDFHandler:
             Dictionary with the processed content or an error message
         """
         try:
-            # Check if the PDF is parsable
-            doc = fitz.open(pdf_path)
-            is_parsable, quality_info = self.check_parsability(doc)
-            
-            if not is_parsable:
-                return {
+            # Open the PDF with pdfplumber
+            with pdfplumber.open(pdf_path) as pdf:
+                # Check if the PDF is parsable
+                is_parsable, quality_info = self.check_parsability(pdf)
+                
+                if not is_parsable:
+                    return {
+                        "filename": os.path.basename(pdf_path),
+                        "parsable": False,
+                        "error": quality_info
+                    }
+                
+                # Determine the layout
+                layout_type = self.determine_layout(pdf)
+                
+                # Parse content into paragraphs
+                pages_content = self.parse_paragraphs(pdf)
+                
+                # Generate JSON structure
+                result = {
                     "filename": os.path.basename(pdf_path),
-                    "parsable": False,
-                    "error": quality_info
+                    "parsable": True,
+                    "layout": layout_type,
+                    "pages": pages_content
                 }
-            
-            # Determine the layout
-            layout_type = self.determine_layout(doc)
-            
-            # Parse content into paragraphs
-            pages_content = self.parse_paragraphs(doc)
-            
-            # Generate JSON structure
-            result = {
-                "filename": os.path.basename(pdf_path),
-                "parsable": True,
-                "layout": layout_type,
-                "pages": pages_content
-            }
-            
-            # Optionally generate embeddings
-            if generate_embeddings and (
-                (self.embedding_provider == "sentence_transformers" and self.embedding_model is not None) or
-                (self.embedding_provider == "azure_openai" and self.azure_client is not None)):
-                result["embeddings"] = self.generate_embeddings(pages_content)
-            
-            return result
+                
+                # Optionally generate embeddings
+                if generate_embeddings and (
+                    (self.embedding_provider == "sentence_transformers" and self.embedding_model is not None) or
+                    (self.embedding_provider == "azure_openai" and self.azure_client is not None)):
+                    result["embeddings"] = self.generate_embeddings(pages_content)
+                
+                return result
             
         except Exception as e:
             return {
@@ -165,12 +166,12 @@ class PDFHandler:
                 "error": f"Error processing PDF: {str(e)}"
             }
     
-    def check_parsability(self, doc: fitz.Document) -> Tuple[bool, str]:
+    def check_parsability(self, pdf) -> Tuple[bool, str]:
         """
         Check if a PDF is parsable by extracting text and assessing quality.
         
         Args:
-            doc: PyMuPDF document object
+            pdf: pdfplumber PDF object
             
         Returns:
             Tuple of (is_parsable, message)
@@ -180,9 +181,8 @@ class PDFHandler:
         alpha_chars = 0
         
         # Extract all text from the document
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            text = page.get_text()
+        for page in pdf.pages:
+            text = page.extract_text() or ""
             total_text += text
         
         # If no text was extracted, the PDF might not be OCR'd or has issues
@@ -200,7 +200,7 @@ class PDFHandler:
             quality_ratio = 0
         
         # Check if text length is reasonable for the number of pages
-        avg_chars_per_page = total_chars / len(doc)
+        avg_chars_per_page = total_chars / len(pdf.pages)
         if avg_chars_per_page < 100:  # Arbitrary threshold, adjust as needed
             return False, f"Text extraction yielded too little content ({avg_chars_per_page:.1f} chars/page)"
         
@@ -210,32 +210,36 @@ class PDFHandler:
         
         return True, f"PDF is parsable with quality ratio {quality_ratio:.2f}"
     
-    def determine_layout(self, doc: fitz.Document) -> str:
+    def determine_layout(self, pdf) -> str:
         """
         Determine if the PDF has a single or double column layout.
         
         Args:
-            doc: PyMuPDF document object
+            pdf: pdfplumber PDF object
             
         Returns:
             String indicating layout type: "single_column" or "double_column"
         """
-        # Collect x-coordinates of text blocks from multiple pages
+        # Collect x-coordinates of text characters from multiple pages
         x_coordinates = []
         
         # Sample a few pages for efficiency (first 3 pages or all if less)
-        num_pages_to_check = min(3, len(doc))
+        num_pages_to_check = min(3, len(pdf.pages))
         
         for page_num in range(num_pages_to_check):
-            page = doc.load_page(page_num)
-            blocks = page.get_text("blocks")
+            page = pdf.pages[page_num]
+            chars = page.chars
             
-            # Extract x-coordinates of the blocks (middle point of the block)
-            for block in blocks:
-                x_mid = (block[0] + block[2]) / 2  # (x0 + x2) / 2
+            # If no characters on page, skip
+            if not chars:
+                continue
+                
+            # Extract x-coordinates of the characters
+            for char in chars:
+                x_mid = (char['x0'] + char['x1']) / 2
                 x_coordinates.append(x_mid)
         
-        # If we don't have enough blocks for clustering, assume single column
+        # If we don't have enough data points for clustering, assume single column
         if len(x_coordinates) < 5:
             return "single_column"
         
@@ -253,8 +257,8 @@ class PDFHandler:
             center_distance = abs(centers[0] - centers[1])
             
             # Get page width from the first page
-            page = doc.load_page(0)
-            page_width = page.rect.width
+            page = pdf.pages[0]
+            page_width = page.width
             
             # If the centers are far apart (relative to page width) and both clusters have 
             # a significant number of blocks, classify as double column
@@ -268,12 +272,146 @@ class PDFHandler:
             # If clustering fails, default to single column
             return "single_column"
     
-    def parse_paragraphs(self, doc: fitz.Document) -> List[Dict[str, Any]]:
+    def extract_blocks_from_page(self, page):
+        """
+        Extract text blocks from a page using pdfplumber.
+        
+        In pdfplumber, we need to work with the words or characters and group them.
+        This function converts pdfplumber's word objects to a format similar to
+        PyMuPDF's blocks for compatibility with the rest of the code.
+        
+        Args:
+            page: pdfplumber page object
+            
+        Returns:
+            List of blocks in format [x0, y0, x1, y1, text]
+        """
+        # First try to extract words, which is faster and usually works well for normal documents
+        words = page.extract_words(
+            x_tolerance=3,  # Adjust based on your document's characteristics
+            y_tolerance=3,
+            keep_blank_chars=False,
+            use_text_flow=True
+        )
+        
+        if not words:
+            # If no words extracted, try using characters as a fallback
+            # This can be helpful for poorly OCR'd documents
+            chars = page.chars
+            if not chars:
+                return []
+                
+            # Group characters into words based on proximity
+            x_tolerance = 2  # Space between characters in a word
+            y_tolerance = 2  # Vertical alignment tolerance
+            
+            # Sort chars by y-position first, then x-position
+            chars = sorted(chars, key=lambda c: (c['top'], c['x0']))
+            
+            words = []
+            if chars:
+                current_word = [chars[0]]
+                
+                for i in range(1, len(chars)):
+                    prev_char = chars[i-1]
+                    curr_char = chars[i]
+                    
+                    # If chars are on the same line and close horizontally
+                    if (abs(curr_char['top'] - prev_char['top']) <= y_tolerance and
+                            curr_char['x0'] - prev_char['x1'] <= x_tolerance):
+                        current_word.append(curr_char)
+                    else:
+                        # Complete the current word
+                        if current_word:
+                            x0 = min(c['x0'] for c in current_word)
+                            top = min(c['top'] for c in current_word)
+                            x1 = max(c['x1'] for c in current_word)
+                            bottom = max(c['bottom'] for c in current_word)
+                            text = ''.join(c['text'] for c in current_word)
+                            
+                            words.append({
+                                'x0': x0,
+                                'top': top,
+                                'x1': x1,
+                                'bottom': bottom,
+                                'text': text
+                            })
+                        
+                        # Start a new word
+                        current_word = [curr_char]
+                
+                # Add the last word
+                if current_word:
+                    x0 = min(c['x0'] for c in current_word)
+                    top = min(c['top'] for c in current_word)
+                    x1 = max(c['x1'] for c in current_word)
+                    bottom = max(c['bottom'] for c in current_word)
+                    text = ''.join(c['text'] for c in current_word)
+                    
+                    words.append({
+                        'x0': x0,
+                        'top': top,
+                        'x1': x1,
+                        'bottom': bottom,
+                        'text': text
+                    })
+        
+        if not words:
+            return []
+        
+        # Group words into lines based on y-position
+        y_tolerance = 5  # Adjust as needed
+        lines = []
+        
+        # Sort words by y-position first, then x-position
+        words = sorted(words, key=lambda w: (w['top'], w['x0']))
+        
+        current_line = [words[0]]
+        
+        for i in range(1, len(words)):
+            prev_word = words[i-1]
+            curr_word = words[i]
+            
+            # If y-positions are similar, add to current line
+            if abs(curr_word['top'] - prev_word['top']) <= y_tolerance:
+                current_line.append(curr_word)
+            else:
+                # Start a new line
+                lines.append(current_line)
+                current_line = [curr_word]
+        
+        # Add the last line
+        if current_line:
+            lines.append(current_line)
+        
+        # Convert lines to blocks with format [x0, y0, x1, y1, text]
+        blocks = []
+        for line in lines:
+            if not line:
+                continue
+                
+            # Sort words by x-position to ensure correct order
+            line.sort(key=lambda w: w['x0'])
+            
+            # Calculate line boundaries
+            x0 = min(w['x0'] for w in line)
+            y0 = min(w['top'] for w in line)
+            x1 = max(w['x1'] for w in line)
+            y1 = max(w['bottom'] for w in line)
+            
+            # Combine text with spaces
+            text = " ".join(w['text'] for w in line)
+            
+            blocks.append([x0, y0, x1, y1, text])
+        
+        return blocks
+    
+    def parse_paragraphs(self, pdf) -> List[Dict[str, Any]]:
         """
         Parse PDF content into paragraphs, handling cross-page and cross-column continuity.
         
         Args:
-            doc: PyMuPDF document object
+            pdf: pdfplumber PDF object
             
         Returns:
             List of dictionaries, each containing page number and paragraphs
@@ -281,13 +419,12 @@ class PDFHandler:
         pages_content = []
         last_paragraph_info = None  # Store info about the last paragraph of the previous page
         
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            page_height = page.rect.height
-            page_width = page.rect.width
+        for page_num, page in enumerate(pdf.pages):
+            page_height = page.height
+            page_width = page.width
             
-            # Extract text blocks
-            blocks = page.get_text("blocks")
+            # Extract text blocks using pdfplumber
+            blocks = self.extract_blocks_from_page(page)
             
             # If no blocks, skip this page
             if not blocks:
