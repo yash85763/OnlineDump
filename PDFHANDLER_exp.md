@@ -178,14 +178,160 @@ The complete processing pipeline follows these steps:
 6. **Paragraph Identification** - Distinguishing between line breaks and paragraph breaks
 7. **Newline Characters** - Removing unwanted newlines without affecting paragraph structure
 
-## Use Cases
 
-The Enhanced PDF Handler is particularly suitable for:
+# PDF OCR Quality Assessment and Handling
 
-1. **Contract Analysis** - Extracting clauses and provisions from legal documents
-2. **Document Indexing** - Preparing documents for search or database storage
-3. **Text Mining** - Extracting clean, structured text for further analysis
-4. **Information Retrieval** - Finding specific sections or paragraphs in documents
-5. **Semantic Analysis** - Using embeddings to compare document sections or find similar content
+## How the Code Identifies if a PDF is Properly OCR'd
 
-This module provides a robust foundation for any application that needs to extract structured, clean text from PDF documents while preserving the logical organization of the content.
+The code uses several methods to determine if a PDF has been properly OCR'd:
+
+### 1. Text Extractability Check
+
+```python
+# In extract_pdf_content method
+if not document.is_extractable:
+    return [], False, "Document is encrypted or not extractable"
+```
+
+This first check determines if the PDF allows text extraction at all. Non-extractable documents may be encrypted or have content restrictions.
+
+### 2. Text Presence Check
+
+```python
+# After extracting text from all pages
+if not total_text.strip():
+    return pages_data, False, "No text extracted from PDF. The PDF might need OCR processing."
+```
+
+If no text is extracted from the entire document, this is a strong indication that the PDF contains only images or has not been OCR'd. The method immediately returns with a message suggesting OCR processing.
+
+### 3. Character Density Assessment
+
+```python
+# Check if text length is reasonable for the number of pages
+if pages_data:
+    avg_chars_per_page = total_chars / len(pages_data)
+    if avg_chars_per_page < 100:  # Arbitrary threshold
+        return pages_data, False, f"Text extraction yielded too little content ({avg_chars_per_page:.1f} chars/page)"
+```
+
+PDFs with very low character density (fewer than 100 characters per page by default) are likely to be poorly OCR'd or contain mostly images with minimal text.
+
+### 4. Text Quality Ratio
+
+```python
+# Calculate quality ratio (alphanumeric characters vs. total characters)
+total_chars = len(total_text)
+alpha_chars = sum(1 for char in total_text if char.isalnum())
+
+if total_chars > 0:
+    quality_ratio = alpha_chars / total_chars
+else:
+    quality_ratio = 0
+
+# Check quality ratio against threshold
+if quality_ratio < self.min_quality_ratio:  # Default is 0.5
+    return pages_data, False, f"Low text quality (alphanumeric ratio: {quality_ratio:.2f})"
+```
+
+This is the most sophisticated check. It calculates the ratio of alphanumeric characters to total characters in the extracted text. A low ratio (below 0.5 by default) indicates:
+
+- Possible OCR errors (many non-alphanumeric characters from misinterpretation)
+- High presence of non-text elements being interpreted as text
+- Corrupted text extraction 
+
+This ratio is effective because properly OCR'd text typically contains a high proportion of alphanumeric characters, with spaces and punctuation making up the remainder.
+
+## What the Code Does When a PDF is Properly OCR'd
+
+When the code determines that a PDF is properly OCR'd (passes all the quality checks), it proceeds with the full extraction and processing pipeline:
+
+### 1. Layout Analysis
+
+The code determines if the document has a single-column or double-column layout by analyzing the spatial distribution of text blocks.
+
+```python
+layout_type = self.determine_layout(pages_data)
+```
+
+### 2. Text Cleaning
+
+For each text block extracted, the code cleans the text to handle common OCR artifacts and formatting issues:
+
+```python
+box_text = self.clean_text(raw_text).strip()
+```
+
+The clean_text method handles:
+- Newline characters within words or sentences
+- Hyphenation at line breaks
+- Extra whitespace
+- Inconsistent line endings
+
+### 3. Paragraph Extraction
+
+The code processes the cleaned text blocks into paragraphs based on:
+
+- Vertical spacing between blocks
+- Punctuation patterns (whether text ends with punctuation)
+- Word count (handling short fragments)
+- Column position (for double-column layouts)
+
+```python
+pages_content = self.parse_paragraphs(pages_data)
+```
+
+### 4. Cross-Page Continuity
+
+The code tracks paragraph continuity across page boundaries:
+
+```python
+# If paragraph doesn't end with punctuation or is very short, carry to next page
+if not ends_with_punctuation or word_count < self.min_words_threshold:
+    last_paragraph_info = (last_para, ends_with_punctuation, word_count)
+    all_paragraphs.pop()  # Remove from current page to join with next
+```
+
+### 5. Optional Embedding Generation
+
+For semantic analysis, the code can generate embeddings for each paragraph:
+
+```python
+if generate_embeddings:
+    result["embeddings"] = self.generate_embeddings(pages_content)
+```
+
+### 6. JSON Output
+
+Finally, the processed content is organized into a structured JSON format:
+
+```python
+result = {
+    "filename": os.path.basename(pdf_path),
+    "parsable": True,
+    "layout": layout_type,
+    "pages": pages_content
+}
+```
+
+This JSON structure contains:
+- Page numbers
+- Paragraph text
+- Layout information
+- Optional embeddings
+
+## Handling Poorly OCR'd PDFs
+
+When the code determines a PDF is poorly OCR'd, it:
+
+1. Returns `parsable: False` in the result
+2. Provides a specific error message indicating the issue (no text, low quality ratio, etc.)
+3. Includes the extracted data (if any) for potential manual review
+
+This allows the calling application to:
+- Flag documents that need OCR processing
+- Provide feedback to users about document quality
+- Route documents to appropriate processing pipelines
+- Skip problematic documents in batch processing
+
+The approach is comprehensive and robust, allowing the system to work effectively with well-OCR'd documents while providing useful diagnostics for poorly OCR'd ones.
