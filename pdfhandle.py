@@ -639,6 +639,45 @@ class PDFHandler:
             result_paragraphs.append(current_paragraph)
         
         return result_paragraphs
+
+    def clean_text(self, text: str) -> str:
+        """
+        Clean extracted text by handling common PDF extraction issues:
+        1. Remove line breaks that occur within words or sentences
+        2. Preserve paragraph breaks (double line breaks)
+        3. Fix hyphenation at line breaks
+        4. Handle extra whitespace
+        
+        Args:
+            text: Raw text extracted from PDF
+            
+        Returns:
+            Cleaned text
+        """
+        if not text:
+            return ""
+            
+        # First, normalize line endings
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        
+        # Replace multiple spaces with a single space
+        text = re.sub(r' +', ' ', text)
+        
+        # Handle hyphenation at line breaks (word-\nbreak → wordbreak)
+        text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
+        
+        # Replace single newlines within sentences with spaces
+        # But preserve paragraph breaks (double newlines)
+        text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+        
+        # Replace any remaining newlines with proper paragraph breaks
+        text = re.sub(r'\n+', '\n', text)
+        
+        # Trim extra whitespace
+        text = re.sub(r'[ \t]+', ' ', text)
+        text = text.strip()
+        
+        return text
     
     def generate_embeddings(self, pages_content: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -770,6 +809,8 @@ def process_directory(input_dir: str, output_dir: str, generate_embeddings: bool
             results.append(result)
     
     return results
+
+
 
 
 if __name__ == "__main__":
