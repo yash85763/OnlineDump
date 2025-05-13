@@ -1,98 +1,202 @@
-### LinkedIn Post Draft – DFA-RAG: Bringing Deterministic Workflows to Conversational AI  
+Here's a script that uses our enhanced PDFHandler class to extract content from a PDF, split it into sentences, and then perform POS tagging on the first 10 sentences using NLTK:
 
-Large-language-model chatbots are brilliant improvisers, but that very creativity makes it hard to guarantee they’ll follow a regulated playbook in customer service, healthcare, or compliance settings. **DFA-RAG** (Deterministic-Finite-Automaton Retrieval-Augmented Generation) tackles that gap by fusing two worlds: human-readable automata and retrieval-augmented generation. Here’s how—and why—it matters.  
+```python
+import os
+import json
+import nltk
+from nltk.tokenize import sent_tokenize
+import argparse
+from typing import List, Dict, Any
 
----
+# Make sure to download the necessary NLTK resources
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
 
-**The Big Idea**  
-DFA-RAG learns a *deterministic* state machine (a DFA) from your historical dialogs. Each state captures a recurring conversational context, and each transition is triggered by concise “tags” distilled from utterances. At run time, the DFA acts as a *semantic router* that steers the LLM down an allowed path, then feeds it the most relevant exemplars for in-context learning. The result is compliant, on-script responses with LLM fluency.   
-
----
-
-**Key Methodology**  
-
-1. **Tag Extraction** – An LLM condenses every utterance in the training set into a few keyword-style tags (≤3 words).   
-2. **DFA Construction** – Tags are arranged round-by-round into a tree, then similar branches are merged using a data-driven similarity score to form a compact DFA.   
-3. **Conversation Routing** – At inference:  
-   - Tag the new user utterance.  
-   - Follow DFA transitions; if a path breaks, fall back to the last valid state.   
-   - Retrieve a handful of past dialog snippets linked to that state and build the prompt.  
-   - Let the LLM generate the next reply, then repeat.   
-
----
-
-**Why This Approach Stands Out**  
-
-- **Interpretability & Trust** – The routing logic is an explicit graph anyone can audit, unlike opaque embedding similarity alone.   
-- **Sharper Retrieval** – Splitting dialogs into fine-grained states surfaces examples that match the exact turn, not just the whole thread.   
-- **Plug-and-Play** – No gradient updates required; drop the learned DFA in front of any GPT-class model.   
-- **Proven Gains** – Across six customer-service datasets, DFA-RAG beats standard RAG and BM25, raising win-rate by ~4 pp over the best baseline and ~8 pp over random retrieval.   
-  In task-oriented dialog (MultiWOZ), it reaches 93.3 % Inform / 90 % Success without access to ground-truth dialog states—outperforming prior end-to-end systems.   
-
----
-
-**Strategic Impact**  
-
-- **Compliance by Design** – Regulated verticals can encode mandatory steps (e.g., authentication, disclaimers) directly in the DFA.  
-- **Lower Tuning Cost** – Avoids expensive fine-tuning and catastrophic forgetting; you update the automaton, not the model.  
-- **Resilience to OOD Queries** – When users step off the map, DFA-RAG gracefully backs off to the nearest safe state instead of hallucinating.   
-
----
-
-**Bottom Line**  
-By letting a deterministic automaton *drive* and an LLM *speak*, DFA-RAG delivers the best of both—governed workflows with conversational finesse. If you’re building customer-facing or safety-critical chatbots, this framework is a compelling blueprint for the next generation of reliable AI assistants.
+# Import our PDFHandler class - assuming it's in a file called pdf_handler.py
+from pdf_handler import PDFHandler
 
 
-### A Deeper Look at DFA-RAG’s Routing Loop  
+def process_pdf_to_sentences(pdf_path: str, output_path: str) -> None:
+    """
+    Process a PDF file, extract text, split into sentences, and save as JSON.
+    Also performs POS tagging on the first 10 sentences.
+    
+    Args:
+        pdf_path: Path to the PDF file
+        output_path: Path where to save the JSON output
+    """
+    print(f"Processing PDF: {pdf_path}")
+    
+    # Initialize the PDF handler
+    handler = PDFHandler()
+    
+    # Process the PDF file
+    result = handler.process_pdf(pdf_path, generate_embeddings=False)
+    
+    if not result["parsable"]:
+        print(f"Error processing PDF: {result['error']}")
+        return
+    
+    # Extract all paragraphs from all pages
+    all_paragraphs = []
+    for page in result["pages"]:
+        all_paragraphs.extend(page["paragraphs"])
+    
+    print(f"Extracted {len(all_paragraphs)} paragraphs")
+    
+    # Split paragraphs into sentences
+    all_sentences = []
+    for paragraph in all_paragraphs:
+        # Use NLTK's sentence tokenizer
+        sentences = sent_tokenize(paragraph)
+        all_sentences.extend(sentences)
+    
+    print(f"Split into {len(all_sentences)} sentences")
+    
+    # Perform POS tagging on the first 10 sentences (or all if fewer)
+    num_sentences_to_tag = min(10, len(all_sentences))
+    tagged_sentences = []
+    
+    for i in range(num_sentences_to_tag):
+        sentence = all_sentences[i]
+        # Tokenize words and tag parts of speech
+        words = nltk.word_tokenize(sentence)
+        pos_tags = nltk.pos_tag(words)
+        
+        tagged_sentences.append({
+            "sentence_id": i,
+            "text": sentence,
+            "pos_tags": pos_tags
+        })
+    
+    print(f"Performed POS tagging on {num_sentences_to_tag} sentences")
+    
+    # Create JSON structure with all sentences and tagged sentences
+    output_data = {
+        "document": {
+            "filename": os.path.basename(pdf_path),
+            "total_sentences": len(all_sentences),
+            "sentences": [{"sentence_id": i, "text": s} for i, s in enumerate(all_sentences)]
+        },
+        "pos_tagged_sentences": tagged_sentences
+    }
+    
+    # Save to JSON
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(output_data, f, ensure_ascii=False, indent=2)
+    
+    print(f"Results saved to {output_path}")
+    
+    # Print POS tagging results for the first 10 sentences
+    print("\nPOS Tagging Results for First 10 Sentences:")
+    for sentence in tagged_sentences:
+        print(f"\nSentence {sentence['sentence_id'] + 1}: {sentence['text']}")
+        print("POS Tags:")
+        for word, tag in sentence['pos_tags']:
+            print(f"  {word}: {tag}")
 
-Below is a step-by-step walk-through of how a live conversation thread is steered, showing why the mechanism is both *deterministic* and *LLM-friendly*.
 
-| Stage | What Happens | Where the Logic Lives |
-|-------|--------------|-----------------------|
-| **1 — Tag** | The fresh user utterance is passed through a light LLM prompt that extracts 1-3 intent-style tags (e.g., “#battery”, “#issue”). Using tags keeps the alphabet finite and human-readable.  | *Tag-Extraction Prompt* |
-| **2 — Transition** | Starting from the current DFA state `qₜ₋₁`, the system consults the transition function `δ(qₜ₋₁, tag)` for each tag in order. If every tag is matched, the run lands in a new state `qₜ`.  | *Learned DFA* |
-| **3 — Fallback for OOD** | If any tag is missing (`δ` returns ∅), routing stops at the last valid state. This “nearest-valid” fallback gracefully absorbs out-of-distribution inputs without derailing the flow.  | *DFA navigation rule* |
-| **4 — Context Retrieval** | Each state stores a list `I(q)` of dialogue IDs that previously passed through it. Five diverse examples are sampled, preserving user/system turns, and concatenated into the prompt.  | *State memory* |
-| **5 — LLM Generation** | The LLM receives: *(a)* system instructions, *(b)* the current conversation, *(c)* the five retrieved snippets. Because every snippet came from *exactly* the same semantic state, the LLM has sharply relevant “few-shot” guidance. |
-| **6 — Iterate** | The LLM’s reply is appended to the dialog, then re-tagged, and the loop repeats. |
+def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Process PDF to JSON with sentence splitting and POS tagging")
+    parser.add_argument("pdf_path", help="Path to the PDF file")
+    parser.add_argument("--output", "-o", help="Output JSON file path", 
+                        default=None)
+    
+    args = parser.parse_args()
+    
+    # Set default output path if not specified
+    if not args.output:
+        base_filename = os.path.splitext(os.path.basename(args.pdf_path))[0]
+        args.output = f"{base_filename}_sentences.json"
+    
+    # Process the PDF
+    process_pdf_to_sentences(args.pdf_path, args.output)
 
----
 
-#### Why This Routing Strategy Works
-
-1. **Deterministic yet Lightweight**  
-   *Routing time is O(length of tag sequence)*—no embedding look-ups or similarity scans. That keeps latency predictable, crucial for production chatbots.
-
-2. **Semantic Precision Without Similarity Noise**  
-   Because tags are discrete symbols, two user utterances that *mean* the same thing map to the same transition even if their wording differs (“My phone dies quickly” vs. “Battery drains fast”) . This removes the need for threshold-tuning typical in cosine-similarity routers.
-
-3. **Built-in Memory & Interpretability**  
-   The `I(q)` lists make every retrieval choice auditable: a supervisor can inspect exactly which historic examples influence a given reply. 
-
-4. **Graceful Recovery**  
-   The fallback rule guarantees the agent always responds—either on-script (perfect path) or near-script (parent state)—avoiding blank outputs or off-topic hallucinations. 
-
-5. **No Gradients, Easy Updates**  
-   If policy changes (e.g., add a new compliance step), you just append a tag and transitions to the DFA and regenerate state memories; the core LLM stays frozen.
-
----
-
-#### Micro-Example
-
+if __name__ == "__main__":
+    main()
 ```
-State q₀   (greeting)
-  └─ "#issue" → q₁
-        ├─ "#battery" → q₂
-        └─ "#network" → q₃
+
+And here's a step-by-step explanation of how to use this script:
+
+### Usage Instructions
+
+1. **Save the Script**: Save the above code as `pdf_to_sentences.py`
+
+2. **Install Dependencies**:
+   ```
+   pip install nltk
+   ```
+
+3. **Run the Script**:
+   ```
+   python pdf_to_sentences.py path/to/your/document.pdf --output results.json
+   ```
+
+### What the Script Does
+
+1. Processes the PDF using our enhanced PDFHandler
+2. Extracts all paragraphs from the document
+3. Splits paragraphs into sentences using NLTK's sentence tokenizer
+4. Performs part-of-speech (POS) tagging on the first 10 sentences
+5. Saves all sentences and POS-tagged sentences to a JSON file
+
+### JSON Output Structure
+
+The resulting JSON file has this structure:
+
+```json
+{
+  "document": {
+    "filename": "document.pdf",
+    "total_sentences": 150,
+    "sentences": [
+      {"sentence_id": 0, "text": "This is the first sentence."},
+      {"sentence_id": 1, "text": "This is the second sentence."},
+      // ... all sentences
+    ]
+  },
+  "pos_tagged_sentences": [
+    {
+      "sentence_id": 0,
+      "text": "This is the first sentence.",
+      "pos_tags": [
+        ["This", "DT"],
+        ["is", "VBZ"],
+        ["the", "DT"],
+        ["first", "JJ"],
+        ["sentence", "NN"],
+        [".", "."]
+      ]
+    },
+    // ... up to 10 sentences with POS tags
+  ]
+}
 ```
 
-*User says:* “Why is my iPhone battery dying so fast?”  
-*Tags:* {#issue, #battery}  
-Route: q₀ → q₁ → q₂  
-`I(q₂)` might hold IDs [17, 42, 51] whose excerpts all show agents asking for iOS version and showing battery-usage steps. The LLM therefore mirrors that guidance and stays compliant.
+### Understanding NLTK POS Tags
 
-If the user suddenly asks, “Do you sell screen protectors?” (`#sales` not in subtree), the walk stops at `q₁` and retrieves generic issue-triage examples—still a sane answer path rather than silence.
+NLTK uses the Penn Treebank tag set. Some common tags are:
 
----
+- `NN`: Noun, singular
+- `NNS`: Noun, plural
+- `VB`: Verb, base form
+- `VBD`: Verb, past tense
+- `JJ`: Adjective
+- `RB`: Adverb
+- `IN`: Preposition
+- `DT`: Determiner
 
-**In short, DFA-RAG’s router is a tiny, deterministic backbone that keeps large language models on the rails without sacrificing their conversational flair.**
+For a full list of tags, you can visit the [Penn Treebank Tag Set documentation](https://www.ling.upenn.edu/courses/Fall_2003/ling001/penn_treebank_pos.html).
+
+### Extending the Script
+
+This script can be easily extended to:
+
+1. Tag all sentences instead of just the first 10
+2. Apply other NLP analyses like named entity recognition
+3. Filter sentences based on specific criteria
+4. Perform more advanced linguistic analyses
+
+Just modify the `process_pdf_to_sentences` function to include the additional processing you need.​​​​​​​​​​​​​​​​
