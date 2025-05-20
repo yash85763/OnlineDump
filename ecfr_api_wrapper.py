@@ -181,16 +181,23 @@ class PDFHandler:
             except Exception as e:
                 print(f"Warning: Could not initialize Azure OpenAI client: {e}")
 
-    @contextmanager
-    def _process_context(self, pdf_path: str, generate_embeddings: bool) -> Iterator[Dict[str, Any]]:
-        """Context manager for processing PDF content."""
+    def _process_pdf(self, pdf_path: str, generate_embeddings: bool) -> Dict[str, Any]:
+        """
+        Process a PDF file and return the extraction result.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            generate_embeddings: Whether to generate embeddings
+            
+        Returns:
+            Dictionary with extraction results
+        """
         if not DEPENDENCIES['pdfminer']:
-            yield {
+            return {
                 "filename": os.path.basename(pdf_path),
                 "parsable": False,
                 "error": "pdfminer.six is not available"
             }
-            return
         
         # Filter PDFMiner warnings about CropBox
         warnings.filterwarnings("ignore", message="CropBox missing from /Page, defaulting to MediaBox")
@@ -201,23 +208,21 @@ class PDFHandler:
             except Exception as e:
                 # Handle specific PDF parsing errors
                 if "generator didn't stop after throw()" in str(e) or "CropBox missing" in str(e):
-                    yield {
+                    return {
                         "filename": os.path.basename(pdf_path),
                         "parsable": False,
                         "error": "PDF structure error: Invalid page structure or missing CropBox"
                     }
-                    return
                 else:
                     # Re-raise other exceptions
                     raise
             
             if not is_parsable:
-                yield {
+                return {
                     "filename": os.path.basename(pdf_path),
                     "parsable": False,
                     "error": quality_info
                 }
-                return
             
             layout_type = self.determine_layout(pages_data)
             pages_content = self.parse_paragraphs(pages_data)
@@ -239,69 +244,29 @@ class PDFHandler:
             if can_generate_embeddings:
                 result["embeddings"] = self.generate_embeddings(pages_content)
             
-            yield result
+            return result
             
         except Exception as e:
-            yield {
+            return {
                 "filename": os.path.basename(pdf_path),
                 "parsable": False,
                 "error": f"Error processing PDF: {str(e)}"
             }
 
     class ProcessPDF:
-        """Inner class for method chaining to select output format."""
+        """Class for output formatting selection."""
         
-        def __init__(self, handler: 'PDFHandler', pdf_path: str, generate_embeddings: bool):
+        def __init__(self, handler: 'PDFHandler', result: Dict[str, Any]):
             self.handler = handler
-            self.pdf_path = pdf_path
-            self.generate_embeddings = generate_embeddings
-            self.result = None
-            self.context = None
+            self.result = result
         
-        def __enter__(self):
-            self.context = self.handler._process_context(self.pdf_path, self.generate_embeddings)
-            try:
-                # Use next() to get the yield value from the generator
-                # Without consuming the entire generator
-                self.result = next(self.context)
-                return self
-            except StopIteration:
-                # Handle case where generator has no yields
-                self.result = {
-                    "filename": os.path.basename(self.pdf_path),
-                    "parsable": False,
-                    "error": "No content yielded from processing"
-                }
-                return self
-            except Exception as e:
-                # Make sure we properly exit the context if there's an error
-                if self.context:
-                    try:
-                        self.context.__exit__(type(e), e, e.__traceback__)
-                    except:
-                        pass  # Suppress any secondary exceptions during cleanup
-                raise
+        def json(self, output_path: Optional[str] = None) -> Dict[str, Any]:
+            """Return JSON format or save to JSON file."""
+            return self.handler.formatters['json'].format_output(self.result, output_path)
         
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            if self.context:
-                try:
-                    # Need to exhaust the generator when we're done
-                    # This ensures any cleanup in the context manager happens
-                    try:
-                        next(self.context)  # This should raise StopIteration
-                    except StopIteration:
-                        pass  # This is expected
-                    
-                    # Now properly exit the context
-                    return self.context.__exit__(exc_type, exc_val, exc_tb)
-                except Exception as e:
-                    # If we get a "generator didn't stop after throw()" error, handle it gracefully
-                    if "generator didn't stop after throw()" in str(e):
-                        # Just return, indicating we handled the exception
-                        return True
-                    # Otherwise propagate the exception
-                    return False
-            return False
+        def txt(self, output_path: Optional[str] = None) -> str:
+            """Return text format or save to text file."""
+            return self.handler.formatters['txt'].format_output(self.result, output_path)
         
         def json(self, output_path: Optional[str] = None) -> Dict[str, Any]:
             """Return JSON format or save to JSON file."""
@@ -322,7 +287,8 @@ class PDFHandler:
         Returns:
             ProcessPDF object allowing .json() or .txt() method calls
         """
-        return self.ProcessPDF(self, pdf_path, generate_embeddings)
+        result = self._process_pdf(pdf_path, generate_embeddings)
+        return self.ProcessPDF(self, result)
 
     @check_dependency('pdfminer')
     def extract_pdf_content(self, pdf_path: str) -> Tuple[List[Dict[str, Any]], bool, str]:
@@ -530,17 +496,17 @@ def process_directory(directory_path: str, output_dir: str, handler: PDFHandler,
         
         try:
             # Process PDF with both outputs
-            with handler.process_pdf(pdf_path, generate_embeddings) as processor:
-                json_result = processor.json(json_path)
-                txt_result = processor.txt(txt_path)
-                
-                results[pdf_file] = {
-                    "parsable": json_result.get("parsable", False),
-                    "json_path": json_path,
-                    "txt_path": txt_path
-                }
-                
-                print(f"Processed {pdf_file}")
+            processor = handler.process_pdf(pdf_path, generate_embeddings)
+            json_result = processor.json(json_path)
+            txt_result = processor.txt(txt_path)
+            
+            results[pdf_file] = {
+                "parsable": json_result.get("parsable", False),
+                "json_path": json_path,
+                "txt_path": txt_path
+            }
+            
+            print(f"Processed {pdf_file}")
         except Exception as e:
             print(f"Error processing {pdf_file}: {e}")
             results[pdf_file] = {
@@ -590,24 +556,25 @@ if __name__ == "__main__":
     if os.path.isfile(input_path):
         # Example usage of new functionality
         try:
-            with handler.process_pdf(input_path, generate_embeddings) as processor:
-                # Check if PDF was parsable
-                if not processor.result.get('parsable', False):
-                    error_msg = processor.result.get('error', 'Unknown error')
-                    print(f"Error processing {input_path}: {error_msg}")
-                else:
-                    # Get JSON output and save to file
-                    json_result = processor.json(output_json_path)
-                    print(f"Processed {input_path} and saved JSON to {output_json_path}")
-                    
-                    # Get text output and save to file
-                    text_result = processor.txt(output_txt_path)
-                    print(f"Processed {input_path} and saved text to {output_txt_path}")
-                    
-                    # Use results directly
-                    print(f"JSON result sample: {json_result.get('filename')}")
-                    text_sample = text_result[:100] if text_result else 'No text extracted'
-                    print(f"Text result sample (first 100 chars): {text_sample}")
+            processor = handler.process_pdf(input_path, generate_embeddings)
+            
+            # Check if PDF was parsable
+            if not processor.result.get('parsable', False):
+                error_msg = processor.result.get('error', 'Unknown error')
+                print(f"Error processing {input_path}: {error_msg}")
+            else:
+                # Get JSON output and save to file
+                json_result = processor.json(output_json_path)
+                print(f"Processed {input_path} and saved JSON to {output_json_path}")
+                
+                # Get text output and save to file
+                text_result = processor.txt(output_txt_path)
+                print(f"Processed {input_path} and saved text to {output_txt_path}")
+                
+                # Use results directly
+                print(f"JSON result sample: {json_result.get('filename')}")
+                text_sample = text_result[:100] if text_result else 'No text extracted'
+                print(f"Text result sample (first 100 chars): {text_sample}")
         except Exception as e:
             import traceback
             print(f"Error processing {input_path}: {e}")
