@@ -679,6 +679,78 @@ class PDFHandler:
         text = text.strip()
         
         return text
+
+    # Add this function to your streamlit3.py file
+def initialize_nlp_models():
+    """Initialize NLP models for language detection"""
+    try:
+        import spacy
+        from spacy.language import Language
+        import nltk
+        from nltk.corpus import words as nltk_words
+        
+        with st.spinner("Loading language models... This may take a moment."):
+            # Try to load spaCy model
+            try:
+                nlp = spacy.load("en_core_web_sm")
+                st.session_state.spacy_loaded = True
+            except OSError:
+                try:
+                    # Download if not available
+                    spacy.cli.download("en_core_web_sm")
+                    nlp = spacy.load("en_core_web_sm")
+                    st.session_state.spacy_loaded = True
+                except:
+                    # Use blank model if download fails
+                    nlp = spacy.blank("en")
+                    st.session_state.spacy_loaded = False
+            
+            # Add language detector to spaCy
+            try:
+                from spacy_langdetect import LanguageDetector
+                if not Language.has_factory("language_detector"):
+                    Language.factory("language_detector", func=lambda nlp, name: LanguageDetector())
+                    nlp.add_pipe("language_detector", last=True)
+                st.session_state.langdetect_loaded = True
+            except:
+                st.session_state.langdetect_loaded = False
+            
+            # Store model in session state
+            st.session_state.nlp = nlp
+            
+            # Initialize NLTK for word checking fallback
+            try:
+                nltk.data.find('corpora/words')
+            except LookupError:
+                nltk.download('words', quiet=True)
+            
+            # Test if words corpus is available
+            try:
+                english_words = set(w.lower() for w in nltk_words.words())
+                st.session_state.nltk_loaded = len(english_words) > 0
+            except:
+                st.session_state.nltk_loaded = False
+        
+        return True
+    except Exception as e:
+        st.warning(f"Could not initialize language models: {str(e)}")
+        return False
+
+# # Add this to your main() function at the start
+# if 'nlp_initialized' not in st.session_state:
+#     st.session_state.nlp_initialized = initialize_nlp_models()
+
+# # Update PDFHandler instantiation in process_pdf function
+# pdf_handler = PDFHandler(
+#     min_quality_ratio=0.5,
+#     paragraph_spacing_threshold=10,
+#     page_continuity_threshold=0.1,
+#     min_words_threshold=5
+# )
+
+# # If NLP model is loaded in session state, use it
+# if hasattr(st.session_state, 'nlp') and st.session_state.nlp is not None:
+#     pdf_handler.nlp = st.session_state.nlp
     
     def generate_embeddings(self, pages_content: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
