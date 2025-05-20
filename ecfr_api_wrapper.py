@@ -191,9 +191,25 @@ class PDFHandler:
                 "error": "pdfminer.six is not available"
             }
             return
+        
+        # Filter PDFMiner warnings about CropBox
+        warnings.filterwarnings("ignore", message="CropBox missing from /Page, defaulting to MediaBox")
             
         try:
-            pages_data, is_parsable, quality_info = self.extract_pdf_content(pdf_path)
+            try:
+                pages_data, is_parsable, quality_info = self.extract_pdf_content(pdf_path)
+            except Exception as e:
+                # Handle specific PDF parsing errors
+                if "generator didn't stop after throw()" in str(e) or "CropBox missing" in str(e):
+                    yield {
+                        "filename": os.path.basename(pdf_path),
+                        "parsable": False,
+                        "error": "PDF structure error: Invalid page structure or missing CropBox"
+                    }
+                    return
+                else:
+                    # Re-raise other exceptions
+                    raise
             
             if not is_parsable:
                 yield {
@@ -245,16 +261,46 @@ class PDFHandler:
         def __enter__(self):
             self.context = self.handler._process_context(self.pdf_path, self.generate_embeddings)
             try:
-                self.result = next(self.context.__enter__())
+                # Use next() to get the yield value from the generator
+                # Without consuming the entire generator
+                self.result = next(self.context)
+                return self
+            except StopIteration:
+                # Handle case where generator has no yields
+                self.result = {
+                    "filename": os.path.basename(self.pdf_path),
+                    "parsable": False,
+                    "error": "No content yielded from processing"
+                }
                 return self
             except Exception as e:
                 # Make sure we properly exit the context if there's an error
-                self.context.__exit__(type(e), e, e.__traceback__)
+                if self.context:
+                    try:
+                        self.context.__exit__(type(e), e, e.__traceback__)
+                    except:
+                        pass  # Suppress any secondary exceptions during cleanup
                 raise
         
         def __exit__(self, exc_type, exc_val, exc_tb):
             if self.context:
-                return self.context.__exit__(exc_type, exc_val, exc_tb)
+                try:
+                    # Need to exhaust the generator when we're done
+                    # This ensures any cleanup in the context manager happens
+                    try:
+                        next(self.context)  # This should raise StopIteration
+                    except StopIteration:
+                        pass  # This is expected
+                    
+                    # Now properly exit the context
+                    return self.context.__exit__(exc_type, exc_val, exc_tb)
+                except Exception as e:
+                    # If we get a "generator didn't stop after throw()" error, handle it gracefully
+                    if "generator didn't stop after throw()" in str(e):
+                        # Just return, indicating we handled the exception
+                        return True
+                    # Otherwise propagate the exception
+                    return False
             return False
         
         def json(self, output_path: Optional[str] = None) -> Dict[str, Any]:
@@ -280,10 +326,112 @@ class PDFHandler:
 
     @check_dependency('pdfminer')
     def extract_pdf_content(self, pdf_path: str) -> Tuple[List[Dict[str, Any]], bool, str]:
-        """Extract content from PDF file."""
-        # Implementation would go here
-        # For now, just placeholder since we were instructed to leave unchanged functions
-        pass
+        """
+        Extract content from PDF file.
+        
+        Args:
+            pdf_path: Path to the PDF file
+            
+        Returns:
+            Tuple containing:
+              - List of page data dictionaries
+              - Boolean indicating if the PDF is parsable
+              - Quality information or error message
+        """
+        try:
+            # Filter warnings about CropBox
+            warnings.filterwarnings("ignore", message="CropBox missing from /Page, defaulting to MediaBox")
+            
+            with open(pdf_path, 'rb') as file:
+                # Set up PDFMiner components
+                parser = PDFParser(file)
+                document = PDFDocument(parser)
+                
+                # Check if the document can be decrypted
+                if not document.is_extractable:
+                    return [], False, "PDF is encrypted or not extractable"
+                
+                # Create components for extracting layouts
+                rsrcmgr = PDFResourceManager()
+                device = PDFPageAggregator(rsrcmgr, laparams=self.laparams)
+                interpreter = PDFPageInterpreter(rsrcmgr, device)
+                
+                pages_data = []
+                
+                # Process each page
+                for page_num, page in enumerate(PDFPage.create_pages(document), 1):
+                    try:
+                        interpreter.process_page(page)
+                        layout = device.get_result()
+                        
+                        # Extract text elements
+                        text_elements = self._extract_text_elements(layout)
+                        
+                        if text_elements:
+                            pages_data.append({
+                                'page_num': page_num,
+                                'layout': layout,
+                                'text_elements': text_elements
+                            })
+                    except Exception as page_error:
+                        # Log the error but continue processing other pages
+                        print(f"Error processing page {page_num}: {page_error}")
+                        continue
+                
+                # Check if we extracted enough content
+                total_text = sum(len(''.join(element.get('text', ''))) 
+                                for page in pages_data 
+                                for element in page.get('text_elements', []))
+                
+                if not pages_data:
+                    return [], False, "No pages could be parsed from the PDF"
+                
+                if total_text < 100:  # Arbitrary threshold for minimum text content
+                    return pages_data, False, f"Not enough text content extracted (only {total_text} characters)"
+                
+                return pages_data, True, "OK"
+                
+        except Exception as e:
+            if "generator didn't stop after throw()" in str(e):
+                return [], False, "PDF structure error: Check PDF integrity"
+            return [], False, f"Error extracting PDF content: {str(e)}"
+    
+    def _extract_text_elements(self, layout: LTPage) -> List[Dict[str, Any]]:
+        """
+        Extract text elements from a page layout.
+        
+        Args:
+            layout: PDFMiner layout object
+            
+        Returns:
+            List of text element dictionaries
+        """
+        text_elements = []
+        
+        # Process layout elements
+        for element in layout:
+            if isinstance(element, LTTextBox):
+                # Extract position info
+                x0, y0, x1, y1 = element.bbox
+                text = element.get_text()
+                
+                # Normalize text
+                text = self.clean_text(text) if hasattr(self, 'clean_text') else text
+                
+                if text.strip():
+                    text_elements.append({
+                        'type': 'textbox',
+                        'x0': x0,
+                        'y0': y0,
+                        'x1': x1,
+                        'y1': y1,
+                        'text': text
+                    })
+        
+        # Sort by vertical position (top to bottom)
+        text_elements.sort(key=lambda e: -e['y0'])
+        
+        return text_elements
 
     def determine_layout(self, pages_data: List[Dict[str, Any]]) -> str:
         """Determine the layout structure of the PDF."""
@@ -443,29 +591,48 @@ if __name__ == "__main__":
         # Example usage of new functionality
         try:
             with handler.process_pdf(input_path, generate_embeddings) as processor:
-                # Get JSON output and save to file
-                json_result = processor.json(output_json_path)
-                print(f"Processed {input_path} and saved JSON to {output_json_path}")
-                
-                # Get text output and save to file
-                text_result = processor.txt(output_txt_path)
-                print(f"Processed {input_path} and saved text to {output_txt_path}")
-                
-                # Use results directly
-                print(f"JSON result sample: {json_result.get('filename')}")
-                print(f"Text result sample (first 100 chars): {text_result[:100] if text_result else 'No text extracted'}")
+                # Check if PDF was parsable
+                if not processor.result.get('parsable', False):
+                    error_msg = processor.result.get('error', 'Unknown error')
+                    print(f"Error processing {input_path}: {error_msg}")
+                else:
+                    # Get JSON output and save to file
+                    json_result = processor.json(output_json_path)
+                    print(f"Processed {input_path} and saved JSON to {output_json_path}")
+                    
+                    # Get text output and save to file
+                    text_result = processor.txt(output_txt_path)
+                    print(f"Processed {input_path} and saved text to {output_txt_path}")
+                    
+                    # Use results directly
+                    print(f"JSON result sample: {json_result.get('filename')}")
+                    text_sample = text_result[:100] if text_result else 'No text extracted'
+                    print(f"Text result sample (first 100 chars): {text_sample}")
         except Exception as e:
+            import traceback
             print(f"Error processing {input_path}: {e}")
+            print(traceback.format_exc())
     
     elif os.path.isdir(input_path):
         output_dir = "extracted" if not output_json_path else os.path.dirname(output_json_path)
+        
+        # Make sure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print(f"Processing directory {input_path}...")
         results = process_directory(input_path, output_dir, handler, generate_embeddings)
         
+        # Count successful and failed files
+        success_count = sum(1 for r in results.values() if r.get('parsable', False))
+        failure_count = len(results) - success_count
+        
         # Save summary of processing results
-        with open(os.path.join(output_dir, "processing_summary.json"), "w", encoding="utf-8") as f:
+        summary_path = os.path.join(output_dir, "processing_summary.json")
+        with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
         
-        print(f"Processed {len(results)} files. See {os.path.join(output_dir, 'processing_summary.json')} for details.")
+        print(f"Processed {len(results)} files: {success_count} successful, {failure_count} failed.")
+        print(f"See {summary_path} for details.")
     
     else:
         print(f"Error: Input path {input_path} does not exist.")
