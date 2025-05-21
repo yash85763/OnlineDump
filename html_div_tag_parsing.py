@@ -1,236 +1,312 @@
-# from bs4 import BeautifulSoup
-# import json
-# import os
-# import re
-
-# def clean_filename(div_id):
-#     """Convert div ID to filename (e.g., 'p-211.1(a)' -> '211_1_a.json')"""
-#     clean_id = div_id.replace('p-', '')
-#     clean_id = clean_id.replace('.', '_').replace('(', '_').replace(')', '')
-#     return clean_id
-
-# def get_combined_content(div):
-#     """Get combined content from a div and all its nested divs"""
-#     return div.get_text(strip=True)
-
-# def process_html_file(html_file_path, output_dir = 'sectionss_data'):
-    
-#     os.makedirs(output_dir, exist_ok=True)
-#     print(f"\nCreated directory: {output_dir}")
-    
-#     print(f"Reading HTML file: {html_file_path}")
-#     with open(html_file_path, 'r', encoding='utf-8') as file:
-#         soup = BeautifulSoup(file, 'lxml')
-    
-#     created_files = []
-    
-#     sections = soup.find_all('div', class_='section')
-    
-#     for section in sections:
-#         # get section title and metadata from h4
-#         h4_tag = section.find('h4')
-#         section_title = h4_tag.get_text().strip() if h4_tag else ""
-#         section_metadata = h4_tag.get('data-hierarchy-metadata') if h4_tag else ""
-        
-#         # get footnotes
-#         footnotes_div = section.find('div', class_='box-published')
-#         footnotes_text = ""
-#         if footnotes_div:
-#             footnotes_text = footnotes_div.get_text(strip=True)
-#             # remove the "Footnotes -" prefix if it exists
-#             footnotes_text = re.sub(r'^Footnotes\s*-\s*\d+\.\d+\s*', '', footnotes_text)
-        
-#         # find all second level divs
-#         second_level_divs = section.find_all('div', id=lambda x: x and x.startswith('p-') and len(x.split('(')) == 2)
-        
-#         for div in second_level_divs:
-#             div_id = div.get('id', '')
-#             if not div_id:
-#                 continue
-                
-#             # get div content
-#             content = get_combined_content(div)
-            
-#             # append footnotes if they exist
-#             if footnotes_text:
-#                 content = f"{content}\nFootnote: {footnotes_text}"
-            
-#             # find all nested divs under this second level div
-#             nested_divs = div.find_all('div', recursive=False)
-            
-#             # prepare the JSON data
-#             div_data = {
-#                 'id': div_id,
-#                 'section_title': section_title,
-#                 'section_metadata': section_metadata,
-#                 'content': content,
-#                 'html_content': str(div)
-#             }
-            
-#             # if there are nested divs, include them
-#             if nested_divs:
-#                 div_data['nested_content'] = []
-#                 for nested_div in nested_divs:
-#                     nested_content = nested_div.get_text(strip=True)
-#                     # also append footnotes to nested content
-#                     if footnotes_text:
-#                         nested_content = f"{nested_content}\nFootnote: {footnotes_text}"
-                    
-#                     nested_data = {
-#                         'id': nested_div.get('id', ''),
-#                         'content': nested_content,
-#                         'html_content': str(nested_div)
-#                     }
-#                     div_data['nested_content'].append(nested_data)
-            
-#             # create filename from div_id
-#             filename = f"{clean_filename(div_id)}.json"
-#             filepath = os.path.join(output_dir, filename)
-            
-#             # save to JSON file
-#             with open(filepath, 'w', encoding='utf-8') as f:
-#                 json.dump(div_data, f, indent=4, ensure_ascii=False)
-            
-#             created_files.append(filepath)
-#             print(f"Created: {filepath}")
-    
-#     print("\nAll files created successfully!")
-#     print("\nCreated files:")
-#     for file in created_files:
-#         print(f"- {file}")
-
-# # run the script
-# if __name__ == "__main__":
-#     try:
-#         html_path = "/content/title-12.htm"
-#         process_html_file(html_path)
-#     except FileNotFoundError:
-#         print(f"\nError: Could not find the file {html_path}")
-#         print("Make sure you entered the correct path and the file exists.")
-#     except Exception as e:
-#         print(f"\nAn error occurred: {str(e)}")
-#         print("\nMake sure you have the required packages installed:")
-
-
-
-
-from bs4 import BeautifulSoup
-import json
 import os
-import re
+import psycopg2
+from psycopg2 import pool
+import json
+from datetime import datetime
+import streamlit as st
+from dotenv import load_dotenv
+import logging
 
-def clean_text(text):
-    """Clean text content by removing extra spaces and newlines"""
-    return ' '.join(text.split())
+# Load environment variables from .env file
+load_dotenv()
 
-def create_node(id="", text="", children=None):
-    """Create a standard node structure"""
-    node = {
-        "id": id,
-        "text": text,
-        "children": children if children is not None else []
-    }
-    return node
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("db_utils")
 
-def combine_nested_content(div, footnotes_text=""):
-    """Combine content of a div with its nested divs"""
-    # Get main text from the div itself
-    main_text = div.find('p', recursive=False).get_text(strip=True) if div.find('p', recursive=False) else ""
+# Database connection pool
+connection_pool = None
+
+def init_db_pool():
+    """Initialize database connection pool from environment variables"""
+    global connection_pool
     
-    # Get text from nested divs
-    nested_divs = div.find_all('div', recursive=False)
-    nested_texts = [nested_div.get_text(strip=True) for nested_div in nested_divs]
-    
-    # Combine all texts
-    all_text = [main_text] + nested_texts
-    combined_text = ' '.join(text for text in all_text if text)
-    
-    # Add footnotes if they exist
-    if footnotes_text:
-        combined_text = f"{combined_text}\nFootnote: {footnotes_text}"
+    try:
+        db_host = os.getenv("DB_HOST")
+        db_port = os.getenv("DB_PORT", "5432")
+        db_name = os.getenv("DB_NAME")
+        db_user = os.getenv("DB_USER")
+        db_password = os.getenv("DB_PASSWORD")
         
-    return clean_text(combined_text)
-
-def process_html_file(html_file_path):
-    print(f"Reading HTML file: {html_file_path}")
-    with open(html_file_path, 'r', encoding='utf-8') as file:
-        soup = BeautifulSoup(file, 'lxml')
-    
-    # Create root node
-    root_node = create_node(id="regulation", text="Regulation")
-    
-    # Process each section
-    sections = soup.find_all('div', class_='section')
-    
-    for section in sections:
-        section_id = section.get('id', '')
+        # Validate connection parameters
+        if not all([db_host, db_name, db_user, db_password]):
+            logger.error("Missing database credentials. Check environment variables.")
+            return False
         
-        # Get section title from h4
-        h4_tag = section.find('h4')
-        section_text = h4_tag.get_text(strip=True) if h4_tag else ""
-        
-        # Create section node
-        section_node = create_node(
-            id=section_id,
-            text=section_text
+        # Create a connection pool with min 1, max 10 connections
+        connection_pool = pool.SimpleConnectionPool(
+            1, 10,
+            host=db_host,
+            port=db_port,
+            database=db_name,
+            user=db_user,
+            password=db_password
         )
         
-        # Get footnotes
-        footnotes_div = section.find('div', class_='box-published')
-        footnotes_text = ""
-        if footnotes_div:
-            footnotes_text = footnotes_div.get_text(strip=True)
-            footnotes_text = re.sub(r'^Footnotes\s*-\s*\d+\.\d+\s*', '', footnotes_text)
-        
-        # Process second level divs (subsections)
-        second_level_divs = section.find_all('div', id=lambda x: x and x.startswith('p-') and len(x.split('(')) == 2)
-        
-        for div in second_level_divs:
-            div_id = div.get('id', '')
-            
-            # Combine main content with nested content
-            combined_text = combine_nested_content(div, footnotes_text)
-            
-            subsection_node = create_node(
-                id=div_id,
-                text=combined_text
-            )
-            
-            section_node["children"].append(subsection_node)
-        
-        root_node["children"].append(section_node)
+        logger.info("Database connection pool initialized successfully")
+        return True
     
-    # Save the tree structure
-    output_dir = 'section_update_data'
-    os.makedirs(output_dir, exist_ok=True)
-    
-    output_file = os.path.join(output_dir, 'regulation_tree.json')
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(root_node, f, indent=2, ensure_ascii=False)
-    
-    print(f"\nCreated nested JSON structure: {output_file}")
-    
-    # Print tree structure for verification
-    def print_tree_dfs(node, level=0):
-        print("  " * level + f"ID: {node['id']}")
-        print("  " * level + f"Text preview: {node['text'][:100]}...")
-        for child in node["children"]:
-            print_tree_dfs(child, level + 1)
-    
-    print("\nTree structure preview:")
-    print_tree_dfs(root_node)
-
-# Run the script
-if __name__ == "__main__":
-    try:
-        html_path = "/content/title-12.htm"
-        process_html_file(html_path)
-    except FileNotFoundError:
-        print(f"\nError: Could not find the file {html_path}")
-        print("Make sure you entered the correct path and the file exists.")
     except Exception as e:
-        print(f"\nAn error occurred: {str(e)}")
-        print("\nMake sure you have the required packages installed:")
-        print("pip install beautifulsoup4")
-        print("pip install lxml")
+        logger.error(f"Error initializing database connection pool: {str(e)}")
+        return False
 
+def get_db_connection():
+    """Get a connection from the pool"""
+    global connection_pool
+    if connection_pool is None:
+        init_db_pool()
+    
+    if connection_pool:
+        return connection_pool.getconn()
+    return None
+
+def release_db_connection(conn):
+    """Return a connection to the pool"""
+    global connection_pool
+    if connection_pool and conn:
+        connection_pool.putconn(conn)
+
+def close_all_connections():
+    """Close all connections in the pool"""
+    global connection_pool
+    if connection_pool:
+        connection_pool.closeall()
+        logger.info("All database connections closed")
+
+def create_tables():
+    """Create all the required tables if they don't exist"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Create input_data table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS input_data (
+            id SERIAL PRIMARY KEY,
+            pdf_name VARCHAR(255) NOT NULL,
+            file_extension VARCHAR(10),
+            word_count INTEGER,
+            num_pages INTEGER,
+            avg_word_count_per_page FLOAT,
+            page_layout VARCHAR(50),
+            parsable BOOLEAN DEFAULT TRUE,
+            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+        
+        # Create analysis_data table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS analysis_data (
+            id SERIAL PRIMARY KEY,
+            pdf_name VARCHAR(255) NOT NULL,
+            form_number VARCHAR(100),
+            summary TEXT,
+            data_usage_mentioned BOOLEAN,
+            data_limitations_exists BOOLEAN,
+            pi_clause BOOLEAN,
+            ci_clause BOOLEAN,
+            analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            input_data_id INTEGER REFERENCES input_data(id)
+        );
+        """)
+        
+        # Create clauses table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clauses (
+            id SERIAL PRIMARY KEY,
+            pdf_name VARCHAR(255) NOT NULL,
+            clause_type VARCHAR(50),
+            clause_text TEXT,
+            extraction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            analysis_data_id INTEGER REFERENCES analysis_data(id)
+        );
+        """)
+        
+        # Create feedback table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id SERIAL PRIMARY KEY,
+            pdf_name VARCHAR(255) NOT NULL,
+            field_name VARCHAR(100) NOT NULL,
+            feedback_text TEXT NOT NULL,
+            feedback_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            analysis_data_id INTEGER REFERENCES analysis_data(id)
+        );
+        """)
+        
+        conn.commit()
+        logger.info("Database tables created successfully")
+        return True
+    
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error creating database tables: {str(e)}")
+        return False
+    
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+def store_pdf_data(pdf_metadata, analysis_result):
+    """Store PDF metadata and analysis results in the database"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 1. Insert into input_data table
+        cursor.execute("""
+        INSERT INTO input_data (
+            pdf_name, file_extension, word_count, num_pages, 
+            avg_word_count_per_page, page_layout, parsable
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;
+        """, (
+            pdf_metadata['filename'],
+            os.path.splitext(pdf_metadata['filename'])[1],
+            pdf_metadata['word_count'],
+            pdf_metadata['page_count'],
+            pdf_metadata['avg_words_per_page'],
+            pdf_metadata['layout'],
+            pdf_metadata['parsable']
+        ))
+        
+        input_data_id = cursor.fetchone()[0]
+        
+        # 2. Insert into analysis_data table
+        cursor.execute("""
+        INSERT INTO analysis_data (
+            pdf_name, form_number, summary, data_usage_mentioned,
+            data_limitations_exists, pi_clause, ci_clause, input_data_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
+        """, (
+            pdf_metadata['filename'],
+            analysis_result.get('form_number', ''),
+            analysis_result.get('summary', ''),
+            analysis_result.get('data_usage_mentioned', False),
+            analysis_result.get('data_limitations_exists', False),
+            analysis_result.get('pi_clause', False),
+            analysis_result.get('ci_clause', False),
+            input_data_id
+        ))
+        
+        analysis_data_id = cursor.fetchone()[0]
+        
+        # 3. Insert clauses
+        for clause in analysis_result.get('relevant_clauses', []):
+            cursor.execute("""
+            INSERT INTO clauses (
+                pdf_name, clause_type, clause_text, analysis_data_id
+            ) VALUES (%s, %s, %s, %s);
+            """, (
+                pdf_metadata['filename'],
+                clause.get('type', ''),
+                clause.get('text', ''),
+                analysis_data_id
+            ))
+        
+        conn.commit()
+        logger.info(f"Stored PDF data for {pdf_metadata['filename']} successfully")
+        return True
+    
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error storing PDF data: {str(e)}")
+        return False
+    
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+def store_feedback(pdf_name, field_name, feedback_text):
+    """Store user feedback in the database"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # First, find the analysis_data_id for this PDF
+        cursor.execute("""
+        SELECT id FROM analysis_data WHERE pdf_name = %s ORDER BY analysis_date DESC LIMIT 1;
+        """, (pdf_name,))
+        
+        result = cursor.fetchone()
+        if result:
+            analysis_data_id = result[0]
+            
+            # Insert feedback
+            cursor.execute("""
+            INSERT INTO feedback (
+                pdf_name, field_name, feedback_text, analysis_data_id
+            ) VALUES (%s, %s, %s, %s);
+            """, (
+                pdf_name,
+                field_name,
+                feedback_text,
+                analysis_data_id
+            ))
+            
+            conn.commit()
+            logger.info(f"Stored feedback for {pdf_name}, field {field_name}")
+            return True
+        else:
+            logger.warning(f"No analysis data found for {pdf_name}, feedback not stored")
+            return False
+    
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error storing feedback: {str(e)}")
+        return False
+    
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+def get_all_feedback_for_pdf(pdf_name):
+    """Retrieve all feedback for a specific PDF"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+        SELECT field_name, feedback_text, feedback_date 
+        FROM feedback 
+        WHERE pdf_name = %s 
+        ORDER BY feedback_date DESC;
+        """, (pdf_name,))
+        
+        feedback_data = cursor.fetchall()
+        
+        # Convert to list of dictionaries
+        feedback_list = []
+        for item in feedback_data:
+            feedback_list.append({
+                'field_name': item[0],
+                'feedback_text': item[1],
+                'feedback_date': item[2].strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        return feedback_list
+    
+    except Exception as e:
+        logger.error(f"Error retrieving feedback: {str(e)}")
+        return []
+    
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+# Initialize database on import
+if __name__ == "__main__":
+    if init_db_pool():
+        create_tables()
+        logger.info("Database initialized successfully")
+    else:
+        logger.error("Failed to initialize database")
