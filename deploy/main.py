@@ -537,3 +537,387 @@ def calculate_file_hash(file_bytes: bytes) -> str:
 def calculate_content_hash(content: str) -> str:
     """Calculate hash of text content"""
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+
+
+
+#======+============ another update
+
+# main.py - Updated main application showing where to use the deduplication function
+
+import streamlit as st
+from services.user_service import process_pdf_with_deduplication, process_pdf_with_rerun
+from ui.feedback_form import render_feedback_form, render_feedback_history
+from services.feedback_service import FeedbackService
+
+def process_uploaded_pdfs(uploaded_pdfs):
+    """
+    REPLACE YOUR EXISTING process_pdf FUNCTION WITH THIS
+    
+    This function now uses the deduplication logic and integrates with the database.
+    """
+    
+    for pdf in uploaded_pdfs:
+        pdf_name = pdf.name
+        
+        # Check if already in session (avoid re-processing)
+        if pdf_name not in st.session_state.pdf_files:
+            pdf_bytes = pdf.getvalue()
+            
+            # Validate PDF size (10MB limit)
+            if len(pdf_bytes) > 10 * 1024 * 1024:
+                st.error(f"❌ {pdf_name} is too large (max 10MB)")
+                continue
+            
+            # Show processing status
+            with st.spinner(f"Processing {pdf_name}..."):
+                
+                # THIS IS WHERE YOUR OLD process_pdf FUNCTION IS REPLACED
+                # Use the new deduplication function
+                success, result_data, pdf_id = process_pdf_with_deduplication(
+                    pdf_bytes=pdf_bytes,
+                    pdf_name=pdf_name, 
+                    session_id=st.session_state.user_session_id,
+                    db_session=st.session_state.db_session
+                )
+                
+                if success:
+                    # Success - store in session state for immediate UI use
+                    st.session_state.pdf_files[pdf_name] = pdf_bytes
+                    st.session_state.json_data[pdf_name] = result_data
+                    st.session_state.analysis_status[pdf_name] = "✅ Processed"
+                    
+                    # Set as current PDF if none selected
+                    if not st.session_state.current_pdf:
+                        st.session_state.current_pdf = pdf_name
+                    
+                    # Show success message with details
+                    form_number = result_data.get("form_number", "Not identified")
+                    st.success(f"✅ {pdf_name} processed successfully! Form: {form_number}")
+                    
+                else:
+                    # Failed - show error
+                    error_msg = result_data.get("error", "Unknown error")
+                    st.session_state.analysis_status[pdf_name] = f"❌ Failed: {error_msg}"
+                    st.error(f"❌ Failed to process {pdf_name}: {error_msg}")
+
+def render_enhanced_analysis_section_with_rerun(db_session):
+    """
+    ENHANCED version of your analysis display with re-run functionality
+    
+    This replaces your existing analysis display section.
+    """
+    
+    st.header("📊 Contract Analysis Results")
+    
+    if not st.session_state.get('current_pdf'):
+        st.info("👆 Select a PDF from the list above to view analysis results.")
+        return
+    
+    current_pdf_name = st.session_state.current_pdf
+    
+    # Get PDF record from database
+    from models.database_models import PDF
+    pdf_record = db_session.query(PDF).filter_by(pdf_name=current_pdf_name).first()
+    
+    if not pdf_record:
+        st.error("PDF not found in database. Please upload and process the PDF first.")
+        return
+    
+    # Header with re-run button
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.subheader(f"📄 Analysis: {current_pdf_name}")
+    
+    with col2:
+        # RE-RUN BUTTON - This is the new functionality
+        if st.button("🔄 Re-run Analysis", type="secondary", key=f"rerun_{pdf_record.id}"):
+            with st.spinner("Re-running analysis..."):
+                
+                # Use the re-run function
+                success, result_data, _ = process_pdf_with_rerun(
+                    pdf_id=pdf_record.id,
+                    session_id=st.session_state.user_session_id,
+                    db_session=db_session
+                )
+                
+                if success:
+                    st.success("✅ Analysis re-run completed!")
+                    # Update session state with new results
+                    st.session_state.json_data[current_pdf_name] = result_data
+                    st.rerun()  # Refresh page to show new results
+                else:
+                    st.error(f"❌ Re-run failed: {result_data.get('error', 'Unknown error')}")
+    
+    # Get latest analysis for display
+    from services.analysis_service import AnalysisService
+    analysis_service = AnalysisService(db_session)
+    latest_analysis = analysis_service.get_latest_analysis(pdf_record.id)
+    
+    if not latest_analysis:
+        st.warning("No analysis found for this PDF.")
+        return
+    
+    # Version information
+    analysis_history = analysis_service.get_analysis_history(pdf_record.id)
+    if len(analysis_history) > 1:
+        st.info(f"📋 Viewing Version {latest_analysis.version} of {len(analysis_history)} total versions")
+        
+        # Version selector
+        version_options = [
+            f"Version {analysis.version} - {analysis.analysis_date.strftime('%Y-%m-%d %H:%M')}"
+            for analysis in analysis_history
+        ]
+        
+        selected_version_idx = st.selectbox(
+            "Select Version to View",
+            options=range(len(version_options)),
+            format_func=lambda x: version_options[x],
+            key=f"version_selector_{pdf_record.id}"
+        )
+        
+        # Use selected version
+        selected_analysis = analysis_history[selected_version_idx]
+        display_analysis_results(selected_analysis)
+        
+        # Show version comparison
+        if len(analysis_history) > 1:
+            render_version_comparison(analysis_history, selected_version_idx)
+    else:
+        # Single version
+        display_analysis_results(latest_analysis)
+    
+    st.divider()
+    
+    # FEEDBACK SECTION - This is new
+    st.header("💬 Feedback")
+    
+    feedback_tab1, feedback_tab2 = st.tabs(["✏️ Provide Feedback", "📋 Feedback History"])
+    
+    with feedback_tab1:
+        render_feedback_form(pdf_record.id, current_pdf_name, db_session)
+    
+    with feedback_tab2:
+        render_feedback_history(pdf_record.id, db_session)
+
+def display_analysis_results(analysis):
+    """Display analysis results from database record"""
+    
+    import json
+    analysis_data = json.loads(analysis.raw_json)
+    
+    # Analysis metadata
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Version", analysis.version)
+    
+    with col2:
+        st.metric("Analysis Date", analysis.analysis_date.strftime('%Y-%m-%d'))
+    
+    with col3:
+        if analysis.processing_time:
+            st.metric("Processing Time", f"{analysis.processing_time:.2f}s")
+    
+    st.divider()
+    
+    # Form number
+    st.subheader("📋 Form Number")
+    form_number = analysis.form_number or "Not identified"
+    st.markdown(f"<div class='extract-text'>{form_number}</div>", unsafe_allow_html=True)
+    
+    # Summary
+    if analysis.summary:
+        st.subheader("📝 Summary")
+        st.markdown(f"<div class='extract-text'>{analysis.summary}</div>", unsafe_allow_html=True)
+    
+    # Contract status
+    st.subheader("⚖️ Contract Status")
+    
+    status_fields = [
+        ('Data Usage Mentioned', analysis.data_usage_mentioned),
+        ('Data Limitations Exists', analysis.data_limitations_exists),
+        ('PI Clause Present', analysis.pi_clause),
+        ('CI Clause Present', analysis.ci_clause)
+    ]
+    
+    # Create status grid
+    cols = st.columns(2)
+    
+    for i, (label, value) in enumerate(status_fields):
+        with cols[i % 2]:
+            # Determine status color and icon
+            if str(value).lower() in ['yes', 'true']:
+                status_color = "🟢"
+            elif str(value).lower() in ['no', 'false']:
+                status_color = "🔴"
+            else:
+                status_color = "🟡"
+            
+            st.markdown(f"{status_color} **{label}**: {value}")
+    
+    # Relevant clauses
+    st.subheader("📄 Relevant Clauses")
+    
+    relevant_clauses = analysis_data.get("relevant_clauses", [])
+    
+    if relevant_clauses:
+        for i, clause in enumerate(relevant_clauses, 1):
+            with st.expander(f"Clause {i}: {clause.get('type', 'Unknown').title()}"):
+                st.markdown("**Type:**")
+                st.code(clause.get('type', 'N/A'))
+                
+                st.markdown("**Content:**")
+                st.write(clause.get('text', 'No content available'))
+                
+                # Search in PDF button
+                if st.button(f"🔍 Search in PDF", key=f"search_clause_{analysis.id}_{i}"):
+                    st.session_state.search_text = clause.get('text', '')
+                    st.success("Search text set! Switch to PDF viewer to see highlighted text.")
+    else:
+        st.info("No relevant clauses identified in this analysis.")
+
+def render_version_comparison(analysis_history, selected_index):
+    """Show comparison between analysis versions"""
+    
+    if len(analysis_history) < 2:
+        return
+    
+    with st.expander("🔍 Version Comparison"):
+        st.markdown("Compare different analysis versions:")
+        
+        # Create comparison table
+        comparison_data = []
+        
+        fields_to_compare = [
+            ('form_number', 'Form Number'),
+            ('pi_clause', 'PI Clause'),
+            ('ci_clause', 'CI Clause'),
+            ('data_usage_mentioned', 'Data Usage Mentioned'),
+            ('data_limitations_exists', 'Data Limitations Exists')
+        ]
+        
+        for field_key, field_label in fields_to_compare:
+            row = {"Field": field_label}
+            
+            for analysis in analysis_history:
+                version_label = f"V{analysis.version}"
+                row[version_label] = getattr(analysis, field_key, 'N/A')
+            
+            comparison_data.append(row)
+        
+        st.dataframe(comparison_data, use_container_width=True)
+        
+        # Highlight recent changes
+        if len(analysis_history) >= 2:
+            latest = analysis_history[0]
+            previous = analysis_history[1]
+            
+            changes = []
+            for field_key, field_label in fields_to_compare:
+                latest_val = getattr(latest, field_key, None)
+                previous_val = getattr(previous, field_key, None)
+                
+                if latest_val != previous_val:
+                    changes.append(f"**{field_label}**: {previous_val} → {latest_val}")
+            
+            if changes:
+                st.markdown("### 📝 Recent Changes:")
+                for change in changes:
+                    st.markdown(f"• {change}")
+            else:
+                st.info("No changes detected between versions.")
+
+# Updated main() function showing where everything integrates
+
+def main():
+    """
+    UPDATED main function showing integration points
+    """
+    
+    # Initialize application (includes database setup)
+    initialize_app()
+    
+    # Render sidebar and get selected page
+    selected_page = render_sidebar()
+    
+    if selected_page == "📄 Document Analysis":
+        
+        # Main layout
+        col1, col2, col3 = st.columns([25, 40, 35])
+        
+        # Left column: Document management
+        with col1:
+            st.header("📁 Document Management")
+            
+            # PDF upload section
+            st.subheader("⬆️ Upload Documents")
+            uploaded_pdfs = st.file_uploader(
+                "Upload Contract PDFs",
+                type="pdf",
+                accept_multiple_files=True,
+                key="pdf_uploader"
+            )
+            
+            # INTEGRATION POINT 1: Use the new deduplication function
+            if uploaded_pdfs:
+                process_uploaded_pdfs(uploaded_pdfs)  # This uses process_pdf_with_deduplication
+            
+            st.divider()
+            
+            # Show available PDFs from database
+            render_available_pdfs_grid()
+        
+        # Middle column: PDF viewer (unchanged)
+        with col2:
+            render_pdf_viewer()
+        
+        # Right column: Analysis with re-run and feedback
+        with col3:
+            # INTEGRATION POINT 2: Use enhanced analysis with re-run and feedback
+            render_enhanced_analysis_section_with_rerun(st.session_state.db_session)
+    
+    elif selected_page == "📦 Batch Processing":
+        render_batch_processing_page()
+    
+    elif selected_page == "📊 Analytics Dashboard":
+        render_analytics_dashboard()
+
+# File structure summary for clarity:
+
+"""
+PROJECT STRUCTURE WITH ALL FILES:
+
+contract_analyzer_platform/
+├── main.py                        # ← Updated main app (uses deduplication)
+├── services/
+│   ├── __init__.py
+│   ├── user_service.py            # ← Contains process_pdf_with_deduplication
+│   ├── pdf_service.py             # ← Enhanced PDF processing
+│   ├── analysis_service.py        # ← Wraps your ContractAnalyzer
+│   ├── feedback_service.py        # ← NEW: Feedback management
+│   └── batch_service.py           # ← Batch processing
+├── ui/
+│   ├── __init__.py
+│   ├── feedback_form.py           # ← NEW: Feedback UI components
+│   ├── analysis_display.py        # ← Enhanced analysis display
+│   └── batch_interface.py         # ← Batch processing UI
+├── utils/
+│   ├── __init__.py
+│   ├── contract_analyzer.py       # ← YOUR existing file (minimal changes)
+│   ├── pdf_handler.py             # ← From your ecfr_api_wrapper
+│   └── hash_utils.py              # ← NEW: File hashing utilities
+├── models/
+│   ├── __init__.py
+│   └── database_models.py         # ← Database schema
+├── config/
+│   ├── __init__.py
+│   └── database.py                # ← Database connection
+└── requirements.txt
+
+INTEGRATION POINTS:
+1. process_uploaded_pdfs() uses process_pdf_with_deduplication()
+2. render_enhanced_analysis_section_with_rerun() uses process_pdf_with_rerun()
+3. Both functions integrate with your existing ContractAnalyzer seamlessly
+"""
