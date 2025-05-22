@@ -1,80 +1,81 @@
-# config/database.py - Database configuration for AWS Aurora PostgreSQL with public schema
-
+import sys
 import os
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from models.database_models import Base, get_default_system_configs, SystemConfig
+
+# Add the project root directory to sys.path to fix ModuleNotFoundError
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+import psycopg2
+from psycopg2 import sql
 from urllib.parse import quote_plus
+from models.database_models import get_default_system_configs, SystemConfig
 
 def get_database_url():
     """
-    Construct database URL from environment variables for AWS Aurora PostgreSQL.
-    Supports both individual connection parameters and full DATABASE_URL.
+    Construct database connection parameters from environment variables for AWS Aurora PostgreSQL.
+    Returns a dictionary for psycopg2 connection.
     """
-    
-    # Option 1: Use full DATABASE_URL if provided
+    # Option 1: Parse DATABASE_URL if provided
     database_url = os.getenv('DATABASE_URL')
     if database_url:
-        return database_url
-    
+        # Assuming DATABASE_URL format: postgresql://username:password@host:port/dbname
+        try:
+            # Simple parsing for psycopg2
+            user_part, host_part = database_url.replace('postgresql://', '').split('@')
+            username, password = user_part.split(':')
+            host_port, dbname = host_part.split('/')
+            host, port = host_port.split(':')
+            return {
+                'user': username,
+                'password': password,
+                'host': host,
+                'port': port,
+                'dbname': dbname
+            }
+        except Exception as e:
+            raise ValueError(f"Could not parse DATABASE_URL: {str(e)}")
+
     # Option 2: Construct from individual parameters
     db_username = os.getenv('DB_USERNAME')
     db_password = os.getenv('DB_PASSWORD')
     db_host = os.getenv('DB_HOST')
     db_port = os.getenv('DB_PORT', '5432')
     db_name = os.getenv('DB_NAME')
-    
+
     # Validate required parameters
     if not all([db_username, db_password, db_host, db_name]):
         missing_vars = []
         if not db_username: missing_vars.append('DB_USERNAME')
-        if not db_password: missing_vars.append('DB_PASSWORD') 
+        if not db_password: missing_vars.append('DB_PASSWORD')
         if not db_host: missing_vars.append('DB_HOST')
         if not db_name: missing_vars.append('DB_NAME')
-        
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-    
-    # URL encode password to handle special characters
-    encoded_password = quote_plus(db_password)
-    
-    # Construct PostgreSQL connection URL
-    database_url = f"postgresql://{db_username}:{encoded_password}@{db_host}:{db_port}/{db_name}"
-    
-    return database_url
 
-# Database configuration
-DATABASE_URL = get_database_url()
+    return {
+        'user': db_username,
+        'password': db_password,
+        'host': db_host,
+        'port': db_port,
+        'dbname': db_name
+    }
 
-# Create engine with AWS Aurora PostgreSQL optimized settings
-engine = create_engine(
-    DATABASE_URL,
-    
-    # Connection pool settings for AWS Aurora
-    pool_size=10,                    # Number of connections to maintain in pool
-    max_overflow=20,                 # Maximum additional connections beyond pool_size
-    pool_pre_ping=True,              # Verify connections before use (important for AWS)
-    pool_recycle=3600,               # Recycle connections every hour (AWS best practice)
-    
-    # Connection timeout settings
-    connect_args={
-        "connect_timeout": 30,       # Connection timeout in seconds
-        "application_name": "contract_analyzer_app",  # App name for monitoring
-        "options": "-c search_path=public"  # Ensure we use public schema
-    },
-    
-    # Debugging (set to True for development)
-    echo=os.getenv('SQL_DEBUG', 'false').lower() == 'true',
-    
-    # AWS specific settings
-    isolation_level="READ_COMMITTED"  # Good for AWS Aurora
-)
-
-# Create session factory
-SessionLocal = sessionmaker(
-    autocommit=False, 
-    autoflush=False, 
-    bind=engine
-)
+def get_connection():
+    """
+    Create a psycopg2 connection to the database with public schema set.
+    Returns:
+        psycopg2 connection object
+    """
+    conn_params = get_database_url()
+    try:
+        conn = psycopg2.connect(
+            **conn_params,
+            connect_timeout=30,
+            application_name="contract_analyzer_app",
+            options="-c search_path=public"
+        )
+        return conn
+    except Exception as e:
+        print(f"❌ Failed to connect to database: {str(e)}")
+        raise
 
 def initialize_database():
     """
@@ -82,31 +83,22 @@ def initialize_database():
     Call this once when the application starts.
     """
     try:
-        # Test database connection first
         print("🔌 Testing database connection...")
         if not check_database_connection():
             raise Exception("Failed to connect to database")
-        
+
         print("✅ Database connection successful")
-        
-        # Ensure we're using public schema
-        with engine.connect() as conn:
-            # Set search path to public schema
-            conn.execute(text("SET search_path TO public"))
-            conn.commit()
-        
-        print("📁 Using public schema for tables")
-        
-        # Create all tables in public schema
+
+        # Create tables in public schema
         print("🏗️ Creating database tables...")
-        Base.metadata.create_all(bind=engine)
+        create_tables()
         print("✅ Database tables created successfully")
-        
+
         # Initialize default system configuration
         print("⚙️ Initializing system configuration...")
         _initialize_default_system_config()
         print("✅ System configuration initialized")
-        
+
     except Exception as e:
         print(f"❌ Error initializing database: {str(e)}")
         print("🔍 Please check your database connection settings:")
@@ -116,88 +108,138 @@ def initialize_database():
         print(f"   - DB_PORT: {os.getenv('DB_PORT', '5432')}")
         raise
 
-def _initialize_default_system_config():
-    """Initialize default system configuration for obfuscation if not exists"""
-    
-    session = SessionLocal()
+def create_tables():
+    """
+    Create necessary tables in the public schema.
+    """
+    conn = get_connection()
     try:
-        # Ensure we're in public schema
-        session.execute(text("SET search_path TO public"))
-        
-        # Check if system config already exists
-        existing_configs = session.query(SystemConfig).filter(
-            SystemConfig.config_key.like('obfuscation_%')
-        ).count()
-        
-        if existing_configs == 0:
-            # No obfuscation config exists, create defaults
-            default_configs = get_default_system_configs()
-            
-            print(f"📝 Creating {len(default_configs)} default configuration entries...")
-            
-            for config_data in default_configs:
-                system_config = SystemConfig(
-                    config_key=config_data["config_key"],
-                    config_value=config_data["config_value"],
-                    description=config_data["description"],
-                    updated_by="system_init"
+        with conn.cursor() as cur:
+            # Set search path to public
+            cur.execute("SET search_path TO public")
+
+            # Create system_config table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public.system_config (
+                    id SERIAL PRIMARY KEY,
+                    config_key VARCHAR(100) NOT NULL,
+                    config_value TEXT NOT NULL,
+                    description TEXT,
+                    updated_by VARCHAR(50) NOT NULL,
+                    CONSTRAINT unique_config_key UNIQUE (config_key)
                 )
-                session.add(system_config)
-            
-            session.commit()
-            print("✅ Default obfuscation configuration initialized")
-        else:
-            print(f"✅ System configuration already exists ({existing_configs} entries found)")
-            
+            """)
+
+            # Add other tables as needed (e.g., users, pdfs, analyses, clauses, feedback)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public.users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) NOT NULL,
+                    email VARCHAR(255) UNIQUE NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public.pdfs (
+                    id SERIAL PRIMARY KEY,
+                    filename VARCHAR(255) NOT NULL,
+                    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public.analyses (
+                    id SERIAL PRIMARY KEY,
+                    pdf_id INTEGER REFERENCES public.pdfs(id),
+                    analysis_result TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public.clauses (
+                    id SERIAL PRIMARY KEY,
+                    analysis_id INTEGER REFERENCES public.analyses(id),
+                    clause_text TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS public.feedback (
+                    id SERIAL PRIMARY KEY,
+                    analysis_id INTEGER REFERENCES public.analyses(id),
+                    feedback_text TEXT
+                )
+            """)
+
+            conn.commit()
     except Exception as e:
-        session.rollback()
+        conn.rollback()
+        print(f"❌ Error creating tables: {str(e)}")
+        raise
+    finally:
+        conn.close()
+
+def _initialize_default_system_config():
+    """
+    Initialize default system configuration for obfuscation if not exists.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            # Set search path to public
+            cur.execute("SET search_path TO public")
+
+            # Check if system config already exists
+            cur.execute("""
+                SELECT COUNT(*) 
+                FROM public.system_config 
+                WHERE config_key LIKE 'obfuscation_%'
+            """)
+            existing_configs = cur.fetchone()[0]
+
+            if existing_configs == 0:
+                # No obfuscation config exists, create defaults
+                default_configs = get_default_system_configs()
+                print(f"📝 Creating {len(default_configs)} default configuration entries...")
+
+                for config_data in default_configs:
+                    cur.execute(
+                        sql.SQL("""
+                            INSERT INTO public.system_config (config_key, config_value, description, updated_by)
+                            VALUES (%s, %s, %s, %s)
+                        """),
+                        (
+                            config_data["config_key"],
+                            config_data["config_value"],
+                            config_data["description"],
+                            "system_init"
+                        )
+                    )
+                conn.commit()
+                print("✅ Default obfuscation configuration initialized")
+            else:
+                print(f"✅ System configuration already exists ({existing_configs} entries found)")
+    except Exception as e:
+        conn.rollback()
         print(f"⚠️ Warning: Could not initialize system config: {str(e)}")
         raise
     finally:
-        session.close()
-
-def get_session():
-    """
-    Get a new database session with public schema set.
-    
-    Returns:
-        SQLAlchemy session configured for public schema
-    """
-    session = SessionLocal()
-    # Ensure we're using public schema
-    session.execute(text("SET search_path TO public"))
-    return session
-
-def get_engine():
-    """
-    Get the database engine.
-    
-    Returns:
-        SQLAlchemy engine
-    """
-    return engine
+        conn.close()
 
 def check_database_connection():
     """
     Check if database connection is working and accessible.
-    
     Returns:
         bool: True if connection is successful, False otherwise
     """
     try:
-        with engine.connect() as conn:
+        conn = get_connection()
+        with conn.cursor() as cur:
             # Test basic connectivity
-            result = conn.execute(text("SELECT 1"))
-            
+            cur.execute("SELECT 1")
             # Test schema access
-            conn.execute(text("SET search_path TO public"))
-            
+            cur.execute("SET search_path TO public")
             # Test if we can query system tables
-            conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public' LIMIT 1"))
-            
+            cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public' LIMIT 1")
+        conn.close()
         print("✅ Database connection and schema access verified")
         return True
-        
     except Exception as e:
         print(f"❌ Database connection failed: {str(e)}")
         return False
@@ -205,7 +247,6 @@ def check_database_connection():
 def verify_database_setup():
     """
     Comprehensive database setup verification.
-    
     Returns:
         dict: Status of various database components
     """
@@ -216,111 +257,86 @@ def verify_database_setup():
         "system_config_exists": False,
         "error_messages": []
     }
-    
+
     try:
-        # Test connection
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+        conn = get_connection()
+        with conn.cursor() as cur:
+            # Test connection
+            cur.execute("SELECT 1")
             status["connection"] = True
-            
+
             # Test schema access
-            conn.execute(text("SET search_path TO public"))
+            cur.execute("SET search_path TO public")
             status["schema_access"] = True
-            
+
             # Check if our tables exist
-            result = conn.execute(text("""
+            cur.execute("""
                 SELECT table_name 
                 FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                 AND table_name IN ('pdfs', 'analyses', 'clauses', 'feedback', 'users', 'system_config')
-            """))
-            
-            existing_tables = [row[0] for row in result]
+            """)
+            existing_tables = [row[0] for row in cur.fetchall()]
             expected_tables = ['pdfs', 'analyses', 'clauses', 'feedback', 'users', 'system_config']
-            
+
             if len(existing_tables) == len(expected_tables):
                 status["tables_exist"] = True
             else:
                 missing_tables = set(expected_tables) - set(existing_tables)
                 status["error_messages"].append(f"Missing tables: {missing_tables}")
-        
-        # Test system config
-        session = get_session()
-        try:
-            config_count = session.query(SystemConfig).count()
+
+            # Test system config
+            cur.execute("SELECT COUNT(*) FROM public.system_config")
+            config_count = cur.fetchone()[0]
             if config_count > 0:
                 status["system_config_exists"] = True
             else:
                 status["error_messages"].append("No system configuration found")
-        finally:
-            session.close()
-            
+        conn.close()
     except Exception as e:
         status["error_messages"].append(f"Database error: {str(e)}")
-    
+
     return status
 
 def create_database_if_not_exists():
     """
     Create database if it doesn't exist (for initial setup).
-    This connects to the default 'postgres' database to create the target database.
+    Connects to the default 'postgres' database to create the target database.
     """
-    
     db_name = os.getenv('DB_NAME')
     if not db_name:
         raise ValueError("DB_NAME environment variable is required")
-    
-    # Connect to default postgres database to create our database
-    default_url = get_database_url().replace(f"/{db_name}", "/postgres")
-    
+
+    # Connect to default postgres database
+    conn_params = get_database_url()
+    conn_params['dbname'] = 'postgres'
+
     try:
-        default_engine = create_engine(default_url)
-        
-        with default_engine.connect() as conn:
-            # Don't use transactions for database creation
-            conn.execute(text("COMMIT"))
-            
+        conn = psycopg2.connect(**conn_params)
+        conn.set_session(autocommit=True)  # Database creation can't be in a transaction
+        with conn.cursor() as cur:
             # Check if database exists
-            result = conn.execute(text(f"SELECT 1 FROM pg_database WHERE datname = '{db_name}'"))
-            
-            if not result.fetchone():
+            cur.execute(sql.SQL("SELECT 1 FROM pg_database WHERE datname = %s"), [db_name])
+            if not cur.fetchone():
                 # Create database
-                conn.execute(text(f"CREATE DATABASE {db_name}"))
+                cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
                 print(f"✅ Database '{db_name}' created successfully")
             else:
                 print(f"✅ Database '{db_name}' already exists")
-                
+        conn.close()
     except Exception as e:
         print(f"⚠️ Could not create database: {str(e)}")
-        print("Please ensure the database exists or you have permission to create it")
+        raise
 
-# Context manager for database sessions with proper schema handling
-class DatabaseSession:
-    """Context manager for database sessions with automatic cleanup and schema setting"""
-    
-    def __init__(self):
-        self.session = None
-    
-    def __enter__(self):
-        self.session = get_session()  # This already sets search_path to public
-        return self.session
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
-            if exc_type is not None:
-                self.session.rollback()
-            else:
-                self.session.commit()
-            self.session.close()
-
-# Database health check function for monitoring
 def database_health_check():
     """
     Perform comprehensive database health check for monitoring/alerting.
-    
     Returns:
         dict: Health status and metrics
     """
+    import time
+    from datetime import datetime
+
     health_status = {
         "status": "unhealthy",
         "timestamp": None,
@@ -329,86 +345,75 @@ def database_health_check():
         "table_counts": {},
         "errors": []
     }
-    
-    import time
-    from datetime import datetime
-    
+
     start_time = time.time()
-    
+
     try:
-        with engine.connect() as conn:
+        conn = get_connection()
+        with conn.cursor() as cur:
             # Record connection time
             health_status["connection_time_ms"] = round((time.time() - start_time) * 1000, 2)
             health_status["timestamp"] = datetime.utcnow().isoformat()
-            
+
             # Check active connections
-            result = conn.execute(text("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"))
-            health_status["active_connections"] = result.scalar()
-            
+            cur.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()")
+            health_status["active_connections"] = cur.fetchone()[0]
+
             # Check table record counts
             tables = ['users', 'pdfs', 'analyses', 'clauses', 'feedback', 'system_config']
             for table in tables:
                 try:
-                    result = conn.execute(text(f"SELECT count(*) FROM {table}"))
-                    health_status["table_counts"][table] = result.scalar()
+                    cur.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
+                    health_status["table_counts"][table] = cur.fetchone()[0]
                 except Exception as e:
                     health_status["errors"].append(f"Could not count {table}: {str(e)}")
-            
             health_status["status"] = "healthy"
-            
+        conn.close()
     except Exception as e:
         health_status["errors"].append(f"Database connection failed: {str(e)}")
-    
+
     return health_status
+
+# Context manager for database connections
+class DatabaseConnection:
+    """Context manager for psycopg2 connections with automatic cleanup and schema setting"""
+    def __init__(self):
+        self.conn = None
+
+    def __enter__(self):
+        self.conn = get_connection()
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn:
+            if exc_type is not None:
+                self.conn.rollback()
+            else:
+                self.conn.commit()
+            self.conn.close()
 
 # Example usage and testing functions
 if __name__ == "__main__":
     print("🧪 Testing database configuration...")
-    
+
     # Test connection
     if check_database_connection():
         print("✅ Database connection successful")
-        
+
         # Test initialization
         try:
             initialize_database()
             print("✅ Database initialization successful")
-            
+
             # Verify setup
             status = verify_database_setup()
             print(f"📊 Database status: {status}")
-            
+
             # Health check
             health = database_health_check()
             print(f"💗 Health check: {health}")
-            
+
         except Exception as e:
             print(f"❌ Database initialization failed: {str(e)}")
     else:
         print("❌ Database connection failed")
-
-# Environment variables documentation
-"""
-Required Environment Variables for AWS Aurora PostgreSQL:
-
-Option 1 - Full DATABASE_URL:
-DATABASE_URL=postgresql://username:password@aurora-cluster.region.rds.amazonaws.com:5432/database_name
-
-Option 2 - Individual Parameters:
-DB_USERNAME=your_username
-DB_PASSWORD=your_password  
-DB_HOST=aurora-cluster.region.rds.amazonaws.com
-DB_PORT=5432
-DB_NAME=contract_analysis
-
-Optional:
-SQL_DEBUG=true  # Enable SQL query logging for development
-
-Example .env file:
-DB_USERNAME=contract_user
-DB_PASSWORD=secure_password_123
-DB_HOST=contract-aurora-cluster.cluster-xyz123.us-east-1.rds.amazonaws.com
-DB_PORT=5432
-DB_NAME=contract_analysis
-SQL_DEBUG=false
-"""
