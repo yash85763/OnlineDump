@@ -1,232 +1,255 @@
-The error occurs because the PDF database ID is not being stored correctly in the session state during processing. Here are the fixes and comprehensive checks needed:
+Here are the specific changes needed to add content highlighting and automatic page navigation:
 
-## **1. Fix PDF Database ID Storage Issue:**
+## **1. Add New Functions for Page Detection:**
 
-**In `process_pdf_enhanced()` function, after the enhanced handler call, add debugging and fix the storage:**
-
-```python
-if result.get('success'):
-    # FIX: Store processing information with proper checks
-    pdf_id = result.get('pdf_id')
-    if pdf_id:
-        st.session_state.pdf_database_ids[pdf_name] = pdf_id
-        st.session_state.processing_messages[pdf_name].append(f"✅ PDF stored in database with ID: {pdf_id}")
-    else:
-        st.session_state.processing_messages[pdf_name].append("⚠️ Warning: PDF processed but no database ID returned")
-        # Check if it's a duplicate
-        if result.get('duplicate'):
-            existing_id = result.get('existing_record', {}).get('id')
-            if existing_id:
-                st.session_state.pdf_database_ids[pdf_name] = existing_id
-                st.session_state.processing_messages[pdf_name].append(f"📋 Using existing database ID: {existing_id}")
-```
-
-## **2. Add Comprehensive Service Checks:**
-
-**Add this function after `initialize_session_state()`:**
+**Add these functions after the `sanitize_search_text` function:**
 
 ```python
-def check_all_services():
-    """Check all required services and return status"""
-    services_status = {
-        'database': {'status': False, 'message': 'Not checked'},
-        'obfuscation': {'status': False, 'message': 'Not checked'},
-        'pdf_handler': {'status': False, 'message': 'Not checked'},
-        'contract_analyzer': {'status': False, 'message': 'Not checked'}
-    }
+def find_clause_in_pages(clause_text, pages_content):
+    """Find which page contains the clause text"""
+    clause_words = set(clause_text.lower().split())
+    best_matches = []
     
-    # Check Database
-    try:
-        from config.database import check_database_connection
-        if check_database_connection():
-            services_status['database'] = {'status': True, 'message': 'Connected'}
-        else:
-            services_status['database'] = {'status': False, 'message': 'Connection failed'}
-    except ImportError:
-        services_status['database'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['database'] = {'status': False, 'message': f'Error: {str(e)}'}
-    
-    # Check Obfuscation Service
-    try:
-        from services.obfuscation import ContentObfuscator
-        obfuscator = ContentObfuscator()
-        services_status['obfuscation'] = {'status': True, 'message': 'Available'}
-    except ImportError:
-        services_status['obfuscation'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['obfuscation'] = {'status': False, 'message': f'Error: {str(e)}'}
-    
-    # Check PDF Handler
-    try:
-        from utils.enhanced_pdf_handler import EnhancedPDFHandler
-        handler = EnhancedPDFHandler(enable_obfuscation=False, enable_database=False)
-        services_status['pdf_handler'] = {'status': True, 'message': 'Available'}
-    except ImportError:
-        services_status['pdf_handler'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['pdf_handler'] = {'status': False, 'message': f'Error: {str(e)}'}
-    
-    # Check Contract Analyzer
-    try:
-        from contract_analyzer import ContractAnalyzer
-        analyzer = ContractAnalyzer()
-        services_status['contract_analyzer'] = {'status': True, 'message': 'Available'}
-    except ImportError:
-        services_status['contract_analyzer'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['contract_analyzer'] = {'status': False, 'message': f'Error: {str(e)}'}
-    
-    return services_status
-```
-
-## **3. Update Session State Initialization:**
-
-**Replace the database initialization part in `initialize_session_state()` with:**
-
-```python
-def initialize_session_state():
-    """Initialize all session state variables"""
-    # Service checks
-    if 'services_checked' not in st.session_state:
-        st.session_state.services_status = check_all_services()
-        st.session_state.services_checked = True
-    
-    # Database initialization
-    if 'database_initialized' not in st.session_state:
-        if st.session_state.services_status['database']['status']:
-            try:
-                initialize_database()
-                st.session_state.database_initialized = True
-                st.session_state.database_status = "Connected and initialized"
-            except Exception as e:
-                st.session_state.database_initialized = False
-                st.session_state.database_status = f"Initialization failed: {str(e)}"
-        else:
-            st.session_state.database_initialized = False
-            st.session_state.database_status = st.session_state.services_status['database']['message']
-    
-    # ... rest of session_vars remains the same
-```
-
-## **4. Enhanced Feedback Form with Better Error Handling:**
-
-**Replace the feedback submission section in `render_feedback_form()` with:**
-
-```python
-if submitted:
-    # Validate that at least some feedback is provided
-    if (form_number_correct == "Select..." and pi_clause_correct == "Select..." and 
-        ci_clause_correct == "Select..." and summary_quality == "Select..." and 
-        not general_feedback.strip()):
-        st.error("Please provide at least some feedback before submitting.")
-        return
-    
-    # Enhanced PDF ID retrieval with debugging
-    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
-    
-    if not pdf_id:
-        # Debug information
-        st.error("❌ Cannot submit feedback - PDF not found in database")
+    for page in pages_content:
+        page_number = page.get('page_number', 0)
+        page_text = ' '.join(page.get('paragraphs', [])).lower()
+        page_words = set(page_text.split())
         
-        with st.expander("🔧 Debug Information", expanded=False):
-            st.write("**Available PDF Database IDs:**")
-            st.write(st.session_state.pdf_database_ids)
-            st.write(f"**Looking for PDF:** {pdf_name}")
-            st.write(f"**Current PDF:** {st.session_state.current_pdf}")
-            st.write(f"**File stem:** {file_stem}")
+        # Calculate word overlap
+        common_words = clause_words.intersection(page_words)
+        if common_words:
+            match_ratio = len(common_words) / len(clause_words)
+            if match_ratio > 0.3:  # At least 30% word overlap
+                best_matches.append((page_number, match_ratio, page_text))
+    
+    # Sort by match ratio and return best match
+    if best_matches:
+        best_matches.sort(key=lambda x: x[1], reverse=True)
+        return best_matches[0][0]  # Return page number
+    return None
+
+def create_pdf_url_with_page(pdf_bytes, page_number=None, search_text=None):
+    """Create PDF URL with specific page and search parameters"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
+    
+    params = []
+    if page_number:
+        params.append(f'page={page_number}')
+    if search_text:
+        sanitized_text = sanitize_search_text(search_text)
+        encoded_text = urllib.parse.quote(sanitized_text)
+        params.append(f'search={encoded_text}')
+    
+    if params:
+        pdf_url += '#' + '&'.join(params)
+    
+    return pdf_url
+```
+
+## **2. Update Session State Initialization:**
+
+**Add to the `session_vars` dictionary in `initialize_session_state()`:**
+
+```python
+session_vars = {
+    # ... existing variables ...
+    'current_page_number': 1,  # Add this
+    'clause_page_mapping': {},  # Add this - stores clause to page mapping
+    'pages_content': {},  # Add this - stores pages content per PDF
+}
+```
+
+## **3. Modify the PDF Processing Function:**
+
+**In `process_pdf_enhanced()`, after storing the analysis results, add:**
+
+```python
+# Store pages content for clause mapping
+st.session_state.pages_content[pdf_name] = pages_content
+
+# Create clause to page mapping
+if analysis_results.get('relevant_clauses'):
+    clause_mapping = {}
+    for i, clause in enumerate(analysis_results['relevant_clauses']):
+        page_num = find_clause_in_pages(clause['text'], pages_content)
+        if page_num:
+            clause_mapping[i] = page_num
+    st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+```
+
+## **4. Update the PDF Viewer Display Function:**
+
+**Replace the `display_pdf_iframe` function with:**
+
+```python
+def display_pdf_iframe_with_page(pdf_bytes, page_number=None, search_text=None):
+    """Display PDF with specific page and optional search text"""
+    pdf_url = create_pdf_url_with_page(pdf_bytes, page_number, search_text)
+    
+    iframe_html = f'''
+    <iframe id="pdfViewer" 
+            src="{pdf_url}" 
+            width="100%" 
+            height="600px" 
+            type="application/pdf"
+            style="border: 1px solid #ddd; border-radius: 5px;">
+    </iframe>
+    '''
+    
+    if search_text:
+        iframe_html += f'''
+        <script>
+            setTimeout(function() {{
+                const iframe = document.getElementById('pdfViewer');
+                if (iframe && iframe.contentWindow) {{
+                    try {{
+                        iframe.contentWindow.postMessage({{
+                            type: 'search',
+                            query: '{sanitize_search_text(search_text)}'
+                        }}, '*');
+                    }} catch (e) {{
+                        console.log('Search message failed:', e);
+                    }}
+                }}
+            }}, 1000);
+        </script>
+        '''
+    
+    return iframe_html
+```
+
+## **5. Update the PDF Display Section:**
+
+**In the middle pane (col2), replace the PDF display try block with:**
+
+```python
+# PDF display with page navigation
+current_page = st.session_state.get('current_page_number', 1)
+
+try:
+    pdf_display = display_pdf_iframe_with_page(
+        current_pdf_bytes, 
+        current_page, 
+        st.session_state.search_text
+    )
+    st.markdown(pdf_display, unsafe_allow_html=True)
+    
+    # Page navigation controls
+    col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
+    with col_nav2:
+        if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
+            total_pages = st.session_state.obfuscation_summaries[st.session_state.current_pdf].get('total_final_pages', 1)
+        else:
+            total_pages = 10  # Default fallback
             
-            # Check if database is working
-            if not st.session_state.database_initialized:
-                st.write("**Database Status:** Not initialized")
-            else:
-                st.write("**Database Status:** Connected")
+        new_page = st.number_input(
+            "Go to page:", 
+            min_value=1, 
+            max_value=total_pages,
+            value=current_page,
+            key=f"page_nav_{st.session_state.current_pdf}"
+        )
         
-        st.info("💡 Try reprocessing the PDF to generate a database entry.")
-        return
-    
-    # Check database connection before submitting
-    if not st.session_state.database_initialized:
-        st.error("❌ Database not available. Cannot store feedback.")
-        return
-    
-    # Prepare feedback data (existing code remains the same)
-    # ... feedback_data preparation ...
-    
-    try:
-        feedback_id = store_feedback_data(feedback_data)
-        st.success("🎉 Thank you for your valuable feedback! It helps us improve our analysis.")
-        st.session_state.feedback_submitted[feedback_key] = True
-        st.balloons()
-        st.rerun()
-    except Exception as e:
-        st.error(f"❌ Failed to save feedback: {str(e)}")
-        
-        # Additional error context
-        with st.expander("🔧 Error Details", expanded=False):
-            st.write(f"**Error Type:** {type(e).__name__}")
-            st.write(f"**Error Message:** {str(e)}")
-            st.write(f"**PDF ID:** {pdf_id}")
-            st.write(f"**Database Status:** {st.session_state.database_status}")
+        if new_page != current_page:
+            st.session_state.current_page_number = new_page
+            st.rerun()
+
+except Exception as e:
+    st.error(f"❌ Error displaying PDF: {e}")
+    # ... rest of error handling stays the same
 ```
 
-## **5. Enhanced Sidebar with Service Status:**
+## **6. Enhance the Clause Display Section:**
 
-**Update the sidebar section in `main()` with:**
+**Replace the clause expander section in the right pane with:**
 
 ```python
-with st.sidebar:
-    st.header("🔧 System Status")
+# Relevant Clauses with enhanced navigation
+st.markdown("### 📄 Relevant Clauses")
+clauses = json_data.get("relevant_clauses", [])
+
+if clauses:
+    clause_mapping = st.session_state.clause_page_mapping.get(st.session_state.current_pdf, {})
     
-    # Service status checks
-    services = st.session_state.get('services_status', {})
-    
-    for service_name, service_info in services.items():
-        status = service_info['status']
-        message = service_info['message']
+    for i, clause in enumerate(clauses):
+        # Get page number for this clause
+        clause_page = clause_mapping.get(i)
+        page_info = f" (Page {clause_page})" if clause_page else ""
         
-        if status:
-            st.markdown(f"✅ **{service_name.replace('_', ' ').title()}:** {message}")
-        else:
-            st.markdown(f"❌ **{service_name.replace('_', ' ').title()}:** {message}")
-    
-    # Overall database status
-    if st.session_state.database_initialized:
-        st.success("✅ Database Ready")
-    else:
-        st.error(f"❌ Database: {st.session_state.database_status}")
-    
-    # Refresh services button
-    if st.button("🔄 Refresh Services"):
-        st.session_state.services_status = check_all_services()
-        st.rerun()
-    
-    # ... rest of sidebar content ...
+        with st.expander(f"📑 Clause {i+1}: {clause['type'].capitalize()}{page_info}", expanded=False):
+            st.markdown(f"**Type:** `{clause['type']}`")
+            if clause_page:
+                st.markdown(f"**Found on Page:** {clause_page}")
+            
+            st.markdown(f"**Content:**")
+            st.markdown(f"<div class='extract-text'>{clause['text']}</div>", unsafe_allow_html=True)
+            
+            # Enhanced search functionality
+            col_search1, col_search2 = st.columns(2)
+            with col_search1:
+                if st.button(f"🔍 Search Text", key=f"search_clause_{i}"):
+                    st.session_state.search_text = clause['text'][:100]
+                    st.success(f"Searching for clause {i+1}...")
+                    st.rerun()
+            
+            with col_search2:
+                if clause_page and st.button(f"📄 Go to Page {clause_page}", key=f"goto_page_{i}"):
+                    st.session_state.current_page_number = clause_page
+                    st.session_state.search_text = clause['text'][:50]  # Also search
+                    st.success(f"Navigating to page {clause_page}...")
+                    st.rerun()
+            
+            if not clause_page:
+                st.info("💡 Page location not detected for this clause")
+            
+            if len(clause['text']) > 100:
+                st.caption("⚠️ Long text may not highlight fully")
+else:
+    st.info("No relevant clauses detected in this contract.")
 ```
 
-## **6. Add Process Validation:**
+## **7. Add Page Reset on PDF Change:**
 
-**Before processing any PDF, add this check in the grid selection section:**
+**In the `set_current_pdf` function, add:**
 
 ```python
-# Before processing, check if all services are available
-services_ok = all(service['status'] for service in st.session_state.services_status.values())
+def set_current_pdf(pdf_name):
+    """Set the current PDF to display"""
+    st.session_state.current_pdf = pdf_name
+    st.session_state.search_text = None
+    st.session_state.current_page_number = 1  # Add this line
+```
 
-if not services_ok:
-    st.error("❌ Cannot process PDF - some services are unavailable")
-    failed_services = [name for name, info in st.session_state.services_status.items() if not info['status']]
-    st.write(f"Failed services: {', '.join(failed_services)}")
-    return
+## **8. Optional: Add Clause Summary with Page Numbers:**
 
-# Then proceed with processing...
+**Add this section after the contract status in the right pane:**
+
+```python
+# Quick clause navigation
+if clauses and st.session_state.current_pdf in st.session_state.clause_page_mapping:
+    clause_mapping = st.session_state.clause_page_mapping[st.session_state.current_pdf]
+    if clause_mapping:
+        st.markdown("### 🚀 Quick Navigation")
+        cols = st.columns(min(len(clause_mapping), 4))
+        
+        for idx, (clause_idx, page_num) in enumerate(clause_mapping.items()):
+            col_idx = idx % len(cols)
+            with cols[col_idx]:
+                clause_type = clauses[clause_idx]['type'].capitalize()
+                if st.button(f"📄 {clause_type}\nPage {page_num}", key=f"quick_nav_{clause_idx}"):
+                    st.session_state.current_page_number = page_num
+                    st.session_state.search_text = clauses[clause_idx]['text'][:50]
+                    st.rerun()
 ```
 
 These changes will:
-- ✅ **Fix the database ID storage issue**
-- ✅ **Add comprehensive service checks**
-- ✅ **Provide detailed error debugging**
-- ✅ **Show service status in sidebar**
-- ✅ **Prevent processing when services are down**
-- ✅ **Give users clear feedback about what's wrong**
+- ✅ **Detect which page** each clause appears on
+- ✅ **Automatically navigate** to the correct page when user clicks "Go to Page"
+- ✅ **Highlight the clause text** in the PDF viewer
+- ✅ **Show page numbers** in clause titles
+- ✅ **Add quick navigation** buttons for rapid access
+- ✅ **Maintain page state** when switching between PDFs
+- ✅ **Provide visual feedback** when navigating
 
-The feedback submission should now work correctly, and you'll have full visibility into any service issues.​​​​​​​​​​​​​​​​
+The system will now intelligently match clauses to pages and provide seamless navigation between the analysis results and the corresponding PDF content!​​​​​​​​​​​​​​​​
