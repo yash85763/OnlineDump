@@ -1,117 +1,91 @@
-Here's how to display PNG images instead of emojis in your Streamlit app:
+The issue is that we're using `eval()` in the `ICONS` dictionary and returning HTML strings that aren't being properly rendered. Here's the corrected approach:
 
-## **1. Create Image Loading Function:**
+## **1. Fix the Icon Loading Functions:**
 
-**Add this function after the imports:**
+**Replace the icon functions with:**
 
 ```python
 import base64
-from pathlib import Path
+import os
 
 def load_image_as_base64(image_path):
     """Load image and convert to base64 for HTML display"""
     try:
-        with open(image_path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    except FileNotFoundError:
-        return None
+        if os.path.exists(image_path):
+            with open(image_path, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+    except Exception as e:
+        print(f"Error loading image {image_path}: {e}")
+    return None
 
-def get_icon_html(icon_name, size=20, fallback_emoji=""):
+def get_icon_html(icon_name, size=16, fallback_emoji="", alt_text=""):
     """Get HTML for icon with fallback to emoji"""
     icon_path = f"pics/{icon_name}.png"
     base64_image = load_image_as_base64(icon_path)
     
     if base64_image:
-        return f'<img src="data:image/png;base64,{base64_image}" width="{size}" height="{size}" style="vertical-align: middle; margin-right: 5px;">'
+        return f'<img src="data:image/png;base64,{base64_image}" width="{size}" height="{size}" style="vertical-align: middle; margin-right: 5px; display: inline-block;" alt="{alt_text}">'
     else:
-        return fallback_emoji  # Fallback to emoji if image not found
+        return f'<span style="margin-right: 5px; display: inline-block;">{fallback_emoji}</span>'
 
-# Icon mapping dictionary
-ICONS = {
-    'success': 'get_icon_html("success", 16, "✅")',
-    'error': 'get_icon_html("error", 16, "❌")', 
-    'warning': 'get_icon_html("warning", 16, "⚠️")',
-    'info': 'get_icon_html("info", 16, "ℹ️")',
-    'processing': 'get_icon_html("processing", 16, "🔄")',
-    'document': 'get_icon_html("document", 16, "📄")',
-    'database': 'get_icon_html("database", 16, "💾")',
-    'privacy': 'get_icon_html("privacy", 16, "🔒")',
-    'analysis': 'get_icon_html("analysis", 16, "🔍")',
-    'batch': 'get_icon_html("batch", 16, "🚀")',
-    'feedback': 'get_icon_html("feedback", 16, "📝")',
-    'clause': 'get_icon_html("clause", 16, "📑")',
-    'page': 'get_icon_html("page", 16, "📖")',
-    'search': 'get_icon_html("search", 16, "🔍")',
-    'goto': 'get_icon_html("goto", 16, "📄")',
-    'download': 'get_icon_html("download", 16, "📥")',
-    'upload': 'get_icon_html("upload", 16, "📤")',
-    'settings': 'get_icon_html("settings", 16, "🔧")',
-    'star': 'get_icon_html("star", 16, "⭐")'
-}
+# Remove the ICONS dictionary - we'll call functions directly
 ```
 
-## **2. Update Status Button CSS:**
+## **2. Update CSS for Better Icon Display:**
 
-**Replace the status button CSS with:**
+**Add this to your CSS:**
 
 ```css
-.status-button-true {
-    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-    color: white;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    margin: 0.3rem 0;
-    display: inline-block;
-    font-weight: 500;
-    box-shadow: 0 2px 4px rgba(40,167,69,0.3);
+.icon-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    vertical-align: middle;
 }
 
-.status-button-false {
-    background: linear-gradient(135deg, #dc3545 0%, #fd7e14 100%);
-    color: white;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    margin: 0.3rem 0;
-    display: inline-block;
-    font-weight: 500;
-    box-shadow: 0 2px 4px rgba(220,53,69,0.3);
+.status-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
 }
 
-.status-button-missing {
-    background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
-    color: #212529;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    margin: 0.3rem 0;
-    display: inline-block;
-    font-weight: 500;
-    box-shadow: 0 2px 4px rgba(255,193,7,0.3);
-}
-
-.icon-text {
+.processing-message {
+    color: #0068c9;
+    font-size: 0.9rem;
+    padding: 0.3rem 0;
+    border-left: 3px solid #0068c9;
+    padding-left: 0.8rem;
+    margin: 0.2rem 0;
+    background-color: #f8f9ff;
+    border-radius: 4px;
     display: flex;
     align-items: center;
     gap: 8px;
 }
 ```
 
-## **3. Replace Emoji Usage Throughout:**
+## **3. Fix Processing Messages:**
 
-**Replace processing messages with:**
+**Replace the processing message updates with:**
 
 ```python
 # In process_pdf_enhanced function
-st.session_state.processing_messages[pdf_name].append(f"{get_icon_html('processing', 16, '🔄')} Starting PDF processing with obfuscation...")
-st.session_state.processing_messages[pdf_name].append(f"{get_icon_html('success', 16, '✅')} PDF processed and stored in database")
-st.session_state.processing_messages[pdf_name].append(f"{get_icon_html('database', 16, '💾')} Database ID: {result.get('pdf_id')}")
-st.session_state.processing_messages[pdf_name].append(f"{get_icon_html('privacy', 16, '🔒')} Privacy protection applied: {pages_removed} pages removed")
-st.session_state.processing_messages[pdf_name].append(f"{get_icon_html('analysis', 16, '🔍')} Starting contract analysis...")
-st.session_state.processing_messages[pdf_name].append(f"{get_icon_html('success', 16, '✅')} Contract analysis completed successfully")
+st.session_state.processing_messages[pdf_name].append("Starting PDF processing with obfuscation...")
+st.session_state.processing_messages[pdf_name].append("PDF processed and stored in database")
+st.session_state.processing_messages[pdf_name].append(f"Database ID: {result.get('pdf_id')}")
+
+# When displaying messages, use this format:
+for msg in st.session_state.processing_messages[pdf_name]:
+    icon_html = get_icon_html('processing', 16, '🔄')
+    st.markdown(
+        f'<div class="processing-message">{icon_html}{msg}</div>', 
+        unsafe_allow_html=True
+    )
 ```
 
-## **4. Update Service Status Display:**
+## **4. Fix Service Status Display:**
 
-**Replace the service status section with:**
+**Replace with:**
 
 ```python
 # Service status checks
@@ -122,27 +96,26 @@ for service_name, service_info in services.items():
     message = service_info['message']
     
     if status:
-        st.markdown(f"<div class='icon-text'>{get_icon_html('success', 16, '✅')} <strong>{service_name.replace('_', ' ').title()}:</strong> {message}</div>", unsafe_allow_html=True)
+        icon_html = get_icon_html('success', 16, '✅', 'Success')
+        st.markdown(
+            f'<div class="icon-container">{icon_html}<strong>{service_name.replace("_", " ").title()}:</strong> {message}</div>', 
+            unsafe_allow_html=True
+        )
     else:
-        st.markdown(f"<div class='icon-text'>{get_icon_html('error', 16, '❌')} <strong>{service_name.replace('_', ' ').title()}:</strong> {message}</div>", unsafe_allow_html=True)
+        icon_html = get_icon_html('error', 16, '❌', 'Error') 
+        st.markdown(
+            f'<div class="icon-container">{icon_html}<strong>{service_name.replace("_", " ").title()}:</strong> {message}</div>', 
+            unsafe_allow_html=True
+        )
 ```
 
-## **5. Update Contract Status Display:**
+## **5. Fix Contract Status Display:**
 
-**Replace the contract status section with:**
+**Replace with:**
 
 ```python
 # Contract Status - Enhanced UI with icons
 st.markdown("### Contract Status")
-status_fields = {
-    'data_usage_mentioned': 'Data Usage Mentioned',
-    'data_limitations_exists': 'Data Limitations Exists', 
-    'pi_clause': 'Presence of PI Clause',
-    'ci_clause': 'Presence of CI Clause'
-}
-
-col_status1, col_status2 = st.columns(2)
-status_items = list(status_fields.items())
 
 for i, (key, label) in enumerate(status_items):
     target_col = col_status1 if i % 2 == 0 else col_status2
@@ -152,130 +125,136 @@ for i, (key, label) in enumerate(status_items):
         
         # Determine icon and style
         if status_str in ['true', 'yes']:
-            icon_html = get_icon_html('success', 16, '✅')
+            icon_html = get_icon_html('success', 16, '✅', 'Success')
             button_class = 'status-button-true'
         elif status_str in ['false', 'no']:
-            icon_html = get_icon_html('error', 16, '❌')
+            icon_html = get_icon_html('error', 16, '❌', 'Error')
             button_class = 'status-button-false'
         else:
-            icon_html = get_icon_html('warning', 16, '❓')
+            icon_html = get_icon_html('warning', 16, '❓', 'Unknown')
             button_class = 'status-button-missing'
         
         st.markdown(f"""
         <div class='{button_class}'>
-            <div class='icon-text'>
-                {icon_html} <strong>{label}</strong><br>
-                <small>{status}</small>
+            <div class='status-icon'>
+                {icon_html}
+                <div>
+                    <strong>{label}</strong><br>
+                    <small>{status}</small>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 ```
 
-## **6. Update Button Displays:**
+## **6. Fix Button Displays with st.columns for Layout:**
 
-**Replace buttons with icon versions:**
+**Replace the search buttons with:**
 
 ```python
 # Search and navigation buttons
 col_search1, col_search2 = st.columns(2)
+
 with col_search1:
-    if st.button(f"{get_icon_html('search', 16, '🔍')} Search Text", key=f"search_clause_{i}"):
+    search_icon = get_icon_html('search', 16, '🔍', 'Search')
+    # Use markdown for icon, but regular button for functionality
+    st.markdown(f'<div class="icon-container">{search_icon}Search in PDF</div>', unsafe_allow_html=True)
+    if st.button("Search Text", key=f"search_clause_{i}"):
         st.session_state.search_text = clause['text'][:100]
-        st.success(f"Searching for clause {i+1}...")
+        st.success("Searching for clause...")
         st.rerun()
 
 with col_search2:
-    if clause_page and st.button(f"{get_icon_html('goto', 16, '📄')} Go to Page {clause_page}", key=f"goto_page_{i}"):
-        st.session_state.current_page_number = clause_page
-        st.session_state.search_text = clause['text'][:50]
-        st.success(f"Navigating to page {clause_page}...")
-        st.rerun()
+    if clause_page:
+        goto_icon = get_icon_html('goto', 16, '📄', 'Go to page')
+        st.markdown(f'<div class="icon-container">{goto_icon}Navigate to Page {clause_page}</div>', unsafe_allow_html=True)
+        if st.button(f"Go to Page {clause_page}", key=f"goto_page_{i}"):
+            st.session_state.current_page_number = clause_page
+            st.session_state.search_text = clause['text'][:50]
+            st.success(f"Navigating to page {clause_page}...")
+            st.rerun()
 ```
 
-## **7. Update Batch Processing Section:**
+## **7. Alternative: Use st.columns for Icon+Text Layout:**
 
-**Replace batch processing buttons with:**
-
-```python
-if st.button(f"{get_icon_html('batch', 16, '🚀')} Start Batch Processing", 
-            disabled=batch_button_disabled,
-            help="Process all selected documents"):
-    # ... existing code
-
-if st.session_state.batch_job_active:
-    if st.button(f"{get_icon_html('error', 16, '⏹️')} Cancel Batch"):
-        st.session_state.batch_job_active = False
-        st.rerun()
-```
-
-## **8. Update Header and Titles:**
-
-**Replace the main header with:**
+**For better icon integration, use this pattern:**
 
 ```python
-st.markdown(f"""
-<div class='main-header'>
-    <h1>{get_icon_html('document', 24, '📄')} Enhanced Contract Analysis Platform</h1>
-    <p>AI-powered contract analysis with privacy protection and intelligent feedback</p>
-</div>
-""", unsafe_allow_html=True)
-```
-
-## **9. Add Fallback Icon Checker:**
-
-**Add this function to check which icons are missing:**
-
-```python
-def check_available_icons():
-    """Check which icons are available and show missing ones"""
-    icon_names = ['success', 'error', 'warning', 'info', 'processing', 'document', 
-                  'database', 'privacy', 'analysis', 'batch', 'feedback', 'clause',
-                  'page', 'search', 'goto', 'download', 'upload', 'settings', 'star']
+# For buttons with icons
+def render_icon_button(icon_name, text, key, fallback_emoji="", on_click=None):
+    """Render button with icon"""
+    col_icon, col_text = st.columns([1, 4])
     
-    missing_icons = []
-    for icon_name in icon_names:
+    with col_icon:
+        icon_html = get_icon_html(icon_name, 20, fallback_emoji)
+        st.markdown(icon_html, unsafe_allow_html=True)
+    
+    with col_text:
+        if st.button(text, key=key):
+            if on_click:
+                on_click()
+            return True
+    return False
+
+# Usage example:
+if render_icon_button('search', 'Search in PDF', f'search_{i}', '🔍'):
+    st.session_state.search_text = clause['text'][:100]
+    st.rerun()
+```
+
+## **8. Debug Icon Loading:**
+
+**Add this debug function to check if images are loading:**
+
+```python
+def debug_icons():
+    """Debug icon loading"""
+    st.write("### Icon Debug")
+    
+    test_icons = ['success', 'error', 'warning', 'processing']
+    
+    for icon_name in test_icons:
         icon_path = f"pics/{icon_name}.png"
-        if not os.path.exists(icon_path):
-            missing_icons.append(icon_name)
-    
-    return missing_icons
+        exists = os.path.exists(icon_path)
+        
+        st.write(f"**{icon_name}.png**: {'Found' if exists else 'Missing'}")
+        
+        if exists:
+            # Test the HTML output
+            icon_html = get_icon_html(icon_name, 24, '❓')
+            st.markdown(f"Preview: {icon_html} {icon_name}", unsafe_allow_html=True)
+        else:
+            st.write(f"Path checked: {os.path.abspath(icon_path)}")
 
-# Add to sidebar for debugging
-if st.sidebar.button("Check Icons"):
-    missing = check_available_icons()
-    if missing:
-        st.sidebar.write(f"Missing icons: {', '.join(missing)}")
-    else:
-        st.sidebar.write("All icons found!")
+# Add to sidebar temporarily
+if st.sidebar.button("Debug Icons"):
+    debug_icons()
 ```
 
-## **Required PNG Files:**
+## **9. Make Sure Your PNG Files Are:**
 
-Create these PNG files in your `pics/` folder (16x16 or 24x24 pixels recommended):
+- **Small size**: 16x16 or 24x24 pixels
+- **Transparent background**: PNG with alpha channel
+- **Named correctly**: exactly matching the icon names
+- **In the right location**: `pics/` folder in your project root
 
-- `success.png` (green checkmark)
-- `error.png` (red X)
-- `warning.png` (yellow triangle)
-- `info.png` (blue i)
-- `processing.png` (spinning wheel)
-- `document.png` (document icon)
-- `database.png` (database icon)
-- `privacy.png` (lock icon)
-- `analysis.png` (magnifying glass)
-- `batch.png` (rocket icon)
-- `feedback.png` (pencil/note icon)
-- `clause.png` (document with lines)
-- `page.png` (page icon)
-- `search.png` (magnifying glass)
-- `goto.png` (arrow or page icon)
-- `download.png` (down arrow)
-- `upload.png` (up arrow)
-- `settings.png` (gear icon)
-- `star.png` (star icon)
+## **10. Test with a Simple Icon First:**
 
-This approach will:
-- ✅ **Display custom PNG icons** instead of emojis
-- ✅ **Fallback to emojis** if PNG files are missing
-- ✅ **Maintain consistent sizing** across the app
-- ✅ **Load efficiently** using base64 encoding
-- ✅ **Check for missing icons** with debugging function​​​​​​​​​​​​​​​​
+**Add this test at the top of your main function:**
+
+```python
+# Test icon loading
+st.write("Icon test:")
+test_icon = get_icon_html('success', 24, '✅', 'Test')
+st.markdown(f"Test icon: {test_icon} This should show an icon", unsafe_allow_html=True)
+```
+
+The key fixes:
+- ✅ **Removed eval()** from icon loading
+- ✅ **Fixed HTML structure** for proper rendering  
+- ✅ **Added proper CSS** for icon alignment
+- ✅ **Separated icon display from button functionality**
+- ✅ **Added debugging** to check file loading
+- ✅ **Used inline-block** display for proper positioning
+
+Try the debug function first to see if your PNG files are being found and loaded correctly!​​​​​​​​​​​​​​​​
