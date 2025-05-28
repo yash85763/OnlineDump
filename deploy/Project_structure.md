@@ -1,361 +1,315 @@
-Here are the specific fixes needed for both issues:
+The console error is likely caused by the JavaScript code in the PDF viewer iframe. Here's how to fix the JavaScript issues:
 
-## **1. Fix Batch Processing to Include Analysis:**
+## **1. Fix the PDF Display Function:**
 
-**Replace the `run_batch_processing` function with:**
+**Replace the `display_pdf_iframe_with_page` function with:**
 
 ```python
-def run_batch_processing(selected_pdfs, job_id, progress_container):
-    """Run complete batch processing including analysis for selected PDFs"""
-    from utils.enhanced_pdf_handler import process_single_pdf_from_streamlit
-    from config.database import get_pdf_by_hash
-    import hashlib
+def display_pdf_iframe_with_page(pdf_bytes, page_number=None, search_text=None):
+    """Display PDF with specific page and optional search text"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
     
-    results = {
-        'processed': [],
-        'failed': [],
-        'skipped': [],
-        'total_pages_removed': 0,
-        'total_original_pages': 0
-    }
+    # Build PDF URL with parameters
+    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
+    url_params = []
     
-    progress_bar = progress_container.progress(0)
-    status_text = progress_container.empty()
+    if page_number and page_number > 1:
+        url_params.append(f'page={page_number}')
     
-    for i, pdf_name in enumerate(selected_pdfs):
-        try:
-            status_text.text(f"Processing {i+1}/{len(selected_pdfs)}: {pdf_name}")
-            
-            # Check if already processed (by hash)
-            pdf_bytes = st.session_state.pdf_files[pdf_name]
-            file_hash = hashlib.sha256(pdf_bytes).hexdigest()
-            existing_pdf = get_pdf_by_hash(file_hash)
-            
-            if existing_pdf:
-                # PDF already exists, load existing analysis
-                st.session_state.pdf_database_ids[pdf_name] = existing_pdf['id']
-                
-                # Try to load analysis from database
-                if load_analysis_from_database(pdf_name, existing_pdf['id']):
-                    results['skipped'].append({'name': pdf_name, 'reason': 'Already processed (loaded from database)'})
-                    st.session_state.analysis_status[pdf_name] = "Processed (from database)"
-                else:
-                    # PDF exists but no analysis - run analysis only
-                    status_text.text(f"Analyzing {i+1}/{len(selected_pdfs)}: {pdf_name}")
-                    
-                    # Get pages content from existing PDF processing
-                    result = process_single_pdf_from_streamlit(
-                        pdf_name=pdf_name,
-                        pdf_bytes=pdf_bytes,
-                        enable_obfuscation=True,
-                        uploaded_by=f"batch_{job_id}"
-                    )
-                    
-                    if result.get('success'):
-                        # Run contract analysis
-                        pages_content = result.get('pages', [])
-                        st.session_state.pages_content[pdf_name] = pages_content
-                        
-                        analysis_success = analyze_contract_for_batch(pdf_name, pages_content, existing_pdf['id'])
-                        
-                        if analysis_success:
-                            results['processed'].append(pdf_name)
-                            st.session_state.analysis_status[pdf_name] = "Processed"
-                        else:
-                            results['failed'].append({'name': pdf_name, 'error': 'Analysis failed'})
-                            st.session_state.analysis_status[pdf_name] = "Analysis failed"
-                    else:
-                        results['failed'].append({'name': pdf_name, 'error': 'PDF processing failed'})
-            else:
-                # Complete processing: PDF + Analysis
-                status_text.text(f"Processing & Analyzing {i+1}/{len(selected_pdfs)}: {pdf_name}")
-                
-                result = process_single_pdf_from_streamlit(
-                    pdf_name=pdf_name,
-                    pdf_bytes=pdf_bytes,
-                    enable_obfuscation=True,
-                    uploaded_by=f"batch_{job_id}"
-                )
-                
-                if result.get('success'):
-                    st.session_state.pdf_database_ids[pdf_name] = result.get('pdf_id')
-                    st.session_state.obfuscation_summaries[pdf_name] = result.get('obfuscation_summary', {})
-                    
-                    # Store pages content for clause mapping
-                    pages_content = result.get('pages', [])
-                    st.session_state.pages_content[pdf_name] = pages_content
-                    
-                    # Run contract analysis
-                    analysis_success = analyze_contract_for_batch(pdf_name, pages_content, result.get('pdf_id'))
-                    
-                    if analysis_success:
-                        results['processed'].append(pdf_name)
-                        st.session_state.analysis_status[pdf_name] = "Processed"
-                        
-                        # Track obfuscation stats
-                        obf_summary = result.get('obfuscation_summary', {})
-                        results['total_pages_removed'] += obf_summary.get('pages_removed_count', 0)
-                        results['total_original_pages'] += obf_summary.get('total_original_pages', 0)
-                    else:
-                        results['failed'].append({'name': pdf_name, 'error': 'Analysis failed'})
-                        st.session_state.analysis_status[pdf_name] = "Analysis failed"
-                else:
-                    results['failed'].append({'name': pdf_name, 'error': result.get('error', 'Unknown')})
-                    st.session_state.analysis_status[pdf_name] = f"Failed: {result.get('error', 'Unknown')}"
-            
-            # Update progress
-            progress_bar.progress((i + 1) / len(selected_pdfs))
-            
-        except Exception as e:
-            results['failed'].append({'name': pdf_name, 'error': str(e)})
-            st.session_state.analysis_status[pdf_name] = f"Error: {str(e)}"
+    if search_text:
+        # Clean and encode search text properly
+        clean_search = sanitize_search_text(search_text)
+        if clean_search:
+            encoded_search = urllib.parse.quote(clean_search)
+            url_params.append(f'search={encoded_search}')
     
-    status_text.text("Batch processing completed!")
-    return results
+    if url_params:
+        pdf_url += '#' + '&'.join(url_params)
+    
+    # Create iframe without JavaScript initially
+    iframe_html = f'''
+    <iframe id="pdfViewer_{hash(search_text or '')}" 
+            src="{pdf_url}" 
+            width="100%" 
+            height="600px" 
+            type="application/pdf"
+            style="border: 1px solid #ddd; border-radius: 5px;"
+            onload="handlePdfLoad(this)">
+    </iframe>
+    '''
+    
+    # Add safer JavaScript
+    if search_text:
+        clean_search_js = sanitize_search_text(search_text).replace("'", "\\'").replace('"', '\\"')
+        iframe_html += f'''
+        <script>
+        function handlePdfLoad(iframe) {{
+            try {{
+                // Wait a bit for PDF to load
+                setTimeout(function() {{
+                    if (iframe && iframe.contentWindow) {{
+                        try {{
+                            // Try to send search message
+                            iframe.contentWindow.postMessage({{
+                                type: 'search',
+                                query: '{clean_search_js}',
+                                find: '{clean_search_js}'
+                            }}, '*');
+                        }} catch (searchError) {{
+                            console.log('PDF search not supported:', searchError.message);
+                        }}
+                    }}
+                }}, 2000);
+            }} catch (error) {{
+                console.log('PDF viewer interaction not available:', error.message);
+            }}
+        }}
+        
+        // Alternative: Try URL fragment approach
+        window.addEventListener('load', function() {{
+            try {{
+                var iframe = document.getElementById('pdfViewer_{hash(search_text or '')}');
+                if (iframe) {{
+                    var currentSrc = iframe.src;
+                    if (currentSrc.indexOf('#search=') === -1 && '{clean_search_js}') {{
+                        iframe.src = currentSrc + '#search={urllib.parse.quote(clean_search_js)}';
+                    }}
+                }}
+            }} catch (error) {{
+                console.log('URL update failed:', error.message);
+            }}
+        }});
+        </script>
+        '''
+    
+    return iframe_html
 ```
 
-## **2. Update `analyze_contract_for_batch` Function:**
+## **2. Improve the `sanitize_search_text` Function:**
 
-**Replace the function with:**
+**Replace with a more robust version:**
 
 ```python
-def analyze_contract_for_batch(pdf_name, pages_content, pdf_id):
-    """Analyze contract and store results for batch processing"""
-    try:
-        from contract_analyzer import ContractAnalyzer
-        from config.database import store_analysis_data, store_clause_data, get_next_analysis_version
-        import tempfile
+def sanitize_search_text(text):
+    """Clean up text for PDF search and JavaScript safety"""
+    if not text:
+        return ""
+    
+    # Limit length
+    text = text[:50]
+    
+    # Remove potentially problematic characters
+    import re
+    # Keep only alphanumeric, spaces, and basic punctuation
+    text = re.sub(r'[^\w\s\-\.]', ' ', text)
+    
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Remove leading/trailing whitespace
+    text = text.strip()
+    
+    # Escape for JavaScript
+    text = text.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+    
+    return text
+```
+
+## **3. Alternative: Simpler PDF Display Without JavaScript:**
+
+**If JavaScript continues to cause issues, use this simpler version:**
+
+```python
+def display_pdf_simple(pdf_bytes, page_number=None, search_text=None):
+    """Simple PDF display without complex JavaScript"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    
+    # Build PDF URL
+    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
+    
+    # Add page parameter if specified
+    if page_number and page_number > 1:
+        pdf_url += f'#page={page_number}'
+    elif search_text:
+        # For search, try the search parameter
+        clean_search = sanitize_search_text(search_text)
+        if clean_search:
+            encoded_search = urllib.parse.quote(clean_search)
+            pdf_url += f'#search={encoded_search}'
+    
+    # Simple iframe without JavaScript
+    iframe_html = f'''
+    <div style="position: relative;">
+        <iframe src="{pdf_url}" 
+                width="100%" 
+                height="600px" 
+                type="application/pdf"
+                style="border: 1px solid #ddd; border-radius: 5px;">
+            <p>Your browser doesn't support PDF viewing. 
+               <a href="{pdf_url}" target="_blank">Click here to download the PDF</a>
+            </p>
+        </iframe>
+    </div>
+    '''
+    
+    return iframe_html
+```
+
+## **4. Update the PDF Viewer Call:**
+
+**In the middle pane, replace the PDF display section with:**
+
+```python
+# PDF display with error handling
+current_page = st.session_state.get('current_page_number', 1)
+
+try:
+    # Use simple version first to avoid JavaScript errors
+    pdf_display = display_pdf_simple(
+        current_pdf_bytes, 
+        current_page, 
+        st.session_state.search_text
+    )
+    st.markdown(pdf_display, unsafe_allow_html=True)
+    
+    # Show search info if active
+    if st.session_state.search_text:
+        st.info(f"🔍 Searching for: '{st.session_state.search_text}' on page {current_page}")
         
-        # Convert pages content to text for analysis
-        contract_text = '\n\n'.join([
-            para for page in pages_content 
-            for para in page.get('paragraphs', [])
-        ])
-        
-        contract_analyzer = ContractAnalyzer()
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = os.path.join(temp_dir, f"{Path(pdf_name).stem}.json")
-            analysis_results = contract_analyzer.analyze_contract(contract_text, output_path)
+        # Clear search button
+        if st.button("❌ Clear Search"):
+            st.session_state.search_text = None
+            st.rerun()
+    
+    # Page navigation controls
+    col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
+    with col_nav2:
+        if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
+            total_pages = st.session_state.obfuscation_summaries[st.session_state.current_pdf].get('total_final_pages', 10)
+        else:
+            total_pages = 10  # Default fallback
             
-            # Store analysis in database
-            analysis_data = {
-                'pdf_id': pdf_id,
-                'analysis_date': datetime.now(),
-                'version': get_next_analysis_version(pdf_id),
-                'form_number': analysis_results.get('form_number'),
-                'pi_clause': analysis_results.get('pi_clause'),
-                'ci_clause': analysis_results.get('ci_clause'),
-                'data_usage_mentioned': analysis_results.get('data_usage_mentioned'),
-                'data_limitations_exists': analysis_results.get('data_limitations_exists'),
-                'summary': analysis_results.get('summary'),
-                'raw_json': analysis_results,
-                'processed_by': 'batch_analyzer',
-                'processing_time': 0.0
+        new_page = st.number_input(
+            "Go to page:", 
+            min_value=1, 
+            max_value=total_pages,
+            value=current_page,
+            key=f"page_nav_{st.session_state.current_pdf}"
+        )
+        
+        if new_page != current_page:
+            st.session_state.current_page_number = new_page
+            st.rerun()
+
+except Exception as e:
+    st.error(f"❌ Error displaying PDF: {e}")
+    # Fallback to download option
+    st.download_button(
+        label="📥 Download PDF to view externally",
+        data=current_pdf_bytes,
+        file_name=st.session_state.current_pdf,
+        mime="application/pdf"
+    )
+```
+
+## **5. Add Browser Compatibility Check:**
+
+**Add this function to check PDF support:**
+
+```python
+def check_pdf_support():
+    """Add JavaScript to check PDF support"""
+    return '''
+    <script>
+    function checkPdfSupport() {
+        var supportsPdf = false;
+        try {
+            // Check if browser supports PDF viewing
+            var navigator = window.navigator;
+            var plugins = navigator.plugins;
+            
+            // Check for PDF plugin
+            for (var i = 0; i < plugins.length; i++) {
+                if (plugins[i].name.toLowerCase().indexOf('pdf') !== -1) {
+                    supportsPdf = true;
+                    break;
+                }
             }
             
-            analysis_id = store_analysis_data(analysis_data)
+            // Chrome/Edge usually support PDF natively
+            if (navigator.userAgent.indexOf('Chrome') !== -1 || 
+                navigator.userAgent.indexOf('Edge') !== -1) {
+                supportsPdf = true;
+            }
             
-            # Store clauses
-            clauses = analysis_results.get('relevant_clauses', [])
-            if clauses:
-                clause_data = []
-                for i, clause in enumerate(clauses):
-                    clause_data.append({
-                        'clause_type': clause.get('type', 'unknown'),
-                        'clause_text': clause.get('text', ''),
-                        'clause_order': i + 1
-                    })
-                store_clause_data(clause_data, analysis_id)
-            
-            # Store in session state for immediate display
-            file_stem = Path(pdf_name).stem
-            st.session_state.json_data[file_stem] = analysis_results
-            
-            # Create clause to page mapping using pages_content
-            create_clause_page_mapping(pdf_name, analysis_results, pages_content)
-            
-            return True
-            
-    except Exception as e:
-        print(f"Error analyzing contract for {pdf_name}: {str(e)}")
-        return False
-```
-
-## **3. Fix Search Text Functionality - Update `find_clause_in_pages`:**
-
-**Replace the `find_clause_in_pages` function with:**
-
-```python
-def find_clause_in_pages(clause_text, pages_content):
-    """Find which page contains the clause text using exact paragraph matching"""
-    if not clause_text or not pages_content:
-        return None
-    
-    # Clean and prepare clause text for matching
-    clause_clean = clause_text.lower().strip()
-    clause_words = set(clause_clean.split())
-    
-    best_matches = []
-    
-    for page in pages_content:
-        page_number = page.get('page_number', 0)
-        paragraphs = page.get('paragraphs', [])
+        } catch (error) {
+            console.log('PDF support check failed:', error);
+        }
         
-        for paragraph in paragraphs:
-            if not paragraph:
-                continue
-                
-            paragraph_clean = paragraph.lower().strip()
-            
-            # Method 1: Exact substring match (most reliable)
-            if len(clause_clean) > 50:  # For longer clauses
-                # Check if clause is contained in paragraph or vice versa
-                if clause_clean in paragraph_clean or paragraph_clean in clause_clean:
-                    return page_number
-                
-                # Check for significant overlap for long texts
-                if len(clause_clean) > 100:
-                    overlap_threshold = 0.6  # 60% overlap
-                    clause_chunks = [clause_clean[i:i+50] for i in range(0, len(clause_clean), 50)]
-                    matches = sum(1 for chunk in clause_chunks if chunk in paragraph_clean)
-                    if matches / len(clause_chunks) >= overlap_threshold:
-                        return page_number
-            
-            # Method 2: Word overlap for shorter clauses
-            paragraph_words = set(paragraph_clean.split())
-            common_words = clause_words.intersection(paragraph_words)
-            
-            if common_words:
-                # Calculate match ratio
-                match_ratio = len(common_words) / len(clause_words)
-                coverage_ratio = len(common_words) / len(paragraph_words) if paragraph_words else 0
-                
-                # Higher threshold for better accuracy
-                if match_ratio >= 0.7 or (match_ratio >= 0.5 and coverage_ratio >= 0.3):
-                    best_matches.append((page_number, match_ratio, len(common_words)))
-    
-    # Return the page with the best match
-    if best_matches:
-        best_matches.sort(key=lambda x: (x[1], x[2]), reverse=True)  # Sort by match ratio, then common words
-        return best_matches[0][0]
-    
-    return None
-
-def create_clause_page_mapping(pdf_name, analysis_results, pages_content):
-    """Create and store clause to page mapping"""
-    if not analysis_results.get('relevant_clauses') or not pages_content:
-        return
-    
-    clause_mapping = {}
-    for i, clause in enumerate(analysis_results['relevant_clauses']):
-        page_num = find_clause_in_pages(clause['text'], pages_content)
-        if page_num:
-            clause_mapping[i] = page_num
-    
-    if clause_mapping:
-        st.session_state.clause_page_mapping[pdf_name] = clause_mapping
-```
-
-## **4. Update Individual PDF Processing to Store Pages Content:**
-
-**In the individual PDF selection section, after processing, add:**
-
-```python
-# In the individual PDF selection handling, after successful processing:
-if success:
-    st.session_state.analysis_status[selected_pdf] = "Processed"
-    
-    # Make sure pages content is stored for clause mapping
-    if selected_pdf not in st.session_state.pages_content:
-        # If not already stored, we need to get it from the result
-        # This might require modifying process_pdf_enhanced to return pages_content
-        pass
-    
-    st.success(f"✅ Analysis complete for {selected_pdf}")
-```
-
-## **5. Update `process_pdf_enhanced` to Store Pages Content:**
-
-**Add this line in `process_pdf_enhanced` after getting the pages_content:**
-
-```python
-# In process_pdf_enhanced function, after getting pages_content from result:
-if result.get('success'):
-    # ... existing code ...
-    
-    # Get the processed content for analysis
-    pages_content = result.get('pages', [])
-    
-    # Store pages content for clause mapping - ADD THIS LINE
-    st.session_state.pages_content[pdf_name] = pages_content
-    
-    contract_text = '\n\n'.join([
-        para for page in pages_content 
-        for para in page.get('paragraphs', [])
-    ])
-    
-    # ... rest of the function
-    
-    # After storing analysis results, create clause mapping - ADD THIS:
-    if analysis_results.get('relevant_clauses'):
-        create_clause_page_mapping(pdf_name, analysis_results, pages_content)
-```
-
-## **6. Update `load_analysis_from_database` Function:**
-
-**Add pages content loading:**
-
-```python
-def load_analysis_from_database(pdf_name, pdf_id):
-    """Load existing analysis from database"""
-    try:
-        from config.database import get_latest_analysis
+        if (!supportsPdf) {
+            console.log('PDF viewing may not be supported in this browser');
+        }
         
-        analysis_record = get_latest_analysis(pdf_id)
-        if analysis_record:
-            # Convert database record to display format
-            analysis_data = analysis_record.get('raw_json', {})
-            if isinstance(analysis_data, str):
-                import json
-                analysis_data = json.loads(analysis_data)
-            
-            file_stem = Path(pdf_name).stem
-            st.session_state.json_data[file_stem] = analysis_data
-            
-            # If we don't have pages_content, we need to re-process the PDF to get it
-            if pdf_name not in st.session_state.pages_content:
-                # Re-process PDF to get pages content for clause mapping
-                pdf_bytes = st.session_state.pdf_files.get(pdf_name)
-                if pdf_bytes:
-                    from utils.enhanced_pdf_handler import process_single_pdf_from_streamlit
-                    result = process_single_pdf_from_streamlit(
-                        pdf_name=pdf_name,
-                        pdf_bytes=pdf_bytes,
-                        enable_obfuscation=True,
-                        uploaded_by="reload_for_mapping"
-                    )
-                    if result.get('success'):
-                        st.session_state.pages_content[pdf_name] = result.get('pages', [])
-            
-            # Create clause mapping if we have pages content
-            if pdf_name in st.session_state.pages_content and analysis_data.get('relevant_clauses'):
-                create_clause_page_mapping(pdf_name, analysis_data, st.session_state.pages_content[pdf_name])
-            
-            return True
-    except Exception as e:
-        print(f"Error loading analysis from database: {str(e)}")
+        return supportsPdf;
+    }
     
-    return False
+    // Run check when page loads
+    document.addEventListener('DOMContentLoaded', checkPdfSupport);
+    </script>
+    '''
 ```
 
-These changes will:
+## **6. Debug JavaScript Errors:**
 
-✅ **Complete batch processing** - Includes both PDF processing AND contract analysis
-✅ **Database-first approach** - Checks existing data before processing
-✅ **Accurate clause page detection** - Uses actual page-wise paragraphs from PDF handler
-✅ **Better text matching** - Multiple matching algorithms for different clause types
-✅ **Proper session state management** - Stores all required data for clause mapping
-✅ **Fallback handling** - Re-processes if pages content is missing
+**Add this to identify the specific error:**
 
-The search functionality will now accurately detect which page contains each clause using the actual paragraph structure from your PDF handler!​​​​​​​​​​​​​​​​
+```python
+# Add to your PDF viewer section temporarily
+st.markdown('''
+<script>
+window.addEventListener('error', function(e) {
+    console.log('JavaScript Error Details:');
+    console.log('Message:', e.message);
+    console.log('Source:', e.filename);
+    console.log('Line:', e.lineno);
+    console.log('Column:', e.colno);
+    console.log('Error object:', e.error);
+});
+
+window.addEventListener('unhandledrejection', function(e) {
+    console.log('Unhandled Promise Rejection:', e.reason);
+});
+</script>
+''', unsafe_allow_html=True)
+```
+
+## **7. Quick Fix - Remove All JavaScript:**
+
+**If errors persist, use this completely JavaScript-free version:**
+
+```python
+def display_pdf_no_js(pdf_bytes, page_number=None, search_text=None):
+    """PDF display without any JavaScript"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    
+    # Simple URL construction
+    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
+    if page_number and page_number > 1:
+        pdf_url += f'#page={page_number}'
+    
+    # Pure HTML iframe
+    return f'''
+    <iframe src="{pdf_url}" 
+            width="100%" 
+            height="600px" 
+            style="border: 1px solid #ddd; border-radius: 5px;">
+    </iframe>
+    '''
+```
+
+The JavaScript errors are likely caused by:
+- **Cross-origin restrictions** when trying to access iframe content
+- **PDF viewer security** preventing script access
+- **Malformed JavaScript** due to special characters in search text
+
+Try the simpler versions first to eliminate the JavaScript errors, then gradually add back functionality if needed.​​​​​​​​​​​​​​​​
