@@ -1,232 +1,391 @@
-The error occurs because the PDF database ID is not being stored correctly in the session state during processing. Here are the fixes and comprehensive checks needed:
+Here are the specific changes needed to add batch processing functionality:
 
-## **1. Fix PDF Database ID Storage Issue:**
+## **1. Add Batch Processing Functions:**
 
-**In `process_pdf_enhanced()` function, after the enhanced handler call, add debugging and fix the storage:**
-
-```python
-if result.get('success'):
-    # FIX: Store processing information with proper checks
-    pdf_id = result.get('pdf_id')
-    if pdf_id:
-        st.session_state.pdf_database_ids[pdf_name] = pdf_id
-        st.session_state.processing_messages[pdf_name].append(f"✅ PDF stored in database with ID: {pdf_id}")
-    else:
-        st.session_state.processing_messages[pdf_name].append("⚠️ Warning: PDF processed but no database ID returned")
-        # Check if it's a duplicate
-        if result.get('duplicate'):
-            existing_id = result.get('existing_record', {}).get('id')
-            if existing_id:
-                st.session_state.pdf_database_ids[pdf_name] = existing_id
-                st.session_state.processing_messages[pdf_name].append(f"📋 Using existing database ID: {existing_id}")
-```
-
-## **2. Add Comprehensive Service Checks:**
-
-**Add this function after `initialize_session_state()`:**
+**Add these functions after the `check_all_services()` function:**
 
 ```python
-def check_all_services():
-    """Check all required services and return status"""
-    services_status = {
-        'database': {'status': False, 'message': 'Not checked'},
-        'obfuscation': {'status': False, 'message': 'Not checked'},
-        'pdf_handler': {'status': False, 'message': 'Not checked'},
-        'contract_analyzer': {'status': False, 'message': 'Not checked'}
+def create_batch_job(selected_pdfs, session_id):
+    """Create a new batch job in database"""
+    from config.database import store_batch_job_data
+    import uuid
+    
+    job_id = str(uuid.uuid4())
+    batch_data = {
+        'job_id': job_id,
+        'created_at': datetime.now(),
+        'total_files': len(selected_pdfs),
+        'processed_files': 0,
+        'failed_files': 0,
+        'status': 'pending',
+        'created_by': session_id,
+        'total_pages_processed': 0,
+        'total_pages_removed': 0,
+        'total_paragraphs_obfuscated': 0,
+        'results_json': {'files': selected_pdfs},
+        'error_log': ''
     }
     
-    # Check Database
-    try:
-        from config.database import check_database_connection
-        if check_database_connection():
-            services_status['database'] = {'status': True, 'message': 'Connected'}
-        else:
-            services_status['database'] = {'status': False, 'message': 'Connection failed'}
-    except ImportError:
-        services_status['database'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['database'] = {'status': False, 'message': f'Error: {str(e)}'}
+    batch_db_id = store_batch_job_data(batch_data)
+    return job_id, batch_db_id
+
+def run_batch_processing(selected_pdfs, job_id, progress_container):
+    """Run batch processing for selected PDFs"""
+    from utils.enhanced_pdf_handler import process_single_pdf_from_streamlit
+    from config.database import get_pdf_by_hash
+    import hashlib
     
-    # Check Obfuscation Service
-    try:
-        from services.obfuscation import ContentObfuscator
-        obfuscator = ContentObfuscator()
-        services_status['obfuscation'] = {'status': True, 'message': 'Available'}
-    except ImportError:
-        services_status['obfuscation'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['obfuscation'] = {'status': False, 'message': f'Error: {str(e)}'}
+    results = {
+        'processed': [],
+        'failed': [],
+        'skipped': [],
+        'total_pages_removed': 0,
+        'total_original_pages': 0
+    }
     
-    # Check PDF Handler
-    try:
-        from utils.enhanced_pdf_handler import EnhancedPDFHandler
-        handler = EnhancedPDFHandler(enable_obfuscation=False, enable_database=False)
-        services_status['pdf_handler'] = {'status': True, 'message': 'Available'}
-    except ImportError:
-        services_status['pdf_handler'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['pdf_handler'] = {'status': False, 'message': f'Error: {str(e)}'}
+    progress_bar = progress_container.progress(0)
+    status_text = progress_container.empty()
     
-    # Check Contract Analyzer
+    for i, pdf_name in enumerate(selected_pdfs):
+        try:
+            status_text.text(f"Processing {i+1}/{len(selected_pdfs)}: {pdf_name}")
+            
+            # Check if already processed (by hash)
+            pdf_bytes = st.session_state.pdf_files[pdf_name]
+            file_hash = hashlib.sha256(pdf_bytes).hexdigest()
+            existing_pdf = get_pdf_by_hash(file_hash)
+            
+            if existing_pdf:
+                st.session_state.pdf_database_ids[pdf_name] = existing_pdf['id']
+                results['skipped'].append({'name': pdf_name, 'reason': 'Already in database'})
+                st.session_state.analysis_status[pdf_name] = "Processed (from database)"
+            else:
+                # Process the PDF
+                result = process_single_pdf_from_streamlit(
+                    pdf_name=pdf_name,
+                    pdf_bytes=pdf_bytes,
+                    enable_obfuscation=True,
+                    uploaded_by=f"batch_{job_id}"
+                )
+                
+                if result.get('success'):
+                    st.session_state.pdf_database_ids[pdf_name] = result.get('pdf_id')
+                    st.session_state.obfuscation_summaries[pdf_name] = result.get('obfuscation_summary', {})
+                    
+                    # Run contract analysis
+                    pages_content = result.get('pages', [])
+                    contract_text = '\n\n'.join([
+                        para for page in pages_content 
+                        for para in page.get('paragraphs', [])
+                    ])
+                    
+                    # Store pages content for clause mapping
+                    st.session_state.pages_content[pdf_name] = pages_content
+                    
+                    # Analyze contract
+                    analysis_success = analyze_contract_for_batch(pdf_name, contract_text, result.get('pdf_id'))
+                    
+                    if analysis_success:
+                        results['processed'].append(pdf_name)
+                        st.session_state.analysis_status[pdf_name] = "Processed"
+                        
+                        # Track obfuscation stats
+                        obf_summary = result.get('obfuscation_summary', {})
+                        results['total_pages_removed'] += obf_summary.get('pages_removed_count', 0)
+                        results['total_original_pages'] += obf_summary.get('total_original_pages', 0)
+                    else:
+                        results['failed'].append({'name': pdf_name, 'error': 'Analysis failed'})
+                        st.session_state.analysis_status[pdf_name] = "Analysis failed"
+                else:
+                    results['failed'].append({'name': pdf_name, 'error': result.get('error', 'Unknown')})
+                    st.session_state.analysis_status[pdf_name] = f"Failed: {result.get('error', 'Unknown')}"
+            
+            # Update progress
+            progress_bar.progress((i + 1) / len(selected_pdfs))
+            
+        except Exception as e:
+            results['failed'].append({'name': pdf_name, 'error': str(e)})
+            st.session_state.analysis_status[pdf_name] = f"Error: {str(e)}"
+    
+    status_text.text("Batch processing completed!")
+    return results
+
+def analyze_contract_for_batch(pdf_name, contract_text, pdf_id):
+    """Analyze contract and store results for batch processing"""
     try:
         from contract_analyzer import ContractAnalyzer
-        analyzer = ContractAnalyzer()
-        services_status['contract_analyzer'] = {'status': True, 'message': 'Available'}
-    except ImportError:
-        services_status['contract_analyzer'] = {'status': False, 'message': 'Module not found'}
-    except Exception as e:
-        services_status['contract_analyzer'] = {'status': False, 'message': f'Error: {str(e)}'}
-    
-    return services_status
-```
-
-## **3. Update Session State Initialization:**
-
-**Replace the database initialization part in `initialize_session_state()` with:**
-
-```python
-def initialize_session_state():
-    """Initialize all session state variables"""
-    # Service checks
-    if 'services_checked' not in st.session_state:
-        st.session_state.services_status = check_all_services()
-        st.session_state.services_checked = True
-    
-    # Database initialization
-    if 'database_initialized' not in st.session_state:
-        if st.session_state.services_status['database']['status']:
-            try:
-                initialize_database()
-                st.session_state.database_initialized = True
-                st.session_state.database_status = "Connected and initialized"
-            except Exception as e:
-                st.session_state.database_initialized = False
-                st.session_state.database_status = f"Initialization failed: {str(e)}"
-        else:
-            st.session_state.database_initialized = False
-            st.session_state.database_status = st.session_state.services_status['database']['message']
-    
-    # ... rest of session_vars remains the same
-```
-
-## **4. Enhanced Feedback Form with Better Error Handling:**
-
-**Replace the feedback submission section in `render_feedback_form()` with:**
-
-```python
-if submitted:
-    # Validate that at least some feedback is provided
-    if (form_number_correct == "Select..." and pi_clause_correct == "Select..." and 
-        ci_clause_correct == "Select..." and summary_quality == "Select..." and 
-        not general_feedback.strip()):
-        st.error("Please provide at least some feedback before submitting.")
-        return
-    
-    # Enhanced PDF ID retrieval with debugging
-    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
-    
-    if not pdf_id:
-        # Debug information
-        st.error("❌ Cannot submit feedback - PDF not found in database")
+        from config.database import store_analysis_data, store_clause_data, get_next_analysis_version
+        import tempfile
         
-        with st.expander("🔧 Debug Information", expanded=False):
-            st.write("**Available PDF Database IDs:**")
-            st.write(st.session_state.pdf_database_ids)
-            st.write(f"**Looking for PDF:** {pdf_name}")
-            st.write(f"**Current PDF:** {st.session_state.current_pdf}")
-            st.write(f"**File stem:** {file_stem}")
+        contract_analyzer = ContractAnalyzer()
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = os.path.join(temp_dir, f"{Path(pdf_name).stem}.json")
+            analysis_results = contract_analyzer.analyze_contract(contract_text, output_path)
             
-            # Check if database is working
-            if not st.session_state.database_initialized:
-                st.write("**Database Status:** Not initialized")
-            else:
-                st.write("**Database Status:** Connected")
-        
-        st.info("💡 Try reprocessing the PDF to generate a database entry.")
-        return
-    
-    # Check database connection before submitting
-    if not st.session_state.database_initialized:
-        st.error("❌ Database not available. Cannot store feedback.")
-        return
-    
-    # Prepare feedback data (existing code remains the same)
-    # ... feedback_data preparation ...
-    
-    try:
-        feedback_id = store_feedback_data(feedback_data)
-        st.success("🎉 Thank you for your valuable feedback! It helps us improve our analysis.")
-        st.session_state.feedback_submitted[feedback_key] = True
-        st.balloons()
-        st.rerun()
+            # Store analysis in database
+            analysis_data = {
+                'pdf_id': pdf_id,
+                'analysis_date': datetime.now(),
+                'version': get_next_analysis_version(pdf_id),
+                'form_number': analysis_results.get('form_number'),
+                'pi_clause': analysis_results.get('pi_clause'),
+                'ci_clause': analysis_results.get('ci_clause'),
+                'data_usage_mentioned': analysis_results.get('data_usage_mentioned'),
+                'data_limitations_exists': analysis_results.get('data_limitations_exists'),
+                'summary': analysis_results.get('summary'),
+                'raw_json': analysis_results,
+                'processed_by': 'batch_analyzer',
+                'processing_time': 0.0
+            }
+            
+            analysis_id = store_analysis_data(analysis_data)
+            
+            # Store clauses
+            clauses = analysis_results.get('relevant_clauses', [])
+            if clauses:
+                clause_data = []
+                for i, clause in enumerate(clauses):
+                    clause_data.append({
+                        'clause_type': clause.get('type', 'unknown'),
+                        'clause_text': clause.get('text', ''),
+                        'clause_order': i + 1
+                    })
+                store_clause_data(clause_data, analysis_id)
+            
+            # Store in session state for immediate display
+            file_stem = Path(pdf_name).stem
+            st.session_state.json_data[file_stem] = analysis_results
+            
+            # Create clause mapping
+            if analysis_results.get('relevant_clauses') and pdf_name in st.session_state.pages_content:
+                clause_mapping = {}
+                for i, clause in enumerate(analysis_results['relevant_clauses']):
+                    page_num = find_clause_in_pages(clause['text'], st.session_state.pages_content[pdf_name])
+                    if page_num:
+                        clause_mapping[i] = page_num
+                st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+            
+            return True
+            
     except Exception as e:
-        st.error(f"❌ Failed to save feedback: {str(e)}")
-        
-        # Additional error context
-        with st.expander("🔧 Error Details", expanded=False):
-            st.write(f"**Error Type:** {type(e).__name__}")
-            st.write(f"**Error Message:** {str(e)}")
-            st.write(f"**PDF ID:** {pdf_id}")
-            st.write(f"**Database Status:** {st.session_state.database_status}")
+        print(f"Error analyzing contract for {pdf_name}: {str(e)}")
+        return False
 ```
 
-## **5. Enhanced Sidebar with Service Status:**
+## **2. Add Database Retrieval Function:**
 
-**Update the sidebar section in `main()` with:**
+**Add this function after the batch processing functions:**
 
 ```python
-with st.sidebar:
-    st.header("🔧 System Status")
-    
-    # Service status checks
-    services = st.session_state.get('services_status', {})
-    
-    for service_name, service_info in services.items():
-        status = service_info['status']
-        message = service_info['message']
+def load_analysis_from_database(pdf_name, pdf_id):
+    """Load existing analysis from database"""
+    try:
+        from config.database import get_latest_analysis
         
-        if status:
-            st.markdown(f"✅ **{service_name.replace('_', ' ').title()}:** {message}")
-        else:
-            st.markdown(f"❌ **{service_name.replace('_', ' ').title()}:** {message}")
+        analysis_record = get_latest_analysis(pdf_id)
+        if analysis_record:
+            # Convert database record to display format
+            analysis_data = analysis_record.get('raw_json', {})
+            if isinstance(analysis_data, str):
+                import json
+                analysis_data = json.loads(analysis_data)
+            
+            file_stem = Path(pdf_name).stem
+            st.session_state.json_data[file_stem] = analysis_data
+            
+            # Load clauses and create mapping if pages content exists
+            if pdf_name in st.session_state.pages_content and analysis_data.get('relevant_clauses'):
+                clause_mapping = {}
+                for i, clause in enumerate(analysis_data['relevant_clauses']):
+                    page_num = find_clause_in_pages(clause['text'], st.session_state.pages_content[pdf_name])
+                    if page_num:
+                        clause_mapping[i] = page_num
+                st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+            
+            return True
+    except Exception as e:
+        print(f"Error loading analysis from database: {str(e)}")
     
-    # Overall database status
-    if st.session_state.database_initialized:
-        st.success("✅ Database Ready")
+    return False
+```
+
+## **3. Update Session State:**
+
+**Add to `session_vars` in `initialize_session_state()`:**
+
+```python
+session_vars = {
+    # ... existing variables ...
+    'batch_job_active': False,
+    'batch_selected_pdfs': [],
+    'batch_results': {},
+}
+```
+
+## **4. Add Batch Selection UI to Left Pane:**
+
+**Replace the document list section in col1 with:**
+
+```python
+# Document list and batch selection
+if st.session_state.pdf_files:
+    st.subheader("📋 Document Management")
+    
+    # Batch processing section
+    st.markdown("### 🚀 Batch Processing")
+    
+    # Multi-select for batch processing
+    available_pdfs = list(st.session_state.pdf_files.keys())
+    unprocessed_pdfs = [pdf for pdf in available_pdfs 
+                       if st.session_state.analysis_status.get(pdf) != "Processed"]
+    
+    if unprocessed_pdfs:
+        selected_for_batch = st.multiselect(
+            "Select documents for batch processing (max 20):",
+            options=unprocessed_pdfs,
+            default=st.session_state.batch_selected_pdfs,
+            max_selections=20,
+            help="Select up to 20 documents to process simultaneously"
+        )
+        
+        st.session_state.batch_selected_pdfs = selected_for_batch
+        
+        col_batch1, col_batch2 = st.columns(2)
+        with col_batch1:
+            batch_button_disabled = (len(selected_for_batch) == 0 or 
+                                   st.session_state.batch_job_active or
+                                   not st.session_state.database_initialized)
+            
+            if st.button("🚀 Start Batch Processing", 
+                        disabled=batch_button_disabled,
+                        help="Process all selected documents"):
+                if len(selected_for_batch) > 0:
+                    st.session_state.batch_job_active = True
+                    st.rerun()
+        
+        with col_batch2:
+            if st.session_state.batch_job_active:
+                if st.button("⏹️ Cancel Batch"):
+                    st.session_state.batch_job_active = False
+                    st.rerun()
+        
+        if len(selected_for_batch) > 0:
+            st.info(f"📊 Selected: {len(selected_for_batch)} documents")
     else:
-        st.error(f"❌ Database: {st.session_state.database_status}")
+        st.info("All documents are already processed!")
     
-    # Refresh services button
-    if st.button("🔄 Refresh Services"):
-        st.session_state.services_status = check_all_services()
-        st.rerun()
+    # Batch processing execution
+    if st.session_state.batch_job_active and st.session_state.batch_selected_pdfs:
+        st.markdown("### ⚡ Processing in Progress...")
+        
+        # Create batch job
+        job_id, batch_db_id = create_batch_job(st.session_state.batch_selected_pdfs, get_session_id())
+        
+        # Progress container
+        progress_container = st.container()
+        
+        # Run batch processing
+        with st.spinner("Running batch analysis..."):
+            results = run_batch_processing(
+                st.session_state.batch_selected_pdfs, 
+                job_id, 
+                progress_container
+            )
+        
+        # Display results
+        st.success("✅ Batch processing completed!")
+        
+        col_result1, col_result2, col_result3 = st.columns(3)
+        with col_result1:
+            st.metric("✅ Processed", len(results['processed']))
+        with col_result2:
+            st.metric("⏭️ Skipped", len(results['skipped']))
+        with col_result3:
+            st.metric("❌ Failed", len(results['failed']))
+        
+        if results['failed']:
+            with st.expander("❌ Failed Documents", expanded=False):
+                for failed in results['failed']:
+                    st.write(f"• **{failed['name']}**: {failed['error']}")
+        
+        if results['skipped']:
+            with st.expander("⏭️ Skipped Documents", expanded=False):
+                for skipped in results['skipped']:
+                    st.write(f"• **{skipped['name']}**: {skipped['reason']}")
+        
+        # Store results and reset
+        st.session_state.batch_results[job_id] = results
+        st.session_state.batch_job_active = False
+        st.session_state.batch_selected_pdfs = []
+        
+        if st.button("🔄 Refresh Document List"):
+            st.rerun()
     
-    # ... rest of sidebar content ...
+    st.markdown("---")
+    
+    # Individual document selection (existing grid code)
+    st.subheader("📄 Individual Selection")
+    
+    # Create enhanced dataframe (existing code remains the same)
+    # ... existing grid code ...
 ```
 
-## **6. Add Process Validation:**
+## **5. Update PDF Selection Logic:**
 
-**Before processing any PDF, add this check in the grid selection section:**
+**Replace the grid selection handling with:**
 
 ```python
-# Before processing, check if all services are available
-services_ok = all(service['status'] for service in st.session_state.services_status.values())
-
-if not services_ok:
-    st.error("❌ Cannot process PDF - some services are unavailable")
-    failed_services = [name for name, info in st.session_state.services_status.items() if not info['status']]
-    st.write(f"Failed services: {', '.join(failed_services)}")
-    return
-
-# Then proceed with processing...
+# Handle PDF selection
+selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+    selected_pdf = selected_rows.iloc[0]['PDF Name']
+    if selected_pdf != st.session_state.get('current_pdf'):
+        set_current_pdf(selected_pdf)
+        
+        # Check if analysis exists in database first
+        pdf_id = st.session_state.pdf_database_ids.get(selected_pdf)
+        file_stem = Path(selected_pdf).stem
+        
+        if pdf_id and file_stem not in st.session_state.json_data:
+            # Try to load from database
+            if load_analysis_from_database(selected_pdf, pdf_id):
+                st.session_state.analysis_status[selected_pdf] = "Processed (from database)"
+                st.success(f"✅ Loaded existing analysis for {selected_pdf}")
+                st.rerun()
+        
+        # Process PDF if not already processed
+        if st.session_state.analysis_status.get(selected_pdf) not in ["Processed", "Processed (from database)"]:
+            # ... existing processing code ...
 ```
 
-These changes will:
-- ✅ **Fix the database ID storage issue**
-- ✅ **Add comprehensive service checks**
-- ✅ **Provide detailed error debugging**
-- ✅ **Show service status in sidebar**
-- ✅ **Prevent processing when services are down**
-- ✅ **Give users clear feedback about what's wrong**
+## **6. Add Batch Job History to Sidebar:**
 
-The feedback submission should now work correctly, and you'll have full visibility into any service issues.​​​​​​​​​​​​​​​​
+**Add this to the sidebar after service status:**
+
+```python
+# Batch processing history
+if st.session_state.batch_results:
+    st.markdown("---")
+    st.subheader("📊 Recent Batch Jobs")
+    
+    for job_id, results in list(st.session_state.batch_results.items())[-3:]:  # Show last 3
+        with st.expander(f"Job {job_id[:8]}...", expanded=False):
+            st.write(f"✅ Processed: {len(results['processed'])}")
+            st.write(f"❌ Failed: {len(results['failed'])}")
+            st.write(f"⏭️ Skipped: {len(results['skipped'])}")
+            if results.get('total_pages_removed', 0) > 0:
+                st.write(f"🔒 Pages removed: {results['total_pages_removed']}")
+```
+
+These changes will add:
+- ✅ **Multi-select interface** for choosing up to 20 documents
+- ✅ **Batch processing** with progress tracking
+- ✅ **Database job tracking** with batch_jobs table
+- ✅ **Automatic analysis retrieval** from database for processed documents
+- ✅ **Comprehensive results display** with success/failure metrics
+- ✅ **Prevention of duplicate processing** via file hash checks
+- ✅ **Progress indicators** and cancellation capability
+- ✅ **Batch job history** in sidebar
+
+The system will now efficiently handle bulk document processing while avoiding redundant work by checking the database first!​​​​​​​​​​​​​​​​
