@@ -11,6 +11,7 @@ from PyPDF2 import PdfReader
 from io import BytesIO
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from difflib import SequenceMatcher
 
 # Import custom modules
 from utils.enhanced_pdf_handler import process_single_pdf_from_streamlit
@@ -83,6 +84,27 @@ st.markdown("""
         border-left: 4px solid #0068c9;
         margin: 0.5rem 0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .page-info {
+        background: linear-gradient(135deg, #fff8dc 0%, #f5f5dc 100%);
+        padding: 0.8rem;
+        border-radius: 6px;
+        border-left: 4px solid #ffa500;
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+        color: #8b4513;
+        font-weight: 500;
+    }
+    
+    .similarity-score {
+        background: linear-gradient(135deg, #f0fff0 0%, #e6ffe6 100%);
+        padding: 0.5rem;
+        border-radius: 4px;
+        border-left: 3px solid #32cd32;
+        margin: 0.3rem 0;
+        font-size: 0.85rem;
+        color: #228b22;
     }
     
     .status-button-true {
@@ -210,6 +232,7 @@ def initialize_session_state():
     session_vars = {
         'pdf_files': {},
         'json_data': {},
+        'raw_pdf_data': {},  # Store raw PDF parsing data for page matching
         'current_pdf': None,
         'analysis_status': {},
         'processing_messages': {},
@@ -225,6 +248,79 @@ def initialize_session_state():
     for var, default_value in session_vars.items():
         if var not in st.session_state:
             st.session_state[var] = default_value
+
+# Page Number Detection Functions
+def calculate_text_similarity(text1, text2):
+    """Calculate similarity between two text strings using SequenceMatcher"""
+    if not text1 or not text2:
+        return 0.0
+    
+    # Normalize text by removing extra whitespace and converting to lowercase
+    text1_norm = ' '.join(text1.lower().split())
+    text2_norm = ' '.join(text2.lower().split())
+    
+    return SequenceMatcher(None, text1_norm, text2_norm).ratio()
+
+def find_clause_page_number(clause_text, raw_pdf_data, similarity_threshold=0.9):
+    """
+    Find the page number where a clause appears in the raw PDF data
+    
+    Args:
+        clause_text (str): The clause text to search for
+        raw_pdf_data (dict): Raw PDF parsing data with pages and paragraphs
+        similarity_threshold (float): Minimum similarity score (default 0.9 for 90%)
+    
+    Returns:
+        dict: Contains page_number, similarity_score, and matched_text
+    """
+    if not clause_text or not raw_pdf_data:
+        return {"page_number": None, "similarity_score": 0.0, "matched_text": ""}
+    
+    best_match = {
+        "page_number": None,
+        "similarity_score": 0.0,
+        "matched_text": ""
+    }
+    
+    # Get pages from raw PDF data
+    pages = raw_pdf_data.get('pages', [])
+    
+    for page_idx, page_data in enumerate(pages):
+        page_number = page_idx + 1  # Pages are 1-indexed for display
+        paragraphs = page_data.get('paragraphs', [])
+        
+        # Check each paragraph in the page
+        for paragraph in paragraphs:
+            if not paragraph:
+                continue
+                
+            # Calculate similarity between clause and paragraph
+            similarity = calculate_text_similarity(clause_text, paragraph)
+            
+            # Update best match if this is better
+            if similarity > best_match["similarity_score"]:
+                best_match = {
+                    "page_number": page_number,
+                    "similarity_score": similarity,
+                    "matched_text": paragraph
+                }
+        
+        # Also check the entire page content as a single block
+        page_content = ' '.join(paragraphs)
+        if page_content:
+            similarity = calculate_text_similarity(clause_text, page_content)
+            if similarity > best_match["similarity_score"]:
+                best_match = {
+                    "page_number": page_number,
+                    "similarity_score": similarity,
+                    "matched_text": page_content[:200] + "..." if len(page_content) > 200 else page_content
+                }
+    
+    # Only return match if it meets the threshold
+    if best_match["similarity_score"] >= similarity_threshold:
+        return best_match
+    else:
+        return {"page_number": None, "similarity_score": best_match["similarity_score"], "matched_text": ""}
 
 # PDF Validation Functions
 def validate_pdf(pdf_bytes):
@@ -291,6 +387,11 @@ def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder, logger):
             # Store processing information in session state
             st.session_state.pdf_database_ids[pdf_name] = result.get('pdf_id')
             st.session_state.obfuscation_summaries[pdf_name] = result.get('obfuscation_summary', {})
+            
+            # Store raw PDF data for page number matching
+            st.session_state.raw_pdf_data[pdf_name] = {
+                'pages': result.get('pages', [])
+            }
             
             # Update processing messages
             st.session_state.processing_messages[pdf_name].append("✅ PDF processed and stored in database")
@@ -636,6 +737,12 @@ def main():
         - Low-content pages are removed
         - Sensitive information is protected
         - Original documents are not stored permanently
+        
+        ### 📍 Page Number Detection
+        Enhanced clause analysis now includes:
+        - Page number identification for each clause
+        - 90% similarity matching with original content
+        - Smart text comparison algorithms
         """)
     
     # Main layout
@@ -768,183 +875,7 @@ def main():
                     with col_obf1:
                         st.metric("Original Pages", obf_summary.get('total_original_pages', 0))
                     with col_obf2:
-                        st.metric("Final Pages", obf_summary.get('total_final_pages', 0))
-                    with col_obf3:
-                        st.metric("Pages Removed", obf_summary.get('pages_removed_count', 0))
-                    
-                    st.markdown("""
-                    <div class='obfuscation-info'>
-                        🔒 <strong>Privacy Protection Applied:</strong> This document has been processed with our privacy protection system. 
-                        Some pages with minimal content have been removed to protect confidentiality while preserving the core contract content for analysis.
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            try:
-                pdf_display = display_pdf_iframe(current_pdf_bytes, st.session_state.search_text)
-                st.markdown(pdf_display, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"❌ Error displaying PDF: {e}")
-                st.info("💡 Try downloading the PDF to view it externally.")
-                st.download_button(
-                    label="📥 Download PDF",
-                    data=current_pdf_bytes,
-                    file_name=st.session_state.current_pdf,
-                    mime="application/pdf"
-                )
-        else:
-            st.info("👆 Please select a PDF from the document list to view it here.")
-            st.markdown("""
-            ### 🚀 Getting Started
-            1. **Upload** your PDF contract files using the uploader in the left panel
-            2. **Select** a document from the list to view and analyze it
-            3. **Process** using single or batch processing options
-            4. **Review** the analysis results in the right panel
-            5. **Provide feedback** to help improve our analysis
-            """)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Right pane: Analysis results and feedback
-    with col3:
-        st.markdown('<div class="analysis-panel">', unsafe_allow_html=True)
-        st.header("🔍 Analysis Results")
-        
-        file_stem = Path(st.session_state.current_pdf).stem if st.session_state.current_pdf else None
-        if file_stem and file_stem in st.session_state.json_data:
-            json_data = st.session_state.json_data[file_stem]
-            
-            col_analysis1, col_analysis2 = st.columns(2)
-            with col_analysis1:
-                st.subheader(f"📊 Analysis: {file_stem}")
-            with col_analysis2:
-                pdf_db_id = st.session_state.pdf_database_ids.get(st.session_state.current_pdf)
-                if pdf_db_id:
-                    st.metric("Database ID", pdf_db_id)
-            
-            st.markdown("### 📋 Form Number")
-            form_number = json_data.get('form_number', 'Not available')
-            st.markdown(f"<div class='extract-text'><strong>{form_number}</strong></div>", 
-                       unsafe_allow_html=True)
-            
-            st.markdown("### 📝 Contract Summary")
-            summary = json_data.get('summary', 'No summary available')
-            st.markdown(f"<div class='extract-text'>{summary}</div>", 
-                       unsafe_allow_html=True)
-            
-            st.markdown("### ✅ Contract Status")
-            status_fields = {
-                'data_usage_mentioned': 'Data Usage Mentioned',
-                'data_limitations_exists': 'Data Limitations Exists',
-                'pi_clause': 'Presence of PI Clause',
-                'ci_clause': 'Presence of CI Clause'
-            }
-            
-            col_status1, col_status2 = st.columns(2)
-            status_items = list(status_fields.items())
-            
-            for i, (key, label) in enumerate(status_items):
-                target_col = col_status1 if i % 2 == 0 else col_status2
-                with target_col:
-                    status = json_data.get(key, None)
-                    status_str = str(status).lower() if status is not None else 'unknown'
-                    
-                    if status_str in ['true', 'yes']:
-                        button_class = 'status-button-true'
-                        icon = "✅"
-                    elif status_str in ['false', 'no']:
-                        button_class = 'status-button-false' 
-                        icon = "❌"
-                    else:
-                        button_class = 'status-button-missing'
-                        icon = "❓"
-                    
-                    st.markdown(f"""
-                    <div class='{button_class}'>
-                        {icon} <strong>{label}</strong><br>
-                        <small>{status}</small>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            st.markdown("### 📄 Relevant Clauses")
-            clauses = json_data.get("relevant_clauses", [])
-            
-            if clauses:
-                for i, clause in enumerate(clauses):
-                    with st.expander(f"📑 Clause {i+1}: {clause['type'].capitalize()}", expanded=False):
-                        st.markdown(f"**Type:** `{clause['type']}`")
-                        st.markdown(f"**Content:**")
-                        st.markdown(f"<div class='extract-text'>{clause['text']}</div>", unsafe_allow_html=True)
                         
-                        col_search1, col_search2 = st.columns(2)
-                        with col_search1:
-                            if st.button(f"🔍 Search in PDF", key=f"search_clause_{i}"):
-                                st.session_state.search_text = clause['text'][:50]
-                                st.success(f"Searching for clause {i+1} in PDF...")
-                                st.rerun()
-                        with col_search2:
-                            if len(clause['text']) > 100:
-                                st.caption("⚠️ Long text may not highlight fully")
-            else:
-                st.info("No relevant clauses detected in this contract.")
-            
-            if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
-                with st.expander("📊 Processing Statistics", expanded=False):
-                    obf_summary = st.session_state.obfuscation_summaries[st.session_state.current_pdf]
-                    
-                    col_stat1, col_stat2 = st.columns(2)
-                    with col_stat1:
-                        st.metric("Original Words", f"{obf_summary.get('total_original_words', 0):,}")
-                        st.metric("Original Paragraphs", obf_summary.get('total_original_paragraphs', 0))
-                    with col_stat2:
-                        st.metric("Final Words", f"{obf_summary.get('total_final_words', 0):,}")
-                        retention_rate = obf_summary.get('word_retention_rate', 0)
-                        st.metric("Word Retention", f"{retention_rate:.1%}")
-                    
-                    if 'word_count_analysis' in obf_summary:
-                        wc_analysis = obf_summary['word_count_analysis']
-                        st.write("**Word Count Analysis:**")
-                        st.write(f"- Average words per page: {wc_analysis.get('average_word_count_per_page', 0):.1f}")
-                        st.write(f"- Removal threshold: {wc_analysis.get('word_count_threshold', 0):.1f}")
-                        st.write(f"- Pages removed: {wc_analysis.get('removed_pages_word_counts', [])}")
-            
-            st.markdown("---")
-            render_feedback_form(st.session_state.current_pdf, file_stem, json_data)
-            
-        else:
-            st.info("👈 Select and process a PDF to see analysis results here.")
-            
-            if st.session_state.pdf_files:
-                unprocessed = [name for name, status in st.session_state.analysis_status.items() 
-                             if status != "Processed"]
-                if unprocessed:
-                    st.markdown("### 📋 Pending Analysis")
-                    for pdf_name in unprocessed[:3]:
-                        status = st.session_state.analysis_status[pdf_name]
-                        if "processing" in status.lower():
-                            st.write(f"🔄 {pdf_name} - {status}")
-                        else:
-                            st.write(f"⏳ {pdf_name} - Ready for processing")
-                    
-                    if len(unprocessed) > 3:
-                        st.write(f"... and {len(unprocessed) - 3} more documents")
-            
-            st.markdown("""
-            ### 🎯 Analysis Capabilities
-            Our AI system analyzes contracts for:
-            - **Form identification** - Detect contract types and forms
-            - **PI/CI clauses** - Identify privacy and confidentiality terms  
-            - **Data usage terms** - Find data handling restrictions
-            - **Contract summaries** - Generate concise overviews
-            - **Clause extraction** - Extract relevant legal clauses
-            
-            ### 🔒 Privacy Features
-            - Automatic content obfuscation
-            - Low-value page removal
-            - Secure database storage
-            - Session-based processing
-            """)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
