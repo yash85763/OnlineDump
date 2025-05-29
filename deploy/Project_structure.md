@@ -1,315 +1,206 @@
-The console error is likely caused by the JavaScript code in the PDF viewer iframe. Here's how to fix the JavaScript issues:
+The issue is that `st.session_state.clause_page_mapping` is empty because the clause mapping is not being created correctly. Here are the specific fixes:
 
-## **1. Fix the PDF Display Function:**
+## **1. Fix: Ensure Clause Mapping is Created During Processing**
 
-**Replace the `display_pdf_iframe_with_page` function with:**
-
-```python
-def display_pdf_iframe_with_page(pdf_bytes, page_number=None, search_text=None):
-    """Display PDF with specific page and optional search text"""
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    
-    # Build PDF URL with parameters
-    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
-    url_params = []
-    
-    if page_number and page_number > 1:
-        url_params.append(f'page={page_number}')
-    
-    if search_text:
-        # Clean and encode search text properly
-        clean_search = sanitize_search_text(search_text)
-        if clean_search:
-            encoded_search = urllib.parse.quote(clean_search)
-            url_params.append(f'search={encoded_search}')
-    
-    if url_params:
-        pdf_url += '#' + '&'.join(url_params)
-    
-    # Create iframe without JavaScript initially
-    iframe_html = f'''
-    <iframe id="pdfViewer_{hash(search_text or '')}" 
-            src="{pdf_url}" 
-            width="100%" 
-            height="600px" 
-            type="application/pdf"
-            style="border: 1px solid #ddd; border-radius: 5px;"
-            onload="handlePdfLoad(this)">
-    </iframe>
-    '''
-    
-    # Add safer JavaScript
-    if search_text:
-        clean_search_js = sanitize_search_text(search_text).replace("'", "\\'").replace('"', '\\"')
-        iframe_html += f'''
-        <script>
-        function handlePdfLoad(iframe) {{
-            try {{
-                // Wait a bit for PDF to load
-                setTimeout(function() {{
-                    if (iframe && iframe.contentWindow) {{
-                        try {{
-                            // Try to send search message
-                            iframe.contentWindow.postMessage({{
-                                type: 'search',
-                                query: '{clean_search_js}',
-                                find: '{clean_search_js}'
-                            }}, '*');
-                        }} catch (searchError) {{
-                            console.log('PDF search not supported:', searchError.message);
-                        }}
-                    }}
-                }}, 2000);
-            }} catch (error) {{
-                console.log('PDF viewer interaction not available:', error.message);
-            }}
-        }}
-        
-        // Alternative: Try URL fragment approach
-        window.addEventListener('load', function() {{
-            try {{
-                var iframe = document.getElementById('pdfViewer_{hash(search_text or '')}');
-                if (iframe) {{
-                    var currentSrc = iframe.src;
-                    if (currentSrc.indexOf('#search=') === -1 && '{clean_search_js}') {{
-                        iframe.src = currentSrc + '#search={urllib.parse.quote(clean_search_js)}';
-                    }}
-                }}
-            }} catch (error) {{
-                console.log('URL update failed:', error.message);
-            }}
-        }});
-        </script>
-        '''
-    
-    return iframe_html
-```
-
-## **2. Improve the `sanitize_search_text` Function:**
-
-**Replace with a more robust version:**
+**In the `process_pdf_enhanced()` function, after successful analysis, add:**
 
 ```python
-def sanitize_search_text(text):
-    """Clean up text for PDF search and JavaScript safety"""
-    if not text:
-        return ""
-    
-    # Limit length
-    text = text[:50]
-    
-    # Remove potentially problematic characters
-    import re
-    # Keep only alphanumeric, spaces, and basic punctuation
-    text = re.sub(r'[^\w\s\-\.]', ' ', text)
-    
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Remove leading/trailing whitespace
-    text = text.strip()
-    
-    # Escape for JavaScript
-    text = text.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
-    
-    return text
-```
+# After storing analysis results in session state
+file_stem = Path(pdf_name).stem
+st.session_state.json_data[file_stem] = analysis_results
 
-## **3. Alternative: Simpler PDF Display Without JavaScript:**
-
-**If JavaScript continues to cause issues, use this simpler version:**
-
-```python
-def display_pdf_simple(pdf_bytes, page_number=None, search_text=None):
-    """Simple PDF display without complex JavaScript"""
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+# FIX: Create clause mapping immediately after analysis
+pages_content = result.get('pages', [])
+if pages_content and analysis_results.get('relevant_clauses'):
+    st.session_state.pages_content[pdf_name] = pages_content
     
-    # Build PDF URL
-    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
-    
-    # Add page parameter if specified
-    if page_number and page_number > 1:
-        pdf_url += f'#page={page_number}'
-    elif search_text:
-        # For search, try the search parameter
-        clean_search = sanitize_search_text(search_text)
-        if clean_search:
-            encoded_search = urllib.parse.quote(clean_search)
-            pdf_url += f'#search={encoded_search}'
-    
-    # Simple iframe without JavaScript
-    iframe_html = f'''
-    <div style="position: relative;">
-        <iframe src="{pdf_url}" 
-                width="100%" 
-                height="600px" 
-                type="application/pdf"
-                style="border: 1px solid #ddd; border-radius: 5px;">
-            <p>Your browser doesn't support PDF viewing. 
-               <a href="{pdf_url}" target="_blank">Click here to download the PDF</a>
-            </p>
-        </iframe>
-    </div>
-    '''
-    
-    return iframe_html
-```
-
-## **4. Update the PDF Viewer Call:**
-
-**In the middle pane, replace the PDF display section with:**
-
-```python
-# PDF display with error handling
-current_page = st.session_state.get('current_page_number', 1)
-
-try:
-    # Use simple version first to avoid JavaScript errors
-    pdf_display = display_pdf_simple(
-        current_pdf_bytes, 
-        current_page, 
-        st.session_state.search_text
-    )
-    st.markdown(pdf_display, unsafe_allow_html=True)
-    
-    # Show search info if active
-    if st.session_state.search_text:
-        st.info(f"🔍 Searching for: '{st.session_state.search_text}' on page {current_page}")
-        
-        # Clear search button
-        if st.button("❌ Clear Search"):
-            st.session_state.search_text = None
-            st.rerun()
-    
-    # Page navigation controls
-    col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
-    with col_nav2:
-        if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
-            total_pages = st.session_state.obfuscation_summaries[st.session_state.current_pdf].get('total_final_pages', 10)
+    # Create clause to page mapping
+    clause_mapping = {}
+    for i, clause in enumerate(analysis_results['relevant_clauses']):
+        page_num = find_clause_in_pages(clause['text'], pages_content)
+        if page_num:
+            clause_mapping[i] = page_num
         else:
-            total_pages = 10  # Default fallback
-            
-        new_page = st.number_input(
-            "Go to page:", 
-            min_value=1, 
-            max_value=total_pages,
-            value=current_page,
-            key=f"page_nav_{st.session_state.current_pdf}"
-        )
-        
-        if new_page != current_page:
-            st.session_state.current_page_number = new_page
-            st.rerun()
-
-except Exception as e:
-    st.error(f"❌ Error displaying PDF: {e}")
-    # Fallback to download option
-    st.download_button(
-        label="📥 Download PDF to view externally",
-        data=current_pdf_bytes,
-        file_name=st.session_state.current_pdf,
-        mime="application/pdf"
-    )
+            # Debug: Try with fewer words
+            for word_count in [3, 2, 1]:
+                page_num = find_clause_in_pages_with_word_count(clause['text'], pages_content, word_count)
+                if page_num:
+                    clause_mapping[i] = page_num
+                    break
+    
+    st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+    st.session_state.processing_messages[pdf_name].append(f"📍 Mapped {len(clause_mapping)} clauses to pages")
 ```
 
-## **5. Add Browser Compatibility Check:**
+## **2. Add Helper Function for Different Word Counts:**
 
-**Add this function to check PDF support:**
+**Add this function after `find_clause_in_pages`:**
 
 ```python
-def check_pdf_support():
-    """Add JavaScript to check PDF support"""
-    return '''
-    <script>
-    function checkPdfSupport() {
-        var supportsPdf = false;
-        try {
-            // Check if browser supports PDF viewing
-            var navigator = window.navigator;
-            var plugins = navigator.plugins;
-            
-            // Check for PDF plugin
-            for (var i = 0; i < plugins.length; i++) {
-                if (plugins[i].name.toLowerCase().indexOf('pdf') !== -1) {
-                    supportsPdf = true;
-                    break;
-                }
-            }
-            
-            // Chrome/Edge usually support PDF natively
-            if (navigator.userAgent.indexOf('Chrome') !== -1 || 
-                navigator.userAgent.indexOf('Edge') !== -1) {
-                supportsPdf = true;
-            }
-            
-        } catch (error) {
-            console.log('PDF support check failed:', error);
-        }
-        
-        if (!supportsPdf) {
-            console.log('PDF viewing may not be supported in this browser');
-        }
-        
-        return supportsPdf;
-    }
+def find_clause_in_pages_with_word_count(clause_text, pages_content, max_words=4):
+    """Find clause with specific word count"""
+    if not clause_text or not pages_content:
+        return None
     
-    // Run check when page loads
-    document.addEventListener('DOMContentLoaded', checkPdfSupport);
-    </script>
-    '''
+    clause_words = clause_text.strip().split()[:max_words]
+    if not clause_words:
+        return None
+    
+    search_phrase = ' '.join(clause_words).lower()
+    
+    for page in pages_content:
+        page_number = page.get('page_number', 0)
+        page_text = ' '.join(page.get('paragraphs', [])).lower()
+        
+        if search_phrase in page_text:
+            return page_number
+    
+    return None
 ```
 
-## **6. Debug JavaScript Errors:**
+## **3. Fix: Create Mapping When PDF is Selected (Fallback)**
 
-**Add this to identify the specific error:**
+**In the PDF selection logic, add clause mapping creation:**
 
 ```python
-# Add to your PDF viewer section temporarily
-st.markdown('''
-<script>
-window.addEventListener('error', function(e) {
-    console.log('JavaScript Error Details:');
-    console.log('Message:', e.message);
-    console.log('Source:', e.filename);
-    console.log('Line:', e.lineno);
-    console.log('Column:', e.colno);
-    console.log('Error object:', e.error);
-});
-
-window.addEventListener('unhandledrejection', function(e) {
-    console.log('Unhandled Promise Rejection:', e.reason);
-});
-</script>
-''', unsafe_allow_html=True)
+# Handle PDF selection
+selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+    selected_pdf = selected_rows.iloc[0]['PDF Name']
+    if selected_pdf != st.session_state.get('current_pdf'):
+        set_current_pdf(selected_pdf)
+        
+        # FIX: Create clause mapping if it doesn't exist
+        file_stem = Path(selected_pdf).stem
+        if (file_stem in st.session_state.json_data and 
+            selected_pdf not in st.session_state.clause_page_mapping and
+            selected_pdf in st.session_state.pages_content):
+            
+            # Create missing clause mapping
+            json_data = st.session_state.json_data[file_stem]
+            pages_content = st.session_state.pages_content[selected_pdf]
+            
+            if json_data.get('relevant_clauses'):
+                clause_mapping = {}
+                for i, clause in enumerate(json_data['relevant_clauses']):
+                    page_num = find_clause_in_pages(clause['text'], pages_content)
+                    if page_num:
+                        clause_mapping[i] = page_num
+                
+                st.session_state.clause_page_mapping[selected_pdf] = clause_mapping
+                st.success(f"✅ Created clause mapping: {len(clause_mapping)} clauses mapped")
+        
+        # ... rest of existing processing code ...
 ```
 
-## **7. Quick Fix - Remove All JavaScript:**
+## **4. Fix: Ensure Pages Content is Always Stored**
 
-**If errors persist, use this completely JavaScript-free version:**
+**In the `analyze_contract_for_batch()` function, make sure pages content is stored:**
 
 ```python
-def display_pdf_no_js(pdf_bytes, page_number=None, search_text=None):
-    """PDF display without any JavaScript"""
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+def analyze_contract_for_batch(pdf_name, contract_text, pdf_id):
+    # ... existing code ...
     
-    # Simple URL construction
-    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
-    if page_number and page_number > 1:
-        pdf_url += f'#page={page_number}'
+    # Store in session state for immediate display
+    file_stem = Path(pdf_name).stem
+    st.session_state.json_data[file_stem] = analysis_results
     
-    # Pure HTML iframe
-    return f'''
-    <iframe src="{pdf_url}" 
-            width="100%" 
-            height="600px" 
-            style="border: 1px solid #ddd; border-radius: 5px;">
-    </iframe>
-    '''
+    # FIX: Ensure pages content exists before creating clause mapping
+    if pdf_name not in st.session_state.pages_content:
+        # Try to get pages content from the result that called this function
+        # This should be passed as a parameter or retrieved from session state
+        st.warning(f"Pages content missing for {pdf_name} - clause mapping skipped")
+        return True
+    
+    # Create clause mapping
+    pages_content = st.session_state.pages_content[pdf_name]
+    if analysis_results.get('relevant_clauses'):
+        clause_mapping = {}
+        for i, clause in enumerate(analysis_results['relevant_clauses']):
+            page_num = find_clause_in_pages(clause['text'], pages_content)
+            if page_num:
+                clause_mapping[i] = page_num
+        
+        st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+    
+    return True
 ```
 
-The JavaScript errors are likely caused by:
-- **Cross-origin restrictions** when trying to access iframe content
-- **PDF viewer security** preventing script access
-- **Malformed JavaScript** due to special characters in search text
+## **5. Add Debug Information to See What's Missing:**
 
-Try the simpler versions first to eliminate the JavaScript errors, then gradually add back functionality if needed.​​​​​​​​​​​​​​​​
+**Add this debug section in your main function where clauses are displayed:**
+
+```python
+# DEBUG: Add this before the quick navigation section
+if st.session_state.current_pdf:
+    with st.expander("🔧 Debug Clause Mapping", expanded=False):
+        pdf_name = st.session_state.current_pdf
+        file_stem = Path(pdf_name).stem
+        
+        st.write(f"**Current PDF:** {pdf_name}")
+        st.write(f"**Has JSON data:** {file_stem in st.session_state.json_data}")
+        st.write(f"**Has pages content:** {pdf_name in st.session_state.pages_content}")
+        st.write(f"**Has clause mapping:** {pdf_name in st.session_state.clause_page_mapping}")
+        
+        if file_stem in st.session_state.json_data:
+            clauses = st.session_state.json_data[file_stem].get('relevant_clauses', [])
+            st.write(f"**Number of clauses:** {len(clauses)}")
+        
+        if pdf_name in st.session_state.pages_content:
+            pages = st.session_state.pages_content[pdf_name]
+            st.write(f"**Number of pages:** {len(pages)}")
+        
+        clause_mapping = st.session_state.clause_page_mapping.get(pdf_name, {})
+        st.write(f"**Clause mapping:** {clause_mapping}")
+        
+        # Manual trigger to create mapping
+        if st.button("🔧 Create Clause Mapping Now"):
+            if (file_stem in st.session_state.json_data and 
+                pdf_name in st.session_state.pages_content):
+                
+                json_data = st.session_state.json_data[file_stem]
+                pages_content = st.session_state.pages_content[pdf_name]
+                
+                clause_mapping = {}
+                for i, clause in enumerate(json_data.get('relevant_clauses', [])):
+                    page_num = find_clause_in_pages(clause['text'], pages_content)
+                    st.write(f"Clause {i}: '{clause['text'][:50]}...' → Page {page_num}")
+                    if page_num:
+                        clause_mapping[i] = page_num
+                
+                st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+                st.success(f"Created mapping with {len(clause_mapping)} clauses")
+                st.rerun()
+```
+
+## **6. Quick Fix: Force Create Mapping in Main Function**
+
+**Add this right before the quick navigation section:**
+
+```python
+# FORCE CREATE clause mapping if missing
+if (st.session_state.current_pdf and 
+    file_stem in st.session_state.json_data and
+    st.session_state.current_pdf not in st.session_state.clause_page_mapping):
+    
+    pdf_name = st.session_state.current_pdf
+    json_data = st.session_state.json_data[file_stem]
+    
+    # Try to get or create pages content
+    if pdf_name not in st.session_state.pages_content:
+        st.warning("⚠️ Pages content missing - clause navigation unavailable")
+    else:
+        pages_content = st.session_state.pages_content[pdf_name]
+        clause_mapping = {}
+        
+        for i, clause in enumerate(json_data.get('relevant_clauses', [])):
+            page_num = find_clause_in_pages(clause['text'], pages_content)
+            if page_num:
+                clause_mapping[i] = page_num
+        
+        st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+```
+
+The main issue is that the clause mapping creation is happening in `analyze_contract_for_batch()` but the pages content might not be available there. The fixes above ensure the mapping is created at multiple points where both the analysis results and pages content are available.
+
+Run with the debug section first to see exactly what's missing!​​​​​​​​​​​​​​​​
