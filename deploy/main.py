@@ -172,6 +172,14 @@ st.markdown("""
         margin: 1rem 0;
         font-size: 0.9rem;
     }
+    
+    .batch-progress {
+        background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        border: 1px solid #ced4da;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -205,11 +213,13 @@ def initialize_session_state():
         'current_pdf': None,
         'analysis_status': {},
         'processing_messages': {},
-        'pdf_database_ids': {},  # Map PDF names to database IDs
+        'pdf_database_ids': {},
         'search_text': None,
-        'feedback_submitted': {},  # Track feedback submission per PDF
-        'obfuscation_summaries': {},  # Store obfuscation info per PDF
-        'session_id': get_session_id()
+        'feedback_submitted': {},
+        'obfuscation_summaries': {},
+        'session_id': get_session_id(),
+        'batch_processing_status': None,
+        'batch_processed_count': 0
     }
     
     for var, default_value in session_vars.items():
@@ -256,7 +266,7 @@ def set_current_pdf(pdf_name):
     st.session_state.search_text = None
 
 # Enhanced PDF Processing Function
-def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder):
+def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder, logger):
     """Process a single PDF using the enhanced handler with database storage"""
     try:
         st.session_state.processing_messages[pdf_name] = []
@@ -302,7 +312,7 @@ def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder):
                 unsafe_allow_html=True
             )
             
-            # Now run contract analysis on obfuscated content
+            # Run contract analysis on obfuscated content
             st.session_state.processing_messages[pdf_name].append("🔍 Starting contract analysis...")
             message_placeholder.markdown(
                 "\n".join([f"<div class='processing-message'>{msg}</div>" 
@@ -319,7 +329,6 @@ def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder):
             
             # Run contract analysis
             contract_analyzer = ContractAnalyzer()
-            logger = ECFRLogger()
             
             with tempfile.TemporaryDirectory() as temp_dir:
                 output_path = os.path.join(temp_dir, f"{Path(pdf_name).stem}.json")
@@ -363,6 +372,7 @@ def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder):
                             st.session_state.processing_messages[pdf_name].append(f"💾 Analysis stored in database (ID: {analysis_id})")
                         except Exception as e:
                             st.session_state.processing_messages[pdf_name].append(f"⚠️ Warning: Could not store analysis in database: {str(e)}")
+                            logger.error(f"Database storage failed for {pdf_name}: {str(e)}")
                     
                     # Store analysis results in session state for display
                     file_stem = Path(pdf_name).stem
@@ -380,17 +390,74 @@ def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder):
             return False, error_msg
             
     except Exception as e:
+        logger.error(f"Processing failed for {pdf_name}: {str(e)}")
         return False, f"Processing failed: {str(e)}"
     finally:
-        # Keep processing messages for a short time
+        st.session_state.processing_messages[pdf_name].append("📝 Processing complete - Ready for review")
+
+# Batch Processing Function
+def process_batch_pdfs(logger):
+    """Process all uploaded PDFs one by one with progress updates"""
+    pdf_files = list(st.session_state.pdf_files.keys())
+    total_pdfs = len(pdf_files)
+    
+    if total_pdfs == 0:
+        st.warning("⚠️ No PDFs uploaded for batch processing.")
+        return
+    
+    st.session_state.batch_processing_status = "Running"
+    st.session_state.batch_processed_count = 0
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, pdf_name in enumerate(pdf_files):
+        if st.session_state.analysis_status.get(pdf_name) == "Processed":
+            continue  # Skip already processed PDFs
+        
+        status_text.markdown(
+            f"<div class='batch-progress'>📄 Processing {pdf_name} ({i+1}/{total_pdfs})...</div>",
+            unsafe_allow_html=True
+        )
+        
+        message_placeholder = st.empty()
+        success, result = process_pdf_enhanced(
+            st.session_state.pdf_files[pdf_name], 
+            pdf_name, 
+            message_placeholder,
+            logger
+        )
+        
+        if success:
+            st.session_state.analysis_status[pdf_name] = "Processed"
+            st.session_state.batch_processed_count += 1
+            status_text.markdown(
+                f"<div class='batch-progress'>✅ {pdf_name} processed successfully ({st.session_state.batch_processed_count}/{total_pdfs})</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.session_state.analysis_status[pdf_name] = f"❌ Failed: {result}"
+            status_text.markdown(
+                f"<div class='batch-progress'>❌ Failed to process {pdf_name}: {result} ({st.session_state.batch_processed_count}/{total_pdfs})</div>",
+                unsafe_allow_html=True
+            )
+        
+        # Update progress bar
+        progress = (i + 1) / total_pdfs
+        progress_bar.progress(progress)
+        
+        # Show processing messages
         if pdf_name in st.session_state.processing_messages:
-            st.session_state.processing_messages[pdf_name].append("📝 Processing complete - Ready for review")
+            with st.expander(f"📋 Processing Details for {pdf_name}", expanded=False):
+                for msg in st.session_state.processing_messages[pdf_name]:
+                    st.markdown(f"<div class='processing-message'>{msg}</div>", unsafe_allow_html=True)
+    
+    st.session_state.batch_processing_status = "Completed"
+    st.success(f"🎉 Batch processing completed: {st.session_state.batch_processed_count}/{total_pdfs} PDFs processed successfully")
 
 # Feedback System
 def render_feedback_form(pdf_name, file_stem, json_data):
     """Render feedback form for a specific PDF"""
-    
-    # Check if feedback already submitted
     feedback_key = f"feedback_{file_stem}"
     if st.session_state.feedback_submitted.get(feedback_key, False):
         st.success("✅ Thank you! Your feedback has been submitted for this document.")
@@ -407,7 +474,6 @@ def render_feedback_form(pdf_name, file_stem, json_data):
         col1, col2 = st.columns(2)
         
         with col1:
-            # Form Number Feedback
             st.write("**Form Number Analysis**")
             form_number_correct = st.selectbox(
                 "Is the form number correctly identified?",
@@ -421,7 +487,6 @@ def render_feedback_form(pdf_name, file_stem, json_data):
                 key=f"form_feedback_{file_stem}"
             )
             
-            # PI Clause Feedback
             st.write("**PI Clause Detection**")
             pi_clause_correct = st.selectbox(
                 "Is the PI clause detection accurate?",
@@ -436,7 +501,6 @@ def render_feedback_form(pdf_name, file_stem, json_data):
             )
         
         with col2:
-            # CI Clause Feedback
             st.write("**CI Clause Detection**")
             ci_clause_correct = st.selectbox(
                 "Is the CI clause detection accurate?",
@@ -450,7 +514,6 @@ def render_feedback_form(pdf_name, file_stem, json_data):
                 key=f"ci_feedback_{file_stem}"
             )
             
-            # Summary Feedback
             st.write("**Summary Quality**")
             summary_quality = st.selectbox(
                 "How would you rate the summary quality?",
@@ -464,7 +527,6 @@ def render_feedback_form(pdf_name, file_stem, json_data):
                 key=f"summary_feedback_{file_stem}"
             )
         
-        # General feedback and rating
         st.write("**Overall Assessment**")
         col3, col4 = st.columns([2, 1])
         with col3:
@@ -483,22 +545,18 @@ def render_feedback_form(pdf_name, file_stem, json_data):
             )
             st.write(f"Rating: {'⭐' * rating}")
         
-        # Submit button
         submitted = st.form_submit_button("🚀 Submit Feedback", use_container_width=True)
         
         if submitted:
-            # Validate that at least some feedback is provided
             if (form_number_correct == "Select..." and pi_clause_correct == "Select..." and 
                 ci_clause_correct == "Select..." and summary_quality == "Select..." and 
                 not general_feedback.strip()):
                 st.error("Please provide at least some feedback before submitting.")
                 return
             
-            # Get PDF ID from session state
             pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
             
             if pdf_id:
-                # Prepare feedback data
                 feedback_text_parts = []
                 if form_number_correct != "Select...":
                     feedback_text_parts.append(f"Form Number: {form_number_correct}")
@@ -548,6 +606,7 @@ def render_feedback_form(pdf_name, file_stem, json_data):
 def main():
     # Initialize session state
     initialize_session_state()
+    logger = ECFRLogger()
     
     # Header
     st.markdown("""
@@ -561,18 +620,15 @@ def main():
     with st.sidebar:
         st.header("🔧 System Status")
         
-        # Database status
         if st.session_state.database_initialized:
             st.markdown("<div class='database-status-success'>✅ Database Connected</div>", unsafe_allow_html=True)
         else:
             st.markdown(f"<div class='database-status-error'>❌ Database: {st.session_state.database_status}</div>", unsafe_allow_html=True)
         
-        # Session info
         st.write(f"**Session ID:** `{st.session_state.session_id[:8]}...`")
-        st.write(f"**PDFs Processed:** {len(st.session_state.pdf_files)}")
-        st.write(f"**Analyses Complete:** {len(st.session_state.json_data)}")
+        st.write(f"**PDFs Processed:** {len([s for s in st.session_state.analysis_status.values() if s == 'Processed'])}/{len(st.session_state.pdf_files)}")
+        st.write(f"**Batch Status:** {st.session_state.batch_processing_status or 'Not started'}")
         
-        # Privacy notice
         st.markdown("""
         ---
         ### 🔒 Privacy Protection
@@ -605,7 +661,7 @@ def main():
                     pdf_bytes = pdf.getvalue()
                     is_valid, validation_msg = validate_pdf(pdf_bytes)
                     if is_valid:
-                        if len(pdf_bytes) > 10 * 1024 * 1024:  # 10MB limit
+                        if len(pdf_bytes) > 10 * 1024 * 1024:
                             st.warning(f"⚠️ {pdf.name} is larger than 10MB. Processing may be slow.")
                         st.session_state.pdf_files[pdf.name] = pdf_bytes
                         st.session_state.analysis_status[pdf.name] = "Ready for processing"
@@ -613,18 +669,49 @@ def main():
                     else:
                         st.error(f"❌ {pdf.name}: {validation_msg}")
         
+        # Processing buttons
+        st.subheader("⚙️ Process Documents")
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("🔄 Process Single PDF", disabled=not st.session_state.current_pdf):
+                if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
+                    if st.session_state.analysis_status.get(st.session_state.current_pdf) != "Processed":
+                        st.session_state.processing_messages[st.session_state.current_pdf] = []
+                        with st.spinner(f"🔄 Processing {st.session_state.current_pdf}..."):
+                            message_placeholder = st.empty()
+                            success, result = process_pdf_enhanced(
+                                st.session_state.pdf_files[st.session_state.current_pdf], 
+                                st.session_state.current_pdf, 
+                                message_placeholder,
+                                logger
+                            )
+                            
+                            if success:
+                                st.session_state.analysis_status[st.session_state.current_pdf] = "Processed"
+                                st.success(f"✅ Analysis complete for {st.session_state.current_pdf}")
+                            else:
+                                st.session_state.analysis_status[st.session_state.current_pdf] = f"❌ Failed: {result}"
+                                st.error(f"❌ Failed to process {st.session_state.current_pdf}: {result}")
+                            
+                            if st.session_state.current_pdf in st.session_state.processing_messages:
+                                with st.expander("📋 Processing Details", expanded=False):
+                                    for msg in st.session_state.processing_messages[st.session_state.current_pdf]:
+                                        st.markdown(f"<div class='processing-message'>{msg}</div>", unsafe_allow_html=True)
+        
+        with col_btn2:
+            if st.button("📚 Process All PDFs (Batch)", disabled=not st.session_state.pdf_files):
+                process_batch_pdfs(logger)
+        
         # Document list and selection
         if st.session_state.pdf_files:
             st.subheader("📋 Available Documents")
             
-            # Create enhanced dataframe
             pdf_data = []
             for pdf_name in st.session_state.pdf_files.keys():
                 status = st.session_state.analysis_status.get(pdf_name, "Ready")
                 db_id = st.session_state.pdf_database_ids.get(pdf_name, "N/A")
-                file_size = len(st.session_state.pdf_files[pdf_name]) / 1024  # KB
+                file_size = len(st.session_state.pdf_files[pdf_name]) / 1024
                 
-                # Status emoji
                 status_emoji = "✅" if status == "Processed" else "⏳" if "processing" in status.lower() else "📄"
                 
                 pdf_data.append({
@@ -651,37 +738,11 @@ def main():
                 theme='streamlit'
             )
 
-            # Handle PDF selection
             selected_rows = grid_response.get('selected_rows', pd.DataFrame())
             if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
                 selected_pdf = selected_rows.iloc[0]['PDF Name']
                 if selected_pdf != st.session_state.get('current_pdf'):
                     set_current_pdf(selected_pdf)
-                    
-                    # Process PDF if not already processed
-                    if st.session_state.analysis_status.get(selected_pdf) != "Processed":
-                        st.session_state.processing_messages[selected_pdf] = []
-                        with st.spinner(f"🔄 Processing {selected_pdf}..."):
-                            message_placeholder = st.empty()
-                            success, result = process_pdf_enhanced(
-                                st.session_state.pdf_files[selected_pdf], 
-                                selected_pdf, 
-                                message_placeholder
-                            )
-                            
-                            if success:
-                                st.session_state.analysis_status[selected_pdf] = "Processed"
-                                st.success(f"✅ Analysis complete for {selected_pdf}")
-                            else:
-                                st.session_state.analysis_status[selected_pdf] = f"❌ Failed: {result}"
-                                st.error(f"❌ Failed to process {selected_pdf}: {result}")
-                            
-                            # Clear processing messages after showing
-                            if selected_pdf in st.session_state.processing_messages:
-                                final_messages = st.session_state.processing_messages[selected_pdf].copy()
-                                with st.expander("📋 Processing Details", expanded=False):
-                                    for msg in final_messages:
-                                        st.markdown(f"<div class='processing-message'>{msg}</div>", unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -693,7 +754,6 @@ def main():
         if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
             current_pdf_bytes = st.session_state.pdf_files[st.session_state.current_pdf]
             
-            # PDF info header
             col_info1, col_info2 = st.columns(2)
             with col_info1:
                 st.subheader(f"📄 {st.session_state.current_pdf}")
@@ -701,7 +761,6 @@ def main():
                 file_size_mb = len(current_pdf_bytes) / (1024 * 1024)
                 st.metric("File Size", f"{file_size_mb:.2f} MB")
             
-            # Show obfuscation info if available
             if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
                 obf_summary = st.session_state.obfuscation_summaries[st.session_state.current_pdf]
                 if obf_summary.get('obfuscation_applied', False):
@@ -720,7 +779,6 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
             
-            # PDF display
             try:
                 pdf_display = display_pdf_iframe(current_pdf_bytes, st.session_state.search_text)
                 st.markdown(pdf_display, unsafe_allow_html=True)
@@ -739,8 +797,9 @@ def main():
             ### 🚀 Getting Started
             1. **Upload** your PDF contract files using the uploader in the left panel
             2. **Select** a document from the list to view and analyze it
-            3. **Review** the analysis results in the right panel
-            4. **Provide feedback** to help improve our analysis
+            3. **Process** using single or batch processing options
+            4. **Review** the analysis results in the right panel
+            5. **Provide feedback** to help improve our analysis
             """)
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -754,7 +813,6 @@ def main():
         if file_stem and file_stem in st.session_state.json_data:
             json_data = st.session_state.json_data[file_stem]
             
-            # Analysis header with database info
             col_analysis1, col_analysis2 = st.columns(2)
             with col_analysis1:
                 st.subheader(f"📊 Analysis: {file_stem}")
@@ -763,19 +821,16 @@ def main():
                 if pdf_db_id:
                     st.metric("Database ID", pdf_db_id)
             
-            # Form Number
             st.markdown("### 📋 Form Number")
             form_number = json_data.get('form_number', 'Not available')
             st.markdown(f"<div class='extract-text'><strong>{form_number}</strong></div>", 
                        unsafe_allow_html=True)
             
-            # Summary
             st.markdown("### 📝 Contract Summary")
             summary = json_data.get('summary', 'No summary available')
             st.markdown(f"<div class='extract-text'>{summary}</div>", 
                        unsafe_allow_html=True)
             
-            # Contract Status - Enhanced UI
             st.markdown("### ✅ Contract Status")
             status_fields = {
                 'data_usage_mentioned': 'Data Usage Mentioned',
@@ -784,7 +839,6 @@ def main():
                 'ci_clause': 'Presence of CI Clause'
             }
             
-            # Create a nice grid for status
             col_status1, col_status2 = st.columns(2)
             status_items = list(status_fields.items())
             
@@ -794,7 +848,6 @@ def main():
                     status = json_data.get(key, None)
                     status_str = str(status).lower() if status is not None else 'unknown'
                     
-                    # Determine button style
                     if status_str in ['true', 'yes']:
                         button_class = 'status-button-true'
                         icon = "✅"
@@ -812,7 +865,6 @@ def main():
                     </div>
                     """, unsafe_allow_html=True)
             
-            # Relevant Clauses
             st.markdown("### 📄 Relevant Clauses")
             clauses = json_data.get("relevant_clauses", [])
             
@@ -823,11 +875,10 @@ def main():
                         st.markdown(f"**Content:**")
                         st.markdown(f"<div class='extract-text'>{clause['text']}</div>", unsafe_allow_html=True)
                         
-                        # Search functionality
                         col_search1, col_search2 = st.columns(2)
                         with col_search1:
                             if st.button(f"🔍 Search in PDF", key=f"search_clause_{i}"):
-                                st.session_state.search_text = clause['text'][:50]  # Limit search text
+                                st.session_state.search_text = clause['text'][:50]
                                 st.success(f"Searching for clause {i+1} in PDF...")
                                 st.rerun()
                         with col_search2:
@@ -836,7 +887,6 @@ def main():
             else:
                 st.info("No relevant clauses detected in this contract.")
             
-            # Processing Statistics
             if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
                 with st.expander("📊 Processing Statistics", expanded=False):
                     obf_summary = st.session_state.obfuscation_summaries[st.session_state.current_pdf]
@@ -850,7 +900,6 @@ def main():
                         retention_rate = obf_summary.get('word_retention_rate', 0)
                         st.metric("Word Retention", f"{retention_rate:.1%}")
                     
-                    # Word count analysis if available
                     if 'word_count_analysis' in obf_summary:
                         wc_analysis = obf_summary['word_count_analysis']
                         st.write("**Word Count Analysis:**")
@@ -858,20 +907,18 @@ def main():
                         st.write(f"- Removal threshold: {wc_analysis.get('word_count_threshold', 0):.1f}")
                         st.write(f"- Pages removed: {wc_analysis.get('removed_pages_word_counts', [])}")
             
-            # Feedback Section
             st.markdown("---")
             render_feedback_form(st.session_state.current_pdf, file_stem, json_data)
             
         else:
             st.info("👈 Select and process a PDF to see analysis results here.")
             
-            # Show helpful information
             if st.session_state.pdf_files:
                 unprocessed = [name for name, status in st.session_state.analysis_status.items() 
                              if status != "Processed"]
                 if unprocessed:
                     st.markdown("### 📋 Pending Analysis")
-                    for pdf_name in unprocessed[:3]:  # Show first 3
+                    for pdf_name in unprocessed[:3]:
                         status = st.session_state.analysis_status[pdf_name]
                         if "processing" in status.lower():
                             st.write(f"🔄 {pdf_name} - {status}")
@@ -881,7 +928,6 @@ def main():
                     if len(unprocessed) > 3:
                         st.write(f"... and {len(unprocessed) - 3} more documents")
             
-            # System capabilities info
             st.markdown("""
             ### 🎯 Analysis Capabilities
             Our AI system analyzes contracts for:
