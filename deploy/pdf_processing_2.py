@@ -1,501 +1,881 @@
-# tasks/pdf_processing.py - Celery tasks for PDF processing
-
-from celery import Celery
-from config.database import (
-    store_pdf_data, store_analysis_data, store_clause_data,
-    get_pdf_by_hash, update_batch_job_status
-)
-from utils.obfuscation import ContentObfuscator, ObfuscationConfig
-from utils.pdf_handler import PDFHandler
-from utils.contract_analyzer import ContractAnalyzer
-from utils.hash_utils import calculate_file_hash
-import json
-import tempfile
 import os
+import json
+import base64
+import streamlit as st
+import uuid
+import tempfile
+import urllib.parse
+from pathlib import Path
 from datetime import datetime
+from PyPDF2 import PdfReader
+from io import BytesIO
+import pandas as pd
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from difflib import SequenceMatcher
 
-# Get Celery app
-from config.database import get_celery_app
-celery_app = get_celery_app()
+# Import custom modules
+from utils.enhanced_pdf_handler import process_single_pdf_from_streamlit
+from contract_analyzer import ContractAnalyzer
+from ecfr_logger import ECFRLogger
+from config.database import (
+    initialize_database, 
+    store_analysis_data, 
+    store_clause_data, 
+    store_feedback_data,
+    get_next_analysis_version,
+    check_database_connection
+)
+from dotenv import load_dotenv
 
-@celery_app.task(bind=True)
-def process_pdf_async(self, pdf_bytes_b64, pdf_name, session_id, obfuscation_config=None):
-    """
-    Asynchronous PDF processing task with automatic obfuscation.
-    
-    Args:
-        self: Celery task instance
-        pdf_bytes_b64: Base64 encoded PDF bytes
-        pdf_name: Name of the PDF file
-        session_id: User session ID
-        obfuscation_config: Optional custom obfuscation configuration
-        
-    Returns:
-        dict: Processing results
-    """
-    
-    try:
-        # Update task status
-        self.update_state(state='PROCESSING', meta={'step': 'Starting PDF processing'})
-        
-        # Decode PDF bytes
-        import base64
-        pdf_bytes = base64.b64decode(pdf_bytes_b64)
-        
-        # Calculate file hash for deduplication
-        file_hash = calculate_file_hash(pdf_bytes)
-        
-        # Check if PDF already exists
-        existing_pdf = get_pdf_by_hash(file_hash)
-        if existing_pdf:
-            return {
-                'success': True,
-                'pdf_id': existing_pdf['id'],
-                'message': 'PDF already processed (deduplication)',
-                'existing': True
-            }
-        
-        # Stage 1: PDF Parsing and Obfuscation
-        self.update_state(state='PROCESSING', meta={'step': 'Parsing PDF and applying obfuscation'})
-        
-        pdf_result = process_pdf_with_obfuscation(pdf_bytes, pdf_name, file_hash, session_id, obfuscation_config)
-        
-        if not pdf_result['success']:
-            return pdf_result
-        
-        pdf_id = pdf_result['pdf_id']
-        
-        # Stage 2: Contract Analysis
-        self.update_state(state='PROCESSING', meta={'step': 'Analyzing contract content'})
-        
-        analysis_result = analyze_contract_content(pdf_id, session_id)
-        
-        if not analysis_result['success']:
-            return analysis_result
-        
-        analysis_id = analysis_result['analysis_id']
-        
-        # Stage 3: Clause Extraction
-        self.update_state(state='PROCESSING', meta={'step': 'Extracting clauses'})
-        
-        clause_result = extract_and_store_clauses(analysis_id, analysis_result['analysis_data'])
-        
-        return {
-            'success': True,
-            'pdf_id': pdf_id,
-            'analysis_id': analysis_id,
-            'clause_ids': clause_result['clause_ids'],
-            'analysis_data': analysis_result['analysis_data'],
-            'obfuscation_stats': pdf_result.get('obfuscation_stats'),
-            'message': 'PDF processing completed successfully'
-        }
-        
-    except Exception as e:
-        self.update_state(state='FAILURE', meta={'error': str(e)})
-        return {
-            'success': False,
-            'error': str(e),
-            'message': 'PDF processing failed'
-        }
+load_dotenv()
 
-def process_pdf_with_obfuscation(pdf_bytes, pdf_name, file_hash, session_id, obfuscation_config=None):
-    """Process PDF with automatic obfuscation"""
+# Set page configuration
+st.set_page_config(
+    page_title="Enhanced Contract Analysis Platform",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    page_icon="📄"
+)
+
+# Enhanced CSS for better UI
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
     
-    try:
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
-            temp_file.write(pdf_bytes)
-            temp_path = temp_file.name
-        
+    .left-pane {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 1px solid #e9ecef;
+        height: 85vh;
+        overflow-y: auto;
+    }
+    
+    .pdf-viewer {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 1rem;
+        height: 85vh;
+        overflow-y: auto;
+        background-color: #ffffff;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .analysis-panel {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 10px;
+        padding: 1.5rem;
+        height: 85vh;
+        overflow-y: auto;
+    }
+    
+    .extract-text {
+        background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #0068c9;
+        margin: 0.5rem 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .page-info {
+        background: linear-gradient(135deg, #fff8dc 0%, #f5f5dc 100%);
+        padding: 0.8rem;
+        border-radius: 6px;
+        border-left: 4px solid #ffa500;
+        margin: 0.5rem 0;
+        font-size: 0.9rem;
+        color: #8b4513;
+        font-weight: 500;
+    }
+    
+    .similarity-score {
+        background: linear-gradient(135deg, #f0fff0 0%, #e6ffe6 100%);
+        padding: 0.5rem;
+        border-radius: 4px;
+        border-left: 3px solid #32cd32;
+        margin: 0.3rem 0;
+        font-size: 0.85rem;
+        color: #228b22;
+    }
+    
+    .status-button-true {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        margin: 0.3rem 0;
+        display: inline-block;
+        font-weight: 500;
+        box-shadow: 0 2px 4px rgba(40,167,69,0.3);
+    }
+    
+    .status-button-false {
+        background: linear-gradient(135deg, #dc3545 0%, #fd7e14 100%);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        margin: 0.3rem 0;
+        display: inline-block;
+        font-weight: 500;
+        box-shadow: 0 2px 4px rgba(220,53,69,0.3);
+    }
+    
+    .status-button-missing {
+        background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+        color: #212529;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        margin: 0.3rem 0;
+        display: inline-block;
+        font-weight: 500;
+        box-shadow: 0 2px 4px rgba(255,193,7,0.3);
+    }
+    
+    .processing-message {
+        color: #0068c9;
+        font-size: 0.9rem;
+        padding: 0.3rem 0;
+        border-left: 3px solid #0068c9;
+        padding-left: 0.8rem;
+        margin: 0.2rem 0;
+        background-color: #f8f9ff;
+        border-radius: 4px;
+    }
+    
+    .database-status-success {
+        background-color: #d4edda;
+        color: #155724;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border: 1px solid #c3e6cb;
+        margin: 0.5rem 0;
+    }
+    
+    .database-status-error {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 0.5rem;
+        border-radius: 5px;
+        border: 1px solid #f5c6cb;
+        margin: 0.5rem 0;
+    }
+    
+    .feedback-section {
+        background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 1px solid #ffeaa7;
+        margin-top: 1rem;
+    }
+    
+    .metric-card {
+        background: white;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        margin: 0.5rem 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .obfuscation-info {
+        background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+        border: 1px solid #ffeaa7;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+    }
+    
+    .batch-progress {
+        background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        border: 1px solid #ced4da;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Session Management Functions
+def get_session_id():
+    """Get or create session ID"""
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+    return st.session_state.session_id
+
+def initialize_session_state():
+    """Initialize all session state variables"""
+    # Database initialization
+    if 'database_initialized' not in st.session_state:
         try:
-            # Initialize PDF handler and obfuscator
-            pdf_handler = PDFHandler()
-            
-            # Create default obfuscation config if none provided
-            if not obfuscation_config:
-                obfuscation_config = ObfuscationConfig(
-                    enable_page_filtering=True,
-                    word_count_threshold_multiplier=1.0,
-                    enable_keyword_filtering=True,
-                    obfuscation_keywords=[
-                        "confidential", "proprietary", "ssn", "social security",
-                        "credit card", "bank account", "password", "medical record"
-                    ],
-                    keyword_combinations=[
-                        ["personal", "information"],
-                        ["financial", "data"],
-                        ["customer", "data"]
-                    ]
-                )
-            
-            obfuscator = ContentObfuscator(obfuscation_config)
-            
-            # Process PDF
-            pdf_result = pdf_handler.process_pdf(temp_path)
-            
-            if not pdf_result.get("parsable", False):
-                return {
-                    'success': False,
-                    'error': 'PDF is not parsable',
-                    'message': 'Failed to extract text from PDF'
-                }
-            
-            # Apply obfuscation
-            obfuscated_result = obfuscator.obfuscate_content(pdf_result)
-            
-            # Calculate metrics
-            original_pages = pdf_result.get("pages", [])
-            obfuscated_pages = obfuscated_result.get("pages", [])
-            
-            original_word_count = sum(len(para.split()) for page in original_pages 
-                                    for para in page.get("paragraphs", []))
-            final_word_count = sum(len(para.split()) for page in obfuscated_pages 
-                                 for para in page.get("paragraphs", []))
-            
-            original_page_count = len(original_pages)
-            final_page_count = len(obfuscated_pages)
-            
-            # Extract content
-            raw_content = "\n\n".join(para for page in original_pages 
-                                    for para in page.get("paragraphs", []))
-            final_content = "\n\n".join(para for page in obfuscated_pages 
-                                       for para in page.get("paragraphs", []))
-            
-            # Get obfuscation statistics
-            obfuscation_stats = obfuscator.get_obfuscation_report()
-            
-            # Store PDF data
-            pdf_data = {
-                'pdf_name': pdf_name,
-                'file_hash': file_hash,
-                'upload_date': datetime.now(),
-                'processed_date': datetime.now(),
-                'layout': pdf_result.get("layout", "unknown"),
-                'original_word_count': original_word_count,
-                'original_page_count': original_page_count,
-                'parsability': True,
-                'final_word_count': final_word_count,
-                'final_page_count': final_page_count,
-                'avg_words_per_page': final_word_count / final_page_count if final_page_count > 0 else 0,
-                'raw_content': raw_content,
-                'final_content': final_content,
-                'obfuscation_applied': True,
-                'pages_removed_count': obfuscation_stats['summary']['pages_removed'],
-                'paragraphs_obfuscated_count': obfuscation_stats['summary']['paragraphs_obfuscated'],
-                'obfuscation_summary': obfuscation_stats,
-                'uploaded_by': session_id
-            }
-            
-            pdf_id = store_pdf_data(pdf_data)
-            
-            return {
-                'success': True,
-                'pdf_id': pdf_id,
-                'obfuscation_stats': obfuscation_stats,
-                'message': 'PDF processed and obfuscated successfully'
-            }
-            
-        finally:
-            # Clean up temporary file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-                
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'message': 'PDF processing failed'
-        }
+            if check_database_connection():
+                initialize_database()
+                st.session_state.database_initialized = True
+                st.session_state.database_status = "Connected"
+            else:
+                st.session_state.database_initialized = False
+                st.session_state.database_status = "Failed to connect"
+        except Exception as e:
+            st.session_state.database_initialized = False
+            st.session_state.database_status = f"Error: {str(e)}"
+    
+    # Session state variables
+    session_vars = {
+        'pdf_files': {},
+        'json_data': {},
+        'raw_pdf_data': {},  # Store raw PDF parsing data for page matching
+        'current_pdf': None,
+        'analysis_status': {},
+        'processing_messages': {},
+        'pdf_database_ids': {},
+        'search_text': None,
+        'feedback_submitted': {},
+        'obfuscation_summaries': {},
+        'session_id': get_session_id(),
+        'batch_processing_status': None,
+        'batch_processed_count': 0
+    }
+    
+    for var, default_value in session_vars.items():
+        if var not in st.session_state:
+            st.session_state[var] = default_value
 
-def analyze_contract_content(pdf_id, session_id):
-    """Analyze contract content using ContractAnalyzer"""
+# Page Number Detection Functions
+def calculate_text_similarity(text1, text2):
+    """Calculate similarity between two text strings using SequenceMatcher"""
+    if not text1 or not text2:
+        return 0.0
     
-    try:
-        # Get PDF data
-        from config.database import get_pdf_by_hash
-        # We need to get PDF by ID, let's add this function
-        pdf_data = get_pdf_by_id(pdf_id)
-        
-        if not pdf_data:
-            return {
-                'success': False,
-                'error': 'PDF not found',
-                'message': 'PDF record not found in database'
-            }
-        
-        # Initialize contract analyzer
-        analyzer = ContractAnalyzer()
-        
-        # Analyze the obfuscated content
-        analysis_result = analyzer.analyze_contract(pdf_data['final_content'])
-        
-        # Determine version number
-        from config.database import get_next_analysis_version
-        version = get_next_analysis_version(pdf_id)
-        
-        # Store analysis data
-        analysis_data = {
-            'pdf_id': pdf_id,
-            'analysis_date': datetime.now(),
-            'version': version,
-            'form_number': analysis_result.get('form_number'),
-            'pi_clause': analysis_result.get('pi_clause'),
-            'ci_clause': analysis_result.get('ci_clause'),
-            'data_usage_mentioned': analysis_result.get('data_usage_mentioned'),
-            'data_limitations_exists': analysis_result.get('data_limitations_exists'),
-            'summary': analysis_result.get('summary'),
-            'raw_json': analysis_result,
-            'processed_by': session_id,
-            'processing_time': 0  # Could add timing here
-        }
-        
-        analysis_id = store_analysis_data(analysis_data)
-        
-        return {
-            'success': True,
-            'analysis_id': analysis_id,
-            'analysis_data': analysis_result,
-            'message': 'Contract analysis completed successfully'
-        }
-        
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'message': 'Contract analysis failed'
-        }
+    # Normalize text by removing extra whitespace and converting to lowercase
+    text1_norm = ' '.join(text1.lower().split())
+    text2_norm = ' '.join(text2.lower().split())
+    
+    return SequenceMatcher(None, text1_norm, text2_norm).ratio()
 
-def extract_and_store_clauses(analysis_id, analysis_data):
-    """Extract and store individual clauses"""
-    
-    try:
-        relevant_clauses = analysis_data.get("relevant_clauses", [])
-        
-        if not relevant_clauses:
-            return {
-                'success': True,
-                'clause_ids': [],
-                'message': 'No clauses found to extract'
-            }
-        
-        # Prepare clause data
-        clause_list = []
-        for idx, clause_data in enumerate(relevant_clauses):
-            clause_list.append({
-                'clause_type': clause_data.get('type'),
-                'clause_text': clause_data.get('text'),
-                'clause_order': idx + 1
-            })
-        
-        # Store clauses
-        clause_ids = store_clause_data(clause_list, analysis_id)
-        
-        return {
-            'success': True,
-            'clause_ids': clause_ids,
-            'message': f'Successfully extracted and stored {len(clause_ids)} clauses'
-        }
-        
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'message': 'Clause extraction failed'
-        }
-
-# Helper function we need to add to database.py
-def get_pdf_by_id(pdf_id):
-    """Get PDF record by ID"""
-    
-    from config.database import db
-    import psycopg2.extras
-    
-    sql = "SELECT * FROM pdfs WHERE id = %s"
-    
-    with db.get_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, (pdf_id,))
-            result = cur.fetchone()
-            return dict(result) if result else None
-
-@celery_app.task(bind=True)
-def process_batch_async(self, batch_job_id, file_list, session_id):
+def find_clause_page_number(clause_text, raw_pdf_data, similarity_threshold=0.9):
     """
-    Asynchronous batch processing task.
+    Find the page number where a clause appears in the raw PDF data
     
     Args:
-        self: Celery task instance
-        batch_job_id: Batch job ID
-        file_list: List of files to process (with base64 encoded bytes)
-        session_id: User session ID
-        
+        clause_text (str): The clause text to search for
+        raw_pdf_data (dict): Raw PDF parsing data with pages and paragraphs
+        similarity_threshold (float): Minimum similarity score (default 0.9 for 90%)
+    
     Returns:
-        dict: Batch processing results
+        dict: Contains page_number, similarity_score, and matched_text
     """
+    if not clause_text or not raw_pdf_data:
+        return {"page_number": None, "similarity_score": 0.0, "matched_text": ""}
     
-    try:
-        total_files = len(file_list)
-        processed_files = 0
-        failed_files = 0
-        results = []
+    best_match = {
+        "page_number": None,
+        "similarity_score": 0.0,
+        "matched_text": ""
+    }
+    
+    # Get pages from raw PDF data
+    pages = raw_pdf_data.get('pages', [])
+    
+    for page_idx, page_data in enumerate(pages):
+        page_number = page_idx + 1  # Pages are 1-indexed for display
+        paragraphs = page_data.get('paragraphs', [])
         
-        # Update batch job status to running
-        update_batch_job_status(
-            batch_job_id, 
-            'running',
-            started_at=datetime.now(),
-            total_files=total_files
+        # Check each paragraph in the page
+        for paragraph in paragraphs:
+            if not paragraph:
+                continue
+                
+            # Calculate similarity between clause and paragraph
+            similarity = calculate_text_similarity(clause_text, paragraph)
+            
+            # Update best match if this is better
+            if similarity > best_match["similarity_score"]:
+                best_match = {
+                    "page_number": page_number,
+                    "similarity_score": similarity,
+                    "matched_text": paragraph
+                }
+        
+        # Also check the entire page content as a single block
+        page_content = ' '.join(paragraphs)
+        if page_content:
+            similarity = calculate_text_similarity(clause_text, page_content)
+            if similarity > best_match["similarity_score"]:
+                best_match = {
+                    "page_number": page_number,
+                    "similarity_score": similarity,
+                    "matched_text": page_content[:200] + "..." if len(page_content) > 200 else page_content
+                }
+    
+    # Only return match if it meets the threshold
+    if best_match["similarity_score"] >= similarity_threshold:
+        return best_match
+    else:
+        return {"page_number": None, "similarity_score": best_match["similarity_score"], "matched_text": ""}
+
+# PDF Validation Functions
+def validate_pdf(pdf_bytes):
+    """Validate PDF integrity and metadata"""
+    try:
+        pdf_reader = PdfReader(BytesIO(pdf_bytes))
+        if not pdf_reader.pages:
+            return False, "Empty PDF or no pages detected"
+        return True, f"Valid PDF with {len(pdf_reader.pages)} pages"
+    except Exception as e:
+        return False, f"Invalid PDF: {str(e)}"
+
+# PDF Display Functions
+def display_pdf_iframe(pdf_bytes, search_text=None):
+    """Display PDF with optional search text"""
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    pdf_display = f'<iframe id="pdfViewer" src="data:application/pdf;base64,{base64_pdf}'
+    if search_text:
+        sanitized_text = sanitize_search_text(search_text)
+        encoded_text = urllib.parse.quote(sanitized_text)
+        pdf_display += f'#search={encoded_text}'
+    pdf_display += '" width="100%" height="600px" type="application/pdf"></iframe>'
+    
+    return pdf_display
+
+def sanitize_search_text(text):
+    """Clean up text for PDF search"""
+    if not text:
+        return ""
+    text = text[:100]
+    import re
+    text = re.sub(r'[^\w\s.]', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def set_current_pdf(pdf_name):
+    """Set the current PDF to display"""
+    st.session_state.current_pdf = pdf_name
+    st.session_state.search_text = None
+
+# Enhanced PDF Processing Function
+def process_pdf_enhanced(pdf_bytes, pdf_name, message_placeholder, logger):
+    """Process a single PDF using the enhanced handler with database storage"""
+    try:
+        st.session_state.processing_messages[pdf_name] = []
+        
+        # Update processing message
+        st.session_state.processing_messages[pdf_name].append("🔄 Starting PDF processing with obfuscation...")
+        message_placeholder.markdown(
+            "\n".join([f"<div class='processing-message'>{msg}</div>" 
+                      for msg in st.session_state.processing_messages[pdf_name]]),
+            unsafe_allow_html=True
         )
         
-        self.update_state(
-            state='PROCESSING', 
-            meta={
-                'current': 0,
-                'total': total_files,
-                'status': 'Starting batch processing'
+        # Process PDF with enhanced handler
+        result = process_single_pdf_from_streamlit(
+            pdf_name=pdf_name,
+            pdf_bytes=pdf_bytes,
+            enable_obfuscation=True,
+            uploaded_by=get_session_id()
+        )
+        
+        if result.get('success'):
+            # Store processing information in session state
+            st.session_state.pdf_database_ids[pdf_name] = result.get('pdf_id')
+            st.session_state.obfuscation_summaries[pdf_name] = result.get('obfuscation_summary', {})
+            
+            # Store raw PDF data for page number matching
+            st.session_state.raw_pdf_data[pdf_name] = {
+                'pages': result.get('pages', [])
             }
+            
+            # Update processing messages
+            st.session_state.processing_messages[pdf_name].append("✅ PDF processed and stored in database")
+            st.session_state.processing_messages[pdf_name].append(f"📊 Database ID: {result.get('pdf_id')}")
+            
+            # Add obfuscation info
+            obf_summary = result.get('obfuscation_summary', {})
+            pages_removed = obf_summary.get('pages_removed_count', 0)
+            original_pages = obf_summary.get('total_original_pages', 0)
+            final_pages = obf_summary.get('total_final_pages', 0)
+            
+            st.session_state.processing_messages[pdf_name].append(
+                f"🔒 Privacy protection applied: {pages_removed} pages removed ({original_pages} → {final_pages} pages)"
+            )
+            
+            message_placeholder.markdown(
+                "\n".join([f"<div class='processing-message'>{msg}</div>" 
+                          for msg in st.session_state.processing_messages[pdf_name]]),
+                unsafe_allow_html=True
+            )
+            
+            # Run contract analysis on obfuscated content
+            st.session_state.processing_messages[pdf_name].append("🔍 Starting contract analysis...")
+            message_placeholder.markdown(
+                "\n".join([f"<div class='processing-message'>{msg}</div>" 
+                          for msg in st.session_state.processing_messages[pdf_name]]),
+                unsafe_allow_html=True
+            )
+            
+            # Get the processed content for analysis
+            pages_content = result.get('pages', [])
+            contract_text = '\n\n'.join([
+                para for page in pages_content 
+                for para in page.get('paragraphs', [])
+            ])
+            
+            # Run contract analysis
+            contract_analyzer = ContractAnalyzer()
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                output_path = os.path.join(temp_dir, f"{Path(pdf_name).stem}.json")
+                
+                try:
+                    analysis_results = contract_analyzer.analyze_contract(contract_text, output_path)
+                    
+                    # Store analysis results in database
+                    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+                    if pdf_id:
+                        analysis_data = {
+                            'pdf_id': pdf_id,
+                            'analysis_date': datetime.now(),
+                            'version': get_next_analysis_version(pdf_id),
+                            'form_number': analysis_results.get('form_number'),
+                            'pi_clause': analysis_results.get('pi_clause'),
+                            'ci_clause': analysis_results.get('ci_clause'),
+                            'data_usage_mentioned': analysis_results.get('data_usage_mentioned'),
+                            'data_limitations_exists': analysis_results.get('data_limitations_exists'),
+                            'summary': analysis_results.get('summary'),
+                            'raw_json': analysis_results,
+                            'processed_by': 'streamlit_analyzer',
+                            'processing_time': 0.0
+                        }
+                        
+                        try:
+                            analysis_id = store_analysis_data(analysis_data)
+                            
+                            # Store clauses
+                            clauses = analysis_results.get('relevant_clauses', [])
+                            if clauses:
+                                clause_data = []
+                                for i, clause in enumerate(clauses):
+                                    clause_data.append({
+                                        'clause_type': clause.get('type', 'unknown'),
+                                        'clause_text': clause.get('text', ''),
+                                        'clause_order': i + 1
+                                    })
+                                store_clause_data(clause_data, analysis_id)
+                            
+                            st.session_state.processing_messages[pdf_name].append(f"💾 Analysis stored in database (ID: {analysis_id})")
+                        except Exception as e:
+                            st.session_state.processing_messages[pdf_name].append(f"⚠️ Warning: Could not store analysis in database: {str(e)}")
+                            logger.error(f"Database storage failed for {pdf_name}: {str(e)}")
+                    
+                    # Store analysis results in session state for display
+                    file_stem = Path(pdf_name).stem
+                    st.session_state.json_data[file_stem] = analysis_results
+                    
+                    st.session_state.processing_messages[pdf_name].append("✅ Contract analysis completed successfully")
+                    return True, "Analysis completed successfully"
+                    
+                except Exception as e:
+                    logger.error(f"Contract analysis failed for {pdf_name}: {str(e)}")
+                    return False, f"Contract analysis failed: {str(e)}"
+        
+        else:
+            error_msg = result.get('error', 'Unknown error occurred')
+            return False, error_msg
+            
+    except Exception as e:
+        logger.error(f"Processing failed for {pdf_name}: {str(e)}")
+        return False, f"Processing failed: {str(e)}"
+    finally:
+        st.session_state.processing_messages[pdf_name].append("📝 Processing complete - Ready for review")
+
+# Batch Processing Function
+def process_batch_pdfs(logger):
+    """Process all uploaded PDFs one by one with progress updates"""
+    pdf_files = list(st.session_state.pdf_files.keys())
+    total_pdfs = len(pdf_files)
+    
+    if total_pdfs == 0:
+        st.warning("⚠️ No PDFs uploaded for batch processing.")
+        return
+    
+    st.session_state.batch_processing_status = "Running"
+    st.session_state.batch_processed_count = 0
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, pdf_name in enumerate(pdf_files):
+        if st.session_state.analysis_status.get(pdf_name) == "Processed":
+            continue  # Skip already processed PDFs
+        
+        status_text.markdown(
+            f"<div class='batch-progress'>📄 Processing {pdf_name} ({i+1}/{total_pdfs})...</div>",
+            unsafe_allow_html=True
         )
         
-        # Process each file
-        for idx, file_info in enumerate(file_list):
-            try:
-                # Update progress
-                self.update_state(
-                    state='PROCESSING',
-                    meta={
-                        'current': idx + 1,
-                        'total': total_files,
-                        'status': f'Processing {file_info["name"]}'
-                    }
-                )
+        message_placeholder = st.empty()
+        success, result = process_pdf_enhanced(
+            st.session_state.pdf_files[pdf_name], 
+            pdf_name, 
+            message_placeholder,
+            logger
+        )
+        
+        if success:
+            st.session_state.analysis_status[pdf_name] = "Processed"
+            st.session_state.batch_processed_count += 1
+            status_text.markdown(
+                f"<div class='batch-progress'>✅ {pdf_name} processed successfully ({st.session_state.batch_processed_count}/{total_pdfs})</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.session_state.analysis_status[pdf_name] = f"❌ Failed: {result}"
+            status_text.markdown(
+                f"<div class='batch-progress'>❌ Failed to process {pdf_name}: {result} ({st.session_state.batch_processed_count}/{total_pdfs})</div>",
+                unsafe_allow_html=True
+            )
+        
+        # Update progress bar
+        progress = (i + 1) / total_pdfs
+        progress_bar.progress(progress)
+        
+        # Show processing messages
+        if pdf_name in st.session_state.processing_messages:
+            with st.expander(f"📋 Processing Details for {pdf_name}", expanded=False):
+                for msg in st.session_state.processing_messages[pdf_name]:
+                    st.markdown(f"<div class='processing-message'>{msg}</div>", unsafe_allow_html=True)
+    
+    st.session_state.batch_processing_status = "Completed"
+    st.success(f"🎉 Batch processing completed: {st.session_state.batch_processed_count}/{total_pdfs} PDFs processed successfully")
+
+# Feedback System
+def render_feedback_form(pdf_name, file_stem, json_data):
+    """Render feedback form for a specific PDF"""
+    feedback_key = f"feedback_{file_stem}"
+    if st.session_state.feedback_submitted.get(feedback_key, False):
+        st.success("✅ Thank you! Your feedback has been submitted for this document.")
+        if st.button("Submit New Feedback", key=f"new_feedback_{file_stem}"):
+            st.session_state.feedback_submitted[feedback_key] = False
+            st.rerun()
+        return
+    
+    st.markdown("<div class='feedback-section'>", unsafe_allow_html=True)
+    st.subheader("📝 Your Feedback Matters")
+    st.write("Help us improve our analysis by providing feedback on the results:")
+    
+    with st.form(f"feedback_form_{file_stem}"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Form Number Analysis**")
+            form_number_correct = st.selectbox(
+                "Is the form number correctly identified?",
+                ["Select...", "Yes, correct", "No, incorrect", "Not applicable"],
+                key=f"form_correct_{file_stem}"
+            )
+            form_number_feedback = st.text_area(
+                "Form Number Comments",
+                placeholder="Please provide details...",
+                height=60,
+                key=f"form_feedback_{file_stem}"
+            )
+            
+            st.write("**PI Clause Detection**")
+            pi_clause_correct = st.selectbox(
+                "Is the PI clause detection accurate?",
+                ["Select...", "Yes, accurate", "No, missed clauses", "No, false positives", "Not applicable"],
+                key=f"pi_correct_{file_stem}"
+            )
+            pi_clause_feedback = st.text_area(
+                "PI Clause Comments",
+                placeholder="Please provide details...",
+                height=60,
+                key=f"pi_feedback_{file_stem}"
+            )
+        
+        with col2:
+            st.write("**CI Clause Detection**")
+            ci_clause_correct = st.selectbox(
+                "Is the CI clause detection accurate?",
+                ["Select...", "Yes, accurate", "No, missed clauses", "No, false positives", "Not applicable"],
+                key=f"ci_correct_{file_stem}"
+            )
+            ci_clause_feedback = st.text_area(
+                "CI Clause Comments",
+                placeholder="Please provide details...",
+                height=60,
+                key=f"ci_feedback_{file_stem}"
+            )
+            
+            st.write("**Summary Quality**")
+            summary_quality = st.selectbox(
+                "How would you rate the summary quality?",
+                ["Select...", "Excellent", "Good", "Fair", "Poor"],
+                key=f"summary_quality_{file_stem}"
+            )
+            summary_feedback = st.text_area(
+                "Summary Comments",
+                placeholder="Please provide details...",
+                height=60,
+                key=f"summary_feedback_{file_stem}"
+            )
+        
+        st.write("**Overall Assessment**")
+        col3, col4 = st.columns([2, 1])
+        with col3:
+            general_feedback = st.text_area(
+                "General Comments",
+                placeholder="Any other comments, suggestions, or issues you noticed?",
+                height=80,
+                key=f"general_feedback_{file_stem}"
+            )
+        with col4:
+            rating = st.slider(
+                "Overall Rating", 
+                1, 5, 3, 
+                help="1=Poor, 5=Excellent",
+                key=f"rating_{file_stem}"
+            )
+            st.write(f"Rating: {'⭐' * rating}")
+        
+        submitted = st.form_submit_button("🚀 Submit Feedback", use_container_width=True)
+        
+        if submitted:
+            if (form_number_correct == "Select..." and pi_clause_correct == "Select..." and 
+                ci_clause_correct == "Select..." and summary_quality == "Select..." and 
+                not general_feedback.strip()):
+                st.error("Please provide at least some feedback before submitting.")
+                return
+            
+            pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+            
+            if pdf_id:
+                feedback_text_parts = []
+                if form_number_correct != "Select...":
+                    feedback_text_parts.append(f"Form Number: {form_number_correct}")
+                    if form_number_feedback.strip():
+                        feedback_text_parts.append(f"Form Details: {form_number_feedback}")
                 
-                # Process individual PDF
-                result = process_pdf_async.apply_async(
-                    args=[file_info['bytes_b64'], file_info['name'], session_id]
-                ).get()  # Wait for completion
+                if pi_clause_correct != "Select...":
+                    feedback_text_parts.append(f"PI Clause: {pi_clause_correct}")
+                    if pi_clause_feedback.strip():
+                        feedback_text_parts.append(f"PI Details: {pi_clause_feedback}")
                 
-                if result['success']:
-                    results.append({
-                        'file_name': file_info['name'],
-                        'status': 'success',
-                        'pdf_id': result['pdf_id'],
-                        'analysis_data': result.get('analysis_data', {}),
-                        'processed_at': datetime.now().isoformat()
-                    })
-                    processed_files += 1
-                else:
-                    results.append({
-                        'file_name': file_info['name'],
-                        'status': 'failed',
-                        'error': result.get('error', 'Unknown error'),
-                        'processed_at': datetime.now().isoformat()
-                    })
-                    failed_files += 1
+                if ci_clause_correct != "Select...":
+                    feedback_text_parts.append(f"CI Clause: {ci_clause_correct}")
+                    if ci_clause_feedback.strip():
+                        feedback_text_parts.append(f"CI Details: {ci_clause_feedback}")
                 
-                # Update batch job progress
-                update_batch_job_status(
-                    batch_job_id,
-                    'running',
-                    processed_files=processed_files,
-                    failed_files=failed_files
-                )
+                if summary_quality != "Select...":
+                    feedback_text_parts.append(f"Summary Quality: {summary_quality}")
+                    if summary_feedback.strip():
+                        feedback_text_parts.append(f"Summary Details: {summary_feedback}")
                 
-            except Exception as e:
-                results.append({
-                    'file_name': file_info['name'],
-                    'status': 'failed',
-                    'error': str(e),
-                    'processed_at': datetime.now().isoformat()
+                structured_feedback = " | ".join(feedback_text_parts)
+                
+                feedback_data = {
+                    'pdf_id': pdf_id,
+                    'feedback_date': datetime.now(),
+                    'form_number_feedback': f"{form_number_correct}: {form_number_feedback}" if form_number_feedback.strip() else form_number_correct,
+                    'general_feedback': f"{structured_feedback} | General: {general_feedback}" if general_feedback.strip() else structured_feedback,
+                    'rating': rating,
+                    'user_session_id': get_session_id()
+                }
+                
+                try:
+                    feedback_id = store_feedback_data(feedback_data)
+                    st.success("🎉 Thank you for your valuable feedback! It helps us improve our analysis.")
+                    st.session_state.feedback_submitted[feedback_key] = True
+                    st.balloons()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Failed to save feedback: {str(e)}")
+            else:
+                st.error("❌ Cannot submit feedback - PDF not found in database")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# Main Application
+def main():
+    # Initialize session state
+    initialize_session_state()
+    logger = ECFRLogger()
+    
+    # Header
+    st.markdown("""
+    <div class='main-header'>
+        <h1>📄 Enhanced Contract Analysis Platform</h1>
+        <p>AI-powered contract analysis with privacy protection and intelligent feedback</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar with system status
+    with st.sidebar:
+        st.header("🔧 System Status")
+        
+        if st.session_state.database_initialized:
+            st.markdown("<div class='database-status-success'>✅ Database Connected</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='database-status-error'>❌ Database: {st.session_state.database_status}</div>", unsafe_allow_html=True)
+        
+        st.write(f"**Session ID:** `{st.session_state.session_id[:8]}...`")
+        st.write(f"**PDFs Processed:** {len([s for s in st.session_state.analysis_status.values() if s == 'Processed'])}/{len(st.session_state.pdf_files)}")
+        st.write(f"**Batch Status:** {st.session_state.batch_processing_status or 'Not started'}")
+        
+        st.markdown("""
+        ---
+        ### 🔒 Privacy Protection
+        All uploaded documents are automatically processed with privacy protection:
+        - Low-content pages are removed
+        - Sensitive information is protected
+        - Original documents are not stored permanently
+        
+        ### 📍 Page Number Detection
+        Enhanced clause analysis now includes:
+        - Page number identification for each clause
+        - 90% similarity matching with original content
+        - Smart text comparison algorithms
+        """)
+    
+    # Main layout
+    col1, col2, col3 = st.columns([25, 40, 35])
+    
+    # Left pane: PDF upload and management
+    with col1:
+        st.markdown('<div class="left-pane">', unsafe_allow_html=True)
+        st.header("📁 Document Management")
+        
+        # PDF uploader
+        st.subheader("📤 Upload Documents")
+        uploaded_pdfs = st.file_uploader(
+            "Choose PDF files",
+            type="pdf",
+            accept_multiple_files=True,
+            help="Upload one or more PDF contract files for analysis"
+        )
+        
+        if uploaded_pdfs:
+            for pdf in uploaded_pdfs:
+                if pdf.name not in st.session_state.pdf_files:
+                    pdf_bytes = pdf.getvalue()
+                    is_valid, validation_msg = validate_pdf(pdf_bytes)
+                    if is_valid:
+                        if len(pdf_bytes) > 10 * 1024 * 1024:
+                            st.warning(f"⚠️ {pdf.name} is larger than 10MB. Processing may be slow.")
+                        st.session_state.pdf_files[pdf.name] = pdf_bytes
+                        st.session_state.analysis_status[pdf.name] = "Ready for processing"
+                        st.success(f"✅ {pdf.name} uploaded successfully")
+                    else:
+                        st.error(f"❌ {pdf.name}: {validation_msg}")
+        
+        # Processing buttons
+        st.subheader("⚙️ Process Documents")
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("🔄 Process Single PDF", disabled=not st.session_state.current_pdf):
+                if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
+                    if st.session_state.analysis_status.get(st.session_state.current_pdf) != "Processed":
+                        st.session_state.processing_messages[st.session_state.current_pdf] = []
+                        with st.spinner(f"🔄 Processing {st.session_state.current_pdf}..."):
+                            message_placeholder = st.empty()
+                            success, result = process_pdf_enhanced(
+                                st.session_state.pdf_files[st.session_state.current_pdf], 
+                                st.session_state.current_pdf, 
+                                message_placeholder,
+                                logger
+                            )
+                            
+                            if success:
+                                st.session_state.analysis_status[st.session_state.current_pdf] = "Processed"
+                                st.success(f"✅ Analysis complete for {st.session_state.current_pdf}")
+                            else:
+                                st.session_state.analysis_status[st.session_state.current_pdf] = f"❌ Failed: {result}"
+                                st.error(f"❌ Failed to process {st.session_state.current_pdf}: {result}")
+                            
+                            if st.session_state.current_pdf in st.session_state.processing_messages:
+                                with st.expander("📋 Processing Details", expanded=False):
+                                    for msg in st.session_state.processing_messages[st.session_state.current_pdf]:
+                                        st.markdown(f"<div class='processing-message'>{msg}</div>", unsafe_allow_html=True)
+        
+        with col_btn2:
+            if st.button("📚 Process All PDFs (Batch)", disabled=not st.session_state.pdf_files):
+                process_batch_pdfs(logger)
+        
+        # Document list and selection
+        if st.session_state.pdf_files:
+            st.subheader("📋 Available Documents")
+            
+            pdf_data = []
+            for pdf_name in st.session_state.pdf_files.keys():
+                status = st.session_state.analysis_status.get(pdf_name, "Ready")
+                db_id = st.session_state.pdf_database_ids.get(pdf_name, "N/A")
+                file_size = len(st.session_state.pdf_files[pdf_name]) / 1024
+                
+                status_emoji = "✅" if status == "Processed" else "⏳" if "processing" in status.lower() else "📄"
+                
+                pdf_data.append({
+                    'Status': status_emoji,
+                    'PDF Name': pdf_name,
+                    'Size (KB)': f"{file_size:.1f}",
+                    'DB ID': str(db_id)
                 })
-                failed_files += 1
-        
-        # Update final batch job status
-        update_batch_job_status(
-            batch_job_id,
-            'completed',
-            completed_at=datetime.now(),
-            processed_files=processed_files,
-            failed_files=failed_files,
-            results_json=results
-        )
-        
-        return {
-            'success': True,
-            'total_files': total_files,
-            'processed_files': processed_files,
-            'failed_files': failed_files,
-            'results': results,
-            'message': f'Batch processing completed: {processed_files} successful, {failed_files} failed'
-        }
-        
-    except Exception as e:
-        # Update batch job status to failed
-        update_batch_job_status(
-            batch_job_id,
-            'failed',
-            completed_at=datetime.now(),
-            error_log=str(e)
-        )
-        
-        self.update_state(state='FAILURE', meta={'error': str(e)})
-        
-        return {
-            'success': False,
-            'error': str(e),
-            'message': 'Batch processing failed'
-        }
+            
+            pdf_df = pd.DataFrame(pdf_data)
+            gb = GridOptionsBuilder.from_dataframe(pdf_df)
+            gb.configure_selection(selection_mode='single', use_checkbox=False)
+            gb.configure_grid_options(domLayout='normal')
+            gb.configure_default_column(cellStyle={'fontSize': '14px'})
+            gb.configure_column("PDF Name", cellStyle={'fontWeight': 'bold'})
+            gridOptions = gb.build()
 
-@celery_app.task
-def cleanup_old_sessions_async(hours=24):
-    """Asynchronous task to cleanup old user sessions"""
-    
-    try:
-        from config.database import db
-        from datetime import datetime, timedelta
-        
-        cutoff_time = datetime.now() - timedelta(hours=hours)
-        
-        sql = "DELETE FROM users WHERE last_active < %s"
-        
-        with db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (cutoff_time,))
-                deleted_count = cur.rowcount
-                conn.commit()
-        
-        return {
-            'success': True,
-            'deleted_sessions': deleted_count,
-            'message': f'Cleaned up {deleted_count} old sessions'
-        }
-        
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'message': 'Session cleanup failed'
-        }
+            grid_response = AgGrid(
+                pdf_df,
+                gridOptions=gridOptions,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                height=300,
+                fit_columns_on_grid_load=True,
+                theme='streamlit'
+            )
 
-# Task monitoring and status functions
+            selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+            if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+                selected_pdf = selected_rows.iloc[0]['PDF Name']
+                if selected_pdf != st.session_state.get('current_pdf'):
+                    set_current_pdf(selected_pdf)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Middle pane: PDF viewer
+    with col2:
+        st.markdown('<div class="pdf-viewer">', unsafe_allow_html=True)
+        st.header("📖 Document Viewer")
+        
+        if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
+            current_pdf_bytes = st.session_state.pdf_files[st.session_state.current_pdf]
+            
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                st.subheader(f"📄 {st.session_state.current_pdf}")
+            with col_info2:
+                file_size_mb = len(current_pdf_bytes) / (1024 * 1024)
+                st.metric("File Size", f"{file_size_mb:.2f} MB")
+            
+            if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
+                obf_summary = st.session_state.obfuscation_summaries[st.session_state.current_pdf]
+                if obf_summary.get('obfuscation_applied', False):
+                    col_obf1, col_obf2, col_obf3 = st.columns(3)
+                    with col_obf1:
+                        st.metric("Original Pages", obf_summary.get('total_original_pages', 0))
+                    with col_obf2:
+                        
 
-def get_task_status(task_id):
-    """Get status of a Celery task"""
-    
-    task_result = celery_app.AsyncResult(task_id)
-    
-    return {
-        'task_id': task_id,
-        'state': task_result.state,
-        'result': task_result.result,
-        'info': task_result.info
-    }
-
-def cancel_task(task_id):
-    """Cancel a running Celery task"""
-    
-    celery_app.control.revoke(task_id, terminate=True)
-    
-    return {
-        'success': True,
-        'message': f'Task {task_id} cancelled'
-    }
+if __name__ == "__main__":
+    main()
