@@ -1,217 +1,162 @@
-You're still getting detached instance errors because the `create_user()` and `get_user_by_session()` functions are returning SQLAlchemy objects instead of dictionaries. Let me write the correct implementations following Fix 2:
+There are two issues here:
 
-## **🔧 Correct Function Implementations**
+## **🔧 Issue 1: 'dict' object has no attribute 'id'**
 
-### **1. create_user() Function**
+The problem is in your test - you're creating a user that returns a dict, but then trying to access `user.id` instead of `user['id']`.
 
-```python
-def create_user(session_id: str, username: str = None, password_hash: str = None) -> dict:
-    """Create a new user and return user data as dictionary"""
-    with db_manager.get_session() as session:
-        user = User(
-            username=username,
-            password_hash=password_hash,
-            session_id=session_id
-        )
-        session.add(user)
-        session.flush()
-        session.refresh(user)
-        
-        # Extract all data within session and return as dict
-        return {
-            'id': str(user.id),  # Convert UUID to string
-            'username': user.username,
-            'password_hash': user.password_hash,
-            'session_id': user.session_id,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'last_active': user.last_active.isoformat() if user.last_active else None
-        }
-```
-
-### **2. get_user_by_session() Function**
+**Fix the test_create_pdf method:**
 
 ```python
-def get_user_by_session(session_id: str) -> Optional[dict]:
-    """Get user by session ID and return as dictionary"""
-    with db_manager.get_session() as session:
-        user = session.query(User).filter(User.session_id == session_id).first()
-        
-        if not user:
-            return None
-        
-        # Extract all data within session and return as dict
-        return {
-            'id': str(user.id),  # Convert UUID to string
-            'username': user.username,
-            'password_hash': user.password_hash,
-            'session_id': user.session_id,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'last_active': user.last_active.isoformat() if user.last_active else None,
-            
-            # Include relationship counts (safe within session)
-            'uploaded_pdfs_count': len(user.uploaded_pdfs),
-            'feedbacks_count': len(user.feedbacks)
-        }
+def test_create_pdf(self):
+    """Test PDF creation"""
+    print("\n📄 Testing PDF creation...")
+    
+    # Create a user first
+    user = create_user(session_id=generate_session_id(), username="pdf_test_user")
+    
+    # Sample PDF data
+    pdf_content = b"Sample PDF content for testing"
+    file_hash = generate_file_hash(pdf_content)
+    
+    pdf_data = {
+        'pdf_name': 'test_contract.pdf',
+        'file_hash': file_hash,
+        'upload_date': datetime.utcnow(),
+        'layout': 'single-column',
+        'original_word_count': 1500,
+        'original_page_count': 5,
+        'parsability': 0.95,
+        'final_word_count': 1200,
+        'final_page_count': 4,
+        'avg_words_per_page': 300.0,
+        'raw_content': {"pages": [{"text": "Sample content"}]},
+        'final_content': "Processed sample content",
+        'obfuscation_applied': True,
+        'pages_removed_count': 1,
+        'paragraphs_obfuscated_count': 5,
+        'obfuscation_summary': {"method": "entity_replacement", "confidence": 0.8},
+        'uploaded_by': user['id']  # ✅ Use dict key, not user.id
+    }
+    
+    pdf = create_pdf(pdf_data)
+    
+    assert pdf['id'] is not None, "PDF ID should be auto-generated"
+    assert pdf['pdf_name'] == 'test_contract.pdf', "PDF name should match"
+    assert pdf['file_hash'] == file_hash, "File hash should match"
+    assert pdf['uploaded_by'] == user['id'], "Uploaded by should match user ID"
+    assert pdf['original_word_count'] == 1500, "Original word count should match"
+    
+    print(f"✅ PDF created with ID: {pdf['id']}")
+    return pdf, user
 ```
 
-### **3. get_user_by_id() Function (you'll need this too)**
+## **🔧 Issue 2: Duplicate key violation**
+
+The second test is trying to use the same file hash as the first test. You need to generate unique hashes for each test.
+
+**Fix the test_get_pdf_by_hash method:**
 
 ```python
-def get_user_by_id(user_id: str) -> Optional[dict]:
-    """Get user by ID and return as dictionary"""
-    with db_manager.get_session() as session:
-        user = session.query(User).filter(User.id == user_id).first()
-        
-        if not user:
-            return None
-        
-        return {
-            'id': str(user.id),
-            'username': user.username,
-            'password_hash': user.password_hash,
-            'session_id': user.session_id,
-            'created_at': user.created_at.isoformat() if user.created_at else None,
-            'last_active': user.last_active.isoformat() if user.last_active else None,
-            'uploaded_pdfs_count': len(user.uploaded_pdfs),
-            'feedbacks_count': len(user.feedbacks)
-        }
+def test_get_pdf_by_hash(self):
+    """Test PDF retrieval by hash for deduplication"""
+    print("\n🔍 Testing PDF retrieval by hash...")
+    
+    # Create a user first
+    user = create_user(session_id=generate_session_id(), username="hash_test_user")
+    
+    # Create unique content for this test
+    pdf_content = b"Unique PDF content for hash test"
+    file_hash = generate_file_hash(pdf_content)
+    
+    pdf_data = {
+        'pdf_name': 'hash_test_contract.pdf',
+        'file_hash': file_hash,
+        'uploaded_by': user['id']  # ✅ Use dict key
+    }
+    
+    # Create the PDF first
+    created_pdf = create_pdf(pdf_data)
+    
+    # Now retrieve PDF by hash
+    retrieved_pdf = get_pdf_by_hash(file_hash)
+    
+    assert retrieved_pdf is not None, "PDF should be found"
+    assert retrieved_pdf['id'] == created_pdf['id'], "PDF IDs should match"
+    assert retrieved_pdf['file_hash'] == file_hash, "File hashes should match"
+    
+    print(f"✅ PDF retrieved successfully by hash")
+    return retrieved_pdf
 ```
 
-### **4. All Other Database Functions Need Similar Updates**
-
-**create_pdf():**
-```python
-def create_pdf(pdf_data: Dict[str, Any]) -> dict:
-    """Create a new PDF record and return as dictionary"""
-    with db_manager.get_session() as session:
-        pdf = PDF(**pdf_data)
-        session.add(pdf)
-        session.flush()
-        session.refresh(pdf)
-        
-        return {
-            'id': pdf.id,
-            'pdf_name': pdf.pdf_name,
-            'file_hash': pdf.file_hash,
-            'upload_date': pdf.upload_date.isoformat() if pdf.upload_date else None,
-            'processed_date': pdf.processed_date.isoformat() if pdf.processed_date else None,
-            'layout': pdf.layout,
-            'original_word_count': pdf.original_word_count,
-            'original_page_count': pdf.original_page_count,
-            'parsability': pdf.parsability,
-            'final_word_count': pdf.final_word_count,
-            'final_page_count': pdf.final_page_count,
-            'avg_words_per_page': pdf.avg_words_per_page,
-            'raw_content': pdf.raw_content,
-            'final_content': pdf.final_content,
-            'obfuscation_applied': pdf.obfuscation_applied,
-            'pages_removed_count': pdf.pages_removed_count,
-            'paragraphs_obfuscated_count': pdf.paragraphs_obfuscated_count,
-            'obfuscation_summary': pdf.obfuscation_summary,
-            'uploaded_by': str(pdf.uploaded_by)
-        }
-```
-
-**get_pdf_by_hash():**
-```python
-def get_pdf_by_hash(file_hash: str) -> Optional[dict]:
-    """Get PDF by file hash for deduplication"""
-    with db_manager.get_session() as session:
-        pdf = session.query(PDF).filter(PDF.file_hash == file_hash).first()
-        
-        if not pdf:
-            return None
-        
-        return {
-            'id': pdf.id,
-            'pdf_name': pdf.pdf_name,
-            'file_hash': pdf.file_hash,
-            'upload_date': pdf.upload_date.isoformat() if pdf.upload_date else None,
-            'uploaded_by': str(pdf.uploaded_by),
-            'original_word_count': pdf.original_word_count,
-            'final_word_count': pdf.final_word_count,
-            # ... include all fields you need
-        }
-```
-
-**create_analysis():**
-```python
-def create_analysis(analysis_data: Dict[str, Any]) -> dict:
-    """Create a new analysis record and return as dictionary"""
-    with db_manager.get_session() as session:
-        analysis = Analysis(**analysis_data)
-        session.add(analysis)
-        session.flush()
-        session.refresh(analysis)
-        
-        return {
-            'id': analysis.id,
-            'pdf_id': analysis.pdf_id,
-            'analysis_date': analysis.analysis_date.isoformat() if analysis.analysis_date else None,
-            'version': analysis.version,
-            'form_number': analysis.form_number,
-            'pi_clause': analysis.pi_clause,
-            'ci_clause': analysis.ci_clause,
-            'data_usage_mentioned': analysis.data_usage_mentioned,
-            'data_limitations_exists': analysis.data_limitations_exists,
-            'summary': analysis.summary,
-            'raw_json': analysis.raw_json,
-            'processed_by': analysis.processed_by,
-            'processing_time': analysis.processing_time
-        }
-```
-
-## **🧪 Updated Test Functions**
-
-### **TestUserOperations:**
+**Fix the test_pdf_deduplication method:**
 
 ```python
-def test_create_user(self):
-    """Test user creation"""
-    print("\n👤 Testing user creation...")
+def test_pdf_deduplication(self):
+    """Test that duplicate PDFs are detected"""
+    print("\n🔄 Testing PDF deduplication...")
     
-    session_id = generate_session_id()
-    user = create_user(
-        session_id=session_id,
-        username="test_user",
-        password_hash="hashed_password_123"
-    )
+    # Create first PDF
+    user = create_user(session_id=generate_session_id(), username="dedup_test_user")
     
-    assert user['id'] is not None, "User ID should be auto-generated"
-    assert user['session_id'] == session_id, "Session ID should match"
-    assert user['username'] == "test_user", "Username should match"
-    assert user['created_at'] is not None, "Created timestamp should be set"
+    pdf_content = b"Duplicate test content for deduplication test"
+    file_hash = generate_file_hash(pdf_content)
     
-    print(f"✅ User created with ID: {user['id']}")
-    return user
-
-def test_get_user_by_session(self):
-    """Test retrieving user by session ID"""
-    print("\n🔍 Testing user retrieval by session...")
+    pdf_data = {
+        'pdf_name': 'original.pdf',
+        'file_hash': file_hash,
+        'uploaded_by': user['id']  # ✅ Use dict key
+    }
     
-    # Create a test user first
-    session_id = generate_session_id()
-    created_user = create_user(session_id=session_id, username="session_test_user")
+    # Create first PDF
+    pdf1 = create_pdf(pdf_data)
     
-    # Retrieve user by session
-    retrieved_user = get_user_by_session(session_id)
+    # Try to create duplicate PDF with same hash
+    pdf_data['pdf_name'] = 'duplicate.pdf'
     
-    assert retrieved_user is not None, "User should be found"
-    assert retrieved_user['id'] == created_user['id'], "User IDs should match"
-    assert retrieved_user['session_id'] == session_id, "Session IDs should match"
-    assert retrieved_user['username'] == "session_test_user", "Username should match"
-    
-    print(f"✅ User retrieved successfully: {retrieved_user['username']}")
-    return retrieved_user
+    try:
+        pdf2 = create_pdf(pdf_data)
+        pytest.fail("Should not allow duplicate file hash")
+    except Exception as e:
+        print(f"✅ Duplicate prevention working: {type(e).__name__}")
 ```
 
-## **🎯 Key Points**
+## **🎯 Alternative: Clean Test State**
 
-1. **All functions return dictionaries**, never SQLAlchemy objects
-2. **All database access happens within sessions**
-3. **UUIDs are converted to strings** for JSON compatibility
-4. **Datetime objects are converted to ISO strings**
-5. **Relationship counts are included when accessed within sessions**
-6. **Tests expect dictionary keys**, not object attributes
+To avoid hash collisions between tests, you can also add a setup method that cleans the database between tests:
 
-This approach completely eliminates detached instance errors because you never pass SQLAlchemy objects outside of session contexts.
+```python
+class TestPDFOperations:
+    """Test PDF-related database operations"""
+    
+    def setup_method(self):
+        """Clean database before each test"""
+        with db_manager.get_session() as session:
+            # Clean up any existing test data
+            session.execute(text("DELETE FROM clauses"))
+            session.execute(text("DELETE FROM analyses"))
+            session.execute(text("DELETE FROM feedback"))
+            session.execute(text("DELETE FROM pdfs"))
+            session.execute(text("DELETE FROM users"))
+    
+    def test_create_pdf(self):
+        # ... test code
+```
+
+Or generate unique content for each test:
+
+```python
+import time
+
+def generate_unique_content(base_content: str) -> bytes:
+    """Generate unique content with timestamp"""
+    timestamp = str(time.time())
+    return f"{base_content}_{timestamp}".encode()
+
+# In your tests:
+pdf_content = generate_unique_content("Sample PDF content")
+```
+
+The key fixes are:
+1. **Use `user['id']` instead of `user.id`** in all tests
+2. **Generate unique file hashes** for each test to avoid duplicates
+3. **Ensure all database functions return dictionaries** consistently
