@@ -1,32 +1,175 @@
-The issue is that you've changed the database functions to return dictionaries (Fix 2), but the test code is still expecting SQLAlchemy objects with `.id` attributes. You need to update the tests to work with the new dictionary return format.
+You're still getting detached instance errors because the `create_user()` and `get_user_by_session()` functions are returning SQLAlchemy objects instead of dictionaries. Let me write the correct implementations following Fix 2:
 
-## **🔧 What to Update in Tests**
+## **🔧 Correct Function Implementations**
 
-### **1. Update Test Expectations**
+### **1. create_user() Function**
 
-**Change from:**
 ```python
-def test_create_user(self):
-    user = create_user(session_id=session_id, username="test_user")
-    assert user.id is not None  # ❌ user is now a dict
-    assert user.session_id == session_id  # ❌ user is now a dict
+def create_user(session_id: str, username: str = None, password_hash: str = None) -> dict:
+    """Create a new user and return user data as dictionary"""
+    with db_manager.get_session() as session:
+        user = User(
+            username=username,
+            password_hash=password_hash,
+            session_id=session_id
+        )
+        session.add(user)
+        session.flush()
+        session.refresh(user)
+        
+        # Extract all data within session and return as dict
+        return {
+            'id': str(user.id),  # Convert UUID to string
+            'username': user.username,
+            'password_hash': user.password_hash,
+            'session_id': user.session_id,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'last_active': user.last_active.isoformat() if user.last_active else None
+        }
 ```
 
-**To:**
+### **2. get_user_by_session() Function**
+
 ```python
-def test_create_user(self):
-    user = create_user(session_id=session_id, username="test_user")
-    assert user['id'] is not None  # ✅ Access dict keys
-    assert user['session_id'] == session_id  # ✅ Access dict keys
+def get_user_by_session(session_id: str) -> Optional[dict]:
+    """Get user by session ID and return as dictionary"""
+    with db_manager.get_session() as session:
+        user = session.query(User).filter(User.session_id == session_id).first()
+        
+        if not user:
+            return None
+        
+        # Extract all data within session and return as dict
+        return {
+            'id': str(user.id),  # Convert UUID to string
+            'username': user.username,
+            'password_hash': user.password_hash,
+            'session_id': user.session_id,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'last_active': user.last_active.isoformat() if user.last_active else None,
+            
+            # Include relationship counts (safe within session)
+            'uploaded_pdfs_count': len(user.uploaded_pdfs),
+            'feedbacks_count': len(user.feedbacks)
+        }
 ```
 
-### **2. Update All Test Methods**
+### **3. get_user_by_id() Function (you'll need this too)**
 
-Here are the key patterns to update:
+```python
+def get_user_by_id(user_id: str) -> Optional[dict]:
+    """Get user by ID and return as dictionary"""
+    with db_manager.get_session() as session:
+        user = session.query(User).filter(User.id == user_id).first()
+        
+        if not user:
+            return None
+        
+        return {
+            'id': str(user.id),
+            'username': user.username,
+            'password_hash': user.password_hash,
+            'session_id': user.session_id,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'last_active': user.last_active.isoformat() if user.last_active else None,
+            'uploaded_pdfs_count': len(user.uploaded_pdfs),
+            'feedbacks_count': len(user.feedbacks)
+        }
+```
 
-**User Tests:**
+### **4. All Other Database Functions Need Similar Updates**
+
+**create_pdf():**
+```python
+def create_pdf(pdf_data: Dict[str, Any]) -> dict:
+    """Create a new PDF record and return as dictionary"""
+    with db_manager.get_session() as session:
+        pdf = PDF(**pdf_data)
+        session.add(pdf)
+        session.flush()
+        session.refresh(pdf)
+        
+        return {
+            'id': pdf.id,
+            'pdf_name': pdf.pdf_name,
+            'file_hash': pdf.file_hash,
+            'upload_date': pdf.upload_date.isoformat() if pdf.upload_date else None,
+            'processed_date': pdf.processed_date.isoformat() if pdf.processed_date else None,
+            'layout': pdf.layout,
+            'original_word_count': pdf.original_word_count,
+            'original_page_count': pdf.original_page_count,
+            'parsability': pdf.parsability,
+            'final_word_count': pdf.final_word_count,
+            'final_page_count': pdf.final_page_count,
+            'avg_words_per_page': pdf.avg_words_per_page,
+            'raw_content': pdf.raw_content,
+            'final_content': pdf.final_content,
+            'obfuscation_applied': pdf.obfuscation_applied,
+            'pages_removed_count': pdf.pages_removed_count,
+            'paragraphs_obfuscated_count': pdf.paragraphs_obfuscated_count,
+            'obfuscation_summary': pdf.obfuscation_summary,
+            'uploaded_by': str(pdf.uploaded_by)
+        }
+```
+
+**get_pdf_by_hash():**
+```python
+def get_pdf_by_hash(file_hash: str) -> Optional[dict]:
+    """Get PDF by file hash for deduplication"""
+    with db_manager.get_session() as session:
+        pdf = session.query(PDF).filter(PDF.file_hash == file_hash).first()
+        
+        if not pdf:
+            return None
+        
+        return {
+            'id': pdf.id,
+            'pdf_name': pdf.pdf_name,
+            'file_hash': pdf.file_hash,
+            'upload_date': pdf.upload_date.isoformat() if pdf.upload_date else None,
+            'uploaded_by': str(pdf.uploaded_by),
+            'original_word_count': pdf.original_word_count,
+            'final_word_count': pdf.final_word_count,
+            # ... include all fields you need
+        }
+```
+
+**create_analysis():**
+```python
+def create_analysis(analysis_data: Dict[str, Any]) -> dict:
+    """Create a new analysis record and return as dictionary"""
+    with db_manager.get_session() as session:
+        analysis = Analysis(**analysis_data)
+        session.add(analysis)
+        session.flush()
+        session.refresh(analysis)
+        
+        return {
+            'id': analysis.id,
+            'pdf_id': analysis.pdf_id,
+            'analysis_date': analysis.analysis_date.isoformat() if analysis.analysis_date else None,
+            'version': analysis.version,
+            'form_number': analysis.form_number,
+            'pi_clause': analysis.pi_clause,
+            'ci_clause': analysis.ci_clause,
+            'data_usage_mentioned': analysis.data_usage_mentioned,
+            'data_limitations_exists': analysis.data_limitations_exists,
+            'summary': analysis.summary,
+            'raw_json': analysis.raw_json,
+            'processed_by': analysis.processed_by,
+            'processing_time': analysis.processing_time
+        }
+```
+
+## **🧪 Updated Test Functions**
+
+### **TestUserOperations:**
+
 ```python
 def test_create_user(self):
+    """Test user creation"""
+    print("\n👤 Testing user creation...")
+    
     session_id = generate_session_id()
     user = create_user(
         session_id=session_id,
@@ -43,177 +186,32 @@ def test_create_user(self):
     return user
 
 def test_get_user_by_session(self):
+    """Test retrieving user by session ID"""
+    print("\n🔍 Testing user retrieval by session...")
+    
+    # Create a test user first
     session_id = generate_session_id()
     created_user = create_user(session_id=session_id, username="session_test_user")
     
+    # Retrieve user by session
     retrieved_user = get_user_by_session(session_id)
     
     assert retrieved_user is not None, "User should be found"
     assert retrieved_user['id'] == created_user['id'], "User IDs should match"
     assert retrieved_user['session_id'] == session_id, "Session IDs should match"
+    assert retrieved_user['username'] == "session_test_user", "Username should match"
     
     print(f"✅ User retrieved successfully: {retrieved_user['username']}")
     return retrieved_user
 ```
 
-**PDF Tests:**
-```python
-def test_create_pdf(self):
-    user = create_user(session_id=generate_session_id(), username="pdf_test_user")
-    
-    pdf_content = b"Sample PDF content for testing"
-    file_hash = generate_file_hash(pdf_content)
-    
-    pdf_data = {
-        'pdf_name': 'test_contract.pdf',
-        'file_hash': file_hash,
-        'upload_date': datetime.utcnow(),
-        'uploaded_by': user['id'],  # ✅ Use dict key
-        # ... other fields
-    }
-    
-    pdf = create_pdf(pdf_data)
-    
-    assert pdf['id'] is not None, "PDF ID should be auto-generated"
-    assert pdf['pdf_name'] == 'test_contract.pdf', "PDF name should match"
-    assert pdf['uploaded_by'] == user['id'], "Uploaded by should match user ID"
-    
-    print(f"✅ PDF created with ID: {pdf['id']}")
-    return pdf, user
-```
+## **🎯 Key Points**
 
-**Analysis Tests:**
-```python
-def test_create_analysis(self):
-    pdf, user = TestPDFOperations().test_create_pdf()
-    
-    analysis_data = {
-        'pdf_id': pdf['id'],  # ✅ Use dict key
-        'analysis_date': datetime.utcnow(),
-        'version': 'v1.0',
-        # ... other fields
-    }
-    
-    analysis = create_analysis(analysis_data)
-    
-    assert analysis['id'] is not None, "Analysis ID should be auto-generated"
-    assert analysis['pdf_id'] == pdf['id'], "PDF ID should match"
-    
-    print(f"✅ Analysis created with ID: {analysis['id']}")
-    return analysis, pdf
-```
+1. **All functions return dictionaries**, never SQLAlchemy objects
+2. **All database access happens within sessions**
+3. **UUIDs are converted to strings** for JSON compatibility
+4. **Datetime objects are converted to ISO strings**
+5. **Relationship counts are included when accessed within sessions**
+6. **Tests expect dictionary keys**, not object attributes
 
-### **3. Update Relationship Tests**
-
-**For tests that check relationships, you need to modify the approach:**
-
-```python
-def test_user_pdf_relationship(self):
-    user = create_user(session_id=generate_session_id(), username="relationship_test_user")
-    
-    pdf_data_list = [
-        {
-            'pdf_name': 'contract1.pdf',
-            'file_hash': generate_file_hash(b"content1"),
-            'uploaded_by': user['id']  # ✅ Use dict key
-        },
-        # ... more PDFs
-    ]
-    
-    pdfs = [create_pdf(pdf_data) for pdf_data in pdf_data_list]
-    
-    # Test relationship by querying the database directly
-    user_pdfs = get_user_pdfs(user['id'])  # This should return list of dicts
-    
-    assert len(user_pdfs) == 3, "User should have 3 PDFs"
-    assert all(pdf['uploaded_by'] == user['id'] for pdf in user_pdfs), "All PDFs should belong to user"
-    
-    print(f"✅ User-PDF relationship working: {len(user_pdfs)} PDFs linked to user")
-    return user, pdfs
-```
-
-### **4. Update Functions That Return Objects**
-
-**You also need to update your database functions to return dictionaries:**
-
-```python
-def get_user_pdfs(user_id: str, limit: int = 50) -> List[dict]:
-    """Get all PDFs uploaded by a user"""
-    with db_manager.get_session() as session:
-        pdfs = session.query(PDF)\
-                     .filter(PDF.uploaded_by == user_id)\
-                     .order_by(PDF.upload_date.desc())\
-                     .limit(limit)\
-                     .all()
-        
-        return [
-            {
-                'id': pdf.id,
-                'pdf_name': pdf.pdf_name,
-                'file_hash': pdf.file_hash,
-                'upload_date': pdf.upload_date.isoformat(),
-                'uploaded_by': str(pdf.uploaded_by),
-                'original_word_count': pdf.original_word_count,
-                'final_word_count': pdf.final_word_count,
-                # ... other fields as needed
-            }
-            for pdf in pdfs
-        ]
-
-def get_pdf_by_hash(file_hash: str) -> Optional[dict]:
-    """Get PDF by file hash for deduplication"""
-    with db_manager.get_session() as session:
-        pdf = session.query(PDF).filter(PDF.file_hash == file_hash).first()
-        if not pdf:
-            return None
-        
-        return {
-            'id': pdf.id,
-            'pdf_name': pdf.pdf_name,
-            'file_hash': pdf.file_hash,
-            'upload_date': pdf.upload_date.isoformat(),
-            'uploaded_by': str(pdf.uploaded_by),
-            # ... other fields
-        }
-```
-
-### **5. Update Tests That Use Returned Values**
-
-```python
-def test_cascading_deletes(self):
-    user = create_user(session_id=generate_session_id(), username="cascade_test_user")
-    
-    pdf_data = {
-        'pdf_name': 'cascade_test.pdf',
-        'file_hash': generate_file_hash(b"cascade test content"),
-        'uploaded_by': user['id']  # ✅ Use dict key
-    }
-    pdf = create_pdf(pdf_data)
-    
-    analysis_data = {
-        'pdf_id': pdf['id'],  # ✅ Use dict key
-        'version': 'v1.0',
-        'summary': 'Test analysis for cascade'
-    }
-    analysis = create_analysis(analysis_data)
-    
-    # Delete PDF - should cascade
-    success = delete_pdf(pdf['id'])  # ✅ Use dict key
-    assert success, "PDF deletion should succeed"
-    
-    # Verify cascading worked
-    with db_manager.get_session() as session:
-        assert session.query(PDF).filter(PDF.id == pdf['id']).first() is None
-        assert session.query(Analysis).filter(Analysis.id == analysis['id']).first() is None
-    
-    print("✅ Cascading deletes working correctly")
-```
-
-## **🎯 Key Pattern Changes**
-
-1. **Object attributes** → **Dictionary keys**: `user.id` → `user['id']`
-2. **Pass IDs not objects**: `pdf_id': pdf['id']` instead of `'pdf_id': pdf.id`
-3. **Update function signatures**: Return `List[dict]` instead of `List[Model]`
-4. **Test relationship queries**: Use the helper functions that return dicts
-
-This approach maintains the benefits of Fix 2 (no detached instances) while making your tests work with the new dictionary-based return format.
+This approach completely eliminates detached instance errors because you never pass SQLAlchemy objects outside of session contexts.
