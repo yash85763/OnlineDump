@@ -1,356 +1,598 @@
-"""
-Enhanced PDF Processing Module with Database Integration
+# Integration examples for PDF handler and Streamlit
 
-This module extends the PDFHandler functionality to include database storage
-of PDF extraction results and provides methods for retrieving processed data.
+# ===========================
+# PDF HANDLER INTEGRATION
+# ===========================
 
-Features:
-- Database integration for PDF metadata and content storage
-- Word count and content statistics
-- Session-based tracking of PDF processing
-- Integration with the contract analysis pipeline
-"""
+# pdf_handler.py - Example integration
+import time
+from datetime import datetime
+from database.helpers import (
+    store_pdf_from_upload, update_pdf_processing_data, 
+    store_analysis_results, store_extracted_clauses,
+    get_pdf_full_details
+)
 
-import os
-import uuid
-import json
-import tempfile
-from pathlib import Path
-from typing import Dict, Any, Tuple, Optional, List
-from ecfr_api_wrapper import PDFHandler
-import re
-
-class PDFDatabaseProcessor:
-    """
-    Enhanced PDF handler that integrates with database storage.
-    """
+class PDFProcessor:
+    """PDF processing with database integration"""
     
-    def __init__(self, db_handler, pdf_handler=None):
-        """
-        Initialize the PDF database processor.
+    def __init__(self):
+        self.processing_start_time = None
+    
+    def process_uploaded_pdf(self, file_data: bytes, filename: str, user_session_id: str):
+        """Complete PDF processing pipeline with database storage"""
         
-        Args:
-            db_handler: Database handler instance
-            pdf_handler: Optional PDFHandler instance, will create a new one if not provided
-        """
-        self.db = db_handler
-        self.pdf_handler = pdf_handler or PDFHandler()
+        # Step 1: Store initial PDF upload
+        print(f"📄 Processing uploaded PDF: {filename}")
         
-    def process_and_store_pdf(self, pdf_path: str, session_id: str, generate_embeddings: bool = False) -> Tuple[bool, Dict[str, Any]]:
-        """
-        Process a PDF file and store the results in the database.
+        # Extract basic metadata (your existing code)
+        pdf_metadata = self.extract_pdf_metadata(file_data)
         
-        Args:
-            pdf_path: Path to the PDF file
-            session_id: User session identifier
-            generate_embeddings: Whether to generate embeddings for paragraphs
-            
-        Returns:
-            Tuple of (success, result_data)
-        """
+        # Store in database with safe fallbacks
+        pdf_record = store_pdf_from_upload(
+            file_data=file_data,
+            filename=filename,
+            user_session_id=user_session_id,
+            pdf_metadata=pdf_metadata
+        )
+        
+        if pdf_record.get('is_duplicate'):
+            print(f"📋 PDF is duplicate: {pdf_record['pdf_name']}")
+            return pdf_record
+        
+        if pdf_record.get('error'):
+            print(f"❌ Failed to store PDF: {pdf_record['error']}")
+            return pdf_record
+        
+        pdf_id = pdf_record['id']
+        
+        # Step 2: Process PDF content
         try:
-            # Process PDF with the handler
-            result = self.pdf_handler.process_pdf(pdf_path, generate_embeddings)
+            self.processing_start_time = time.time()
             
-            # Check if parsing was successful
-            if not result.get('parsable', False):
-                return False, result
+            # Your existing PDF processing
+            raw_content = self.extract_text_content(file_data)
+            processed_content = self.apply_obfuscation(raw_content)
             
-            # Get PDF file metadata
-            filename = os.path.basename(pdf_path)
-            file_size = os.path.getsize(pdf_path)
+            # Calculate final metrics
+            final_metrics = self.calculate_final_metrics(processed_content)
             
-            # Calculate word count and other statistics
-            word_count = 0
-            final_text = ""
+            # Update database with processing results
+            processing_data = {
+                'processed_date': datetime.utcnow(),
+                'raw_content': raw_content,
+                'final_content': processed_content['text'],
+                'final_word_count': final_metrics['word_count'],
+                'final_page_count': final_metrics['page_count'],
+                'obfuscation_applied': True,
+                'pages_removed_count': processed_content['pages_removed'],
+                'paragraphs_obfuscated_count': processed_content['paragraphs_obfuscated'],
+                'obfuscation_summary': processed_content['obfuscation_summary']
+            }
             
-            # Process pages to get word count and consolidated text
-            for page in result.get('pages', []):
-                page_text = " ".join([p for p in page.get('paragraphs', []) if p])
-                final_text += page_text + "\n\n"
-                word_count += len(re.findall(r'\b\w+\b', page_text))
+            success = update_pdf_processing_data(pdf_id, processing_data)
+            if not success:
+                print(f"⚠️ Warning: Could not update processing data for PDF {pdf_id}")
             
-            # Calculate average words per page
-            page_count = len(result.get('pages', []))
-            avg_word_count_per_page = word_count / page_count if page_count > 0 else 0
+            # Step 3: Perform contract analysis
+            analysis_results = self.analyze_contract(processed_content['text'])
             
-            # Store in database
-            pdf_id = self.db.store_pdf_document(
-                session_id=session_id,
-                filename=filename,
-                pdf_name=Path(filename).stem,
-                file_size=file_size,
-                page_count=page_count,
-                word_count=word_count,
-                avg_word_count_per_page=avg_word_count_per_page,
-                pdf_layout=result.get('layout', 'unknown'),
-                parsable=result.get('parsable', False),
-                final_text=final_text,
-                metadata={
-                    'processing_time': result.get('processing_time', 0),
-                    'quality_info': result.get('quality_info', ''),
-                    'embeddings_generated': generate_embeddings
-                }
-            )
-            
-            # Add PDF ID to the result
-            result['pdf_id'] = pdf_id
-            result['word_count'] = word_count
-            result['avg_word_count_per_page'] = avg_word_count_per_page
-            
-            return True, result
-            
-        except Exception as e:
-            # Log the error
-            print(f"Error processing PDF {pdf_path}: {str(e)}")
-            
-            # Try to store failed processing attempt
-            try:
-                self.db.store_pdf_document(
-                    session_id=session_id,
-                    filename=os.path.basename(pdf_path),
-                    pdf_name=Path(os.path.basename(pdf_path)).stem,
-                    file_size=os.path.getsize(pdf_path),
-                    page_count=0,
-                    word_count=0,
-                    avg_word_count_per_page=0,
-                    pdf_layout='unknown',
-                    parsable=False,
-                    final_text=None,
-                    metadata={'error': str(e)}
-                )
-            except:
-                pass
-            
-            return False, {"parsable": False, "error": str(e)}
-    
-    def process_pdf_bytes(self, pdf_bytes: bytes, filename: str, session_id: str) -> Tuple[bool, Dict[str, Any]]:
-        """
-        Process PDF from bytes and store in database.
-        
-        Args:
-            pdf_bytes: PDF file content as bytes
-            filename: Original filename
-            session_id: User session identifier
-            
-        Returns:
-            Tuple of (success, result_data)
-        """
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
-            temp_path = temp_file.name
-            temp_file.write(pdf_bytes)
-        
-        try:
-            success, result = self.process_and_store_pdf(temp_path, session_id)
-            return success, result
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-    
-    def get_pdf_by_id(self, pdf_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve PDF information by ID.
-        
-        Args:
-            pdf_id: PDF UUID
-            
-        Returns:
-            PDF document information or None if not found
-        """
-        return self.db.get_pdf_document(pdf_id=pdf_id)
-    
-    def get_session_pdfs(self, session_id: str) -> List[Dict[str, Any]]:
-        """
-        Get all PDFs for a session.
-        
-        Args:
-            session_id: Session identifier
-            
-        Returns:
-            List of PDF documents
-        """
-        return self.db.get_session_pdfs(session_id)
-    
-    def store_contract_analysis(self, pdf_id: str, session_id: str, analysis_data: Dict[str, Any]) -> Optional[str]:
-        """
-        Store contract analysis results and associated clauses.
-        
-        Args:
-            pdf_id: PDF UUID
-            session_id: Session identifier
-            analysis_data: Analysis results
-            
-        Returns:
-            Analysis ID or None if failed
-        """
-        try:
-            # Extract key analysis fields
-            form_number = analysis_data.get('form_number', '')
-            summary = analysis_data.get('summary', '')
-            
-            # Extract boolean flags with default values
-            data_usage_mentioned = analysis_data.get('data_usage_mentioned', False)
-            data_limitations_exists = analysis_data.get('data_limitations_exists', False)
-            pi_clause = analysis_data.get('pi_clause', False)
-            ci_clause = analysis_data.get('ci_clause', False)
-            
-            # Additional metadata to store
-            metadata = {k: v for k, v in analysis_data.items() 
-                       if k not in ['form_number', 'summary', 'data_usage_mentioned', 
-                                  'data_limitations_exists', 'pi_clause', 'ci_clause',
-                                  'relevant_clauses']}
-            
-            # Store the analysis
-            analysis_id = self.db.store_contract_analysis(
+            # Store analysis results
+            analysis_record = store_analysis_results(
                 pdf_id=pdf_id,
-                session_id=session_id,
-                form_number=form_number,
-                summary=summary,
-                data_usage_mentioned=data_usage_mentioned,
-                data_limitations_exists=data_limitations_exists,
-                pi_clause=pi_clause,
-                ci_clause=ci_clause,
-                metadata=metadata
+                analysis_results=analysis_results,
+                version="v1.0"
             )
             
-            # Store each clause if present
-            if analysis_id and 'relevant_clauses' in analysis_data:
-                for clause in analysis_data['relevant_clauses']:
-                    self.db.store_contract_clause(
+            if analysis_record.get('error'):
+                print(f"⚠️ Warning: Analysis storage failed: {analysis_record['error']}")
+            else:
+                analysis_id = analysis_record['id']
+                
+                # Step 4: Store extracted clauses
+                if 'clauses' in analysis_results:
+                    clause_records = store_extracted_clauses(
                         analysis_id=analysis_id,
-                        clause_type=clause.get('type', 'unknown'),
-                        clause_text=clause.get('text', ''),
-                        confidence=clause.get('confidence', None),
-                        page_number=clause.get('page_number', None),
-                        metadata=clause.get('metadata', None)
+                        clauses=analysis_results['clauses']
                     )
+                    
+                    successful_clauses = [c for c in clause_records if c.get('status') == 'stored']
+                    print(f"📝 Stored {len(successful_clauses)} clauses successfully")
             
-            return analysis_id
+            # Return complete processing result
+            processing_time = time.time() - self.processing_start_time
+            
+            return {
+                'pdf_id': pdf_id,
+                'status': 'completed',
+                'processing_time': processing_time,
+                'pdf_record': pdf_record,
+                'analysis_record': analysis_record,
+                'final_metrics': final_metrics,
+                'message': f"Successfully processed {filename}"
+            }
             
         except Exception as e:
-            print(f"Error storing contract analysis: {str(e)}")
-            return None
+            print(f"❌ Error during PDF processing: {e}")
+            return {
+                'pdf_id': pdf_id,
+                'status': 'failed',
+                'error': str(e),
+                'pdf_record': pdf_record
+            }
     
-    def get_complete_analysis(self, analysis_id: str = None, pdf_id: str = None) -> Optional[Dict[str, Any]]:
-        """
-        Get complete analysis information including clauses.
-        
-        Args:
-            analysis_id: Analysis UUID (required if pdf_id not provided)
-            pdf_id: PDF UUID (used to look up the most recent analysis if analysis_id not provided)
-            
-        Returns:
-            Complete analysis data or None if not found
-        """
+    def extract_pdf_metadata(self, file_data: bytes) -> dict:
+        """Extract basic PDF metadata (your existing logic)"""
         try:
-            # Get the analysis
-            analysis = None
-            if analysis_id:
-                analysis = self.db.get_contract_analysis(analysis_id=analysis_id)
-            elif pdf_id:
-                # Get the most recent analysis for this PDF
-                analysis = self.db.get_contract_analysis(pdf_id=pdf_id)
-            
-            if not analysis:
-                return None
-            
-            # Get clauses
-            clauses = self.db.get_analysis_clauses(analysis['analysis_id'])
-            
-            # Format the complete result
-            result = dict(analysis)
-            result['relevant_clauses'] = [
-                {
-                    'id': str(clause['clause_id']),
-                    'type': clause['clause_type'],
-                    'text': clause['clause_text'],
-                    'confidence': clause['confidence'],
-                    'page_number': clause['page_number']
+            # Your existing metadata extraction code
+            return {
+                'layout': 'single-column',  # Detected layout
+                'word_count': 1500,         # Initial word count
+                'page_count': 5,            # Page count
+                'parsability': 0.95         # How well the PDF can be parsed
+            }
+        except Exception as e:
+            print(f"⚠️ Metadata extraction failed: {e}")
+            return {}
+    
+    def extract_text_content(self, file_data: bytes) -> dict:
+        """Extract text content from PDF (your existing logic)"""
+        try:
+            # Your existing text extraction code
+            return {
+                'pages': [
+                    {'page_num': 1, 'text': 'Page 1 content...'},
+                    {'page_num': 2, 'text': 'Page 2 content...'}
+                ],
+                'full_text': 'Combined text from all pages...'
+            }
+        except Exception as e:
+            print(f"⚠️ Text extraction failed: {e}")
+            return {'pages': [], 'full_text': ''}
+    
+    def apply_obfuscation(self, raw_content: dict) -> dict:
+        """Apply obfuscation to content (your existing logic)"""
+        try:
+            # Your existing obfuscation logic
+            return {
+                'text': 'Obfuscated content...',
+                'pages_removed': 1,
+                'paragraphs_obfuscated': 5,
+                'obfuscation_summary': {
+                    'method': 'entity_replacement',
+                    'confidence': 0.87,
+                    'entities_found': ['PII', 'emails', 'phone_numbers']
                 }
-                for clause in clauses
-            ]
-            
-            # Get feedback
-            feedback = self.db.get_analysis_feedback(analysis['analysis_id'])
-            if feedback:
-                result['feedback'] = feedback
-            
-            return result
-            
+            }
         except Exception as e:
-            print(f"Error retrieving complete analysis: {str(e)}")
-            return None
+            print(f"⚠️ Obfuscation failed: {e}")
+            return {
+                'text': raw_content.get('full_text', ''),
+                'pages_removed': 0,
+                'paragraphs_obfuscated': 0,
+                'obfuscation_summary': {'error': str(e)}
+            }
     
-    def store_feedback(self, session_id: str, pdf_id: str, analysis_id: str, 
-                     feedback_type: str, feedback_value: str, correct: bool = None,
-                     suggested_correction: str = None, clause_id: str = None) -> Optional[str]:
-        """
-        Store user feedback on analysis results.
-        
-        Args:
-            session_id: Session identifier
-            pdf_id: PDF UUID
-            analysis_id: Analysis UUID
-            feedback_type: Type of feedback (e.g., 'summary', 'pi_clause')
-            feedback_value: Feedback value
-            correct: Whether the analysis was correct
-            suggested_correction: Suggested correction
-            clause_id: Clause UUID if feedback is for a specific clause
-            
-        Returns:
-            Feedback ID or None if failed
-        """
+    def calculate_final_metrics(self, processed_content: dict) -> dict:
+        """Calculate final metrics after processing"""
         try:
-            return self.db.store_feedback(
-                session_id=session_id,
-                pdf_id=pdf_id,
-                analysis_id=analysis_id,
-                feedback_type=feedback_type,
-                feedback_value=feedback_value,
-                correct=correct,
-                suggested_correction=suggested_correction,
-                clause_id=clause_id
-            )
+            text = processed_content.get('text', '')
+            words = len(text.split()) if text else 0
+            
+            # Estimate pages (assuming ~250 words per page)
+            estimated_pages = max(1, words // 250)
+            
+            return {
+                'word_count': words,
+                'page_count': estimated_pages,
+                'avg_words_per_page': words / estimated_pages if estimated_pages > 0 else 0
+            }
         except Exception as e:
-            print(f"Error storing feedback: {str(e)}")
-            return None
+            print(f"⚠️ Metrics calculation failed: {e}")
+            return {'word_count': 0, 'page_count': 0, 'avg_words_per_page': 0}
+    
+    def analyze_contract(self, text: str) -> dict:
+        """Perform contract analysis (your existing AI logic)"""
+        try:
+            # Your existing contract analysis code
+            analysis_start = time.time()
+            
+            # Mock analysis results - replace with your actual analysis
+            analysis_results = {
+                'form_number': 'FORM-2024-001',
+                'pi_clause': 'Personal information clause found in section 3.2',
+                'ci_clause': 'Confidential information clause found in section 4.1',
+                'data_usage_mentioned': True,
+                'data_limitations_exists': True,
+                'summary': 'Contract contains standard privacy and confidentiality clauses with data usage provisions.',
+                'processed_by': 'AI_Engine_v2.1',
+                'processing_time': time.time() - analysis_start,
+                'raw_analysis': {
+                    'confidence_scores': {'pi_detection': 0.95, 'ci_detection': 0.87},
+                    'sections_analyzed': 12,
+                    'flags_raised': ['data_usage', 'third_party_sharing']
+                },
+                'clauses': [
+                    {
+                        'type': 'PI',
+                        'text': 'Personal information shall be handled in accordance with applicable privacy laws.',
+                        'page_number': 2,
+                        'paragraph_index': 3,
+                        'order': 1
+                    },
+                    {
+                        'type': 'CI',
+                        'text': 'Confidential information must not be disclosed to third parties.',
+                        'page_number': 3,
+                        'paragraph_index': 1,
+                        'order': 2
+                    },
+                    {
+                        'type': 'DATA_USAGE',
+                        'text': 'Data may be used for internal analytics and reporting purposes.',
+                        'page_number': 4,
+                        'paragraph_index': 2,
+                        'order': 3
+                    }
+                ]
+            }
+            
+            return analysis_results
+            
+        except Exception as e:
+            print(f"⚠️ Contract analysis failed: {e}")
+            return {
+                'summary': f'Analysis failed: {str(e)}',
+                'processed_by': 'AI_Engine_v2.1',
+                'processing_time': 0,
+                'error': str(e)
+            }
 
+# ===========================
+# STREAMLIT INTEGRATION
+# ===========================
 
-# Example usage
+# streamlit_app.py - Example integration
+import streamlit as st
+from database.helpers import (
+    get_or_create_user_by_session, get_user_dashboard_data,
+    get_pdf_full_details, store_user_feedback, check_database_health,
+    update_user_activity
+)
+
+class StreamlitApp:
+    """Streamlit app with database integration"""
+    
+    def __init__(self):
+        self.setup_session_state()
+        self.setup_user()
+    
+    def setup_session_state(self):
+        """Initialize Streamlit session state"""
+        if 'user_session_id' not in st.session_state:
+            from database.models import generate_session_id
+            st.session_state.user_session_id = generate_session_id()
+        
+        if 'user_data' not in st.session_state:
+            st.session_state.user_data = None
+    
+    def setup_user(self):
+        """Setup user for the session"""
+        try:
+            # Get or create user
+            user_data = get_or_create_user_by_session(
+                session_id=st.session_state.user_session_id,
+                username=f"user_{st.session_state.user_session_id[:8]}"
+            )
+            
+            st.session_state.user_data = user_data
+            
+            # Update user activity
+            update_user_activity(st.session_state.user_session_id)
+            
+        except Exception as e:
+            st.error(f"Error setting up user: {e}")
+            st.session_state.user_data = {
+                'username': 'Guest User',
+                'error': str(e)
+            }
+    
+    def show_dashboard(self):
+        """Display user dashboard"""
+        st.title("📊 Contract Analysis Dashboard")
+        
+        # Database health check
+        with st.expander("🔍 System Status", expanded=False):
+            health = check_database_health()
+            if health.get('connection') == 'healthy':
+                st.success("✅ Database connection healthy")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Users", health.get('total_users', 0))
+                with col2:
+                    st.metric("Total PDFs", health.get('total_pdfs', 0))
+                with col3:
+                    st.metric("Total Analyses", health.get('total_analyses', 0))
+            else:
+                st.error(f"❌ Database issue: {health.get('error', 'Unknown error')}")
+        
+        # User info
+        user = st.session_state.user_data
+        if user and not user.get('error'):
+            st.write(f"👋 Welcome back, **{user['username']}**!")
+            
+            if user.get('is_new'):
+                st.info("🎉 This is your first visit! Upload a contract to get started.")
+        
+        # Get dashboard data
+        try:
+            dashboard_data = get_user_dashboard_data(st.session_state.user_session_id)
+            
+            # Display stats
+            st.subheader("📈 Your Statistics")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Documents Uploaded", 
+                    dashboard_data['stats']['total_pdfs']
+                )
+            
+            with col2:
+                st.metric(
+                    "Documents Processed", 
+                    dashboard_data['stats']['processed_pdfs']
+                )
+            
+            with col3:
+                st.metric(
+                    "Analyses Completed", 
+                    dashboard_data['stats']['total_analyses']
+                )
+            
+            with col4:
+                st.metric(
+                    "Feedback Given", 
+                    dashboard_data['stats']['total_feedbacks']
+                )
+            
+            # Recent PDFs
+            if dashboard_data['recent_pdfs']:
+                st.subheader("📄 Recent Documents")
+                
+                for pdf in dashboard_data['recent_pdfs']:
+                    with st.container():
+                        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                        
+                        with col1:
+                            st.write(f"**{pdf['pdf_name']}**")
+                            st.write(f"Uploaded: {pdf['upload_date'][:10]}")
+                        
+                        with col2:
+                            status_color = "🟢" if pdf['status'] == 'processed' else "🟡"
+                            st.write(f"{status_color} {pdf['status'].title()}")
+                        
+                        with col3:
+                            if pdf['word_count']:
+                                st.write(f"📝 {pdf['word_count']:,} words")
+                            if pdf['page_count']:
+                                st.write(f"📄 {pdf['page_count']} pages")
+                        
+                        with col4:
+                            if st.button(f"View Details", key=f"view_{pdf['id']}"):
+                                st.session_state.selected_pdf_id = pdf['id']
+                                st.experimental_rerun()
+                        
+                        st.divider()
+            else:
+                st.info("📭 No documents uploaded yet. Use the upload section below to get started!")
+        
+        except Exception as e:
+            st.error(f"Error loading dashboard: {e}")
+    
+    def show_pdf_upload(self):
+        """PDF upload interface"""
+        st.subheader("📤 Upload Contract Document")
+        
+        uploaded_file = st.file_uploader(
+            "Choose a PDF file",
+            type=['pdf'],
+            help="Upload your contract document for analysis"
+        )
+        
+        if uploaded_file is not None:
+            # Show file details
+            st.write(f"**File:** {uploaded_file.name}")
+            st.write(f"**Size:** {uploaded_file.size:,} bytes")
+            
+            if st.button("🚀 Process Document", type="primary"):
+                with st.spinner("Processing your document..."):
+                    try:
+                        # Read file data
+                        file_data = uploaded_file.read()
+                        
+                        # Process with PDFProcessor
+                        processor = PDFProcessor()
+                        result = processor.process_uploaded_pdf(
+                            file_data=file_data,
+                            filename=uploaded_file.name,
+                            user_session_id=st.session_state.user_session_id
+                        )
+                        
+                        # Show results
+                        if result.get('status') == 'completed':
+                            st.success(f"✅ {result['message']}")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Processing Time", f"{result['processing_time']:.2f}s")
+                            with col2:
+                                st.metric("Final Word Count", result['final_metrics']['word_count'])
+                            
+                            # Store processing result in session for display
+                            st.session_state.last_processed_pdf = result['pdf_id']
+                            
+                            st.balloons()
+                            
+                        elif result.get('is_duplicate'):
+                            st.warning(f"📋 This document was already uploaded: {result['pdf_name']}")
+                            st.session_state.last_processed_pdf = result['id']
+                            
+                        else:
+                            st.error(f"❌ Processing failed: {result.get('error', 'Unknown error')}")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Upload failed: {str(e)}")
+    
+    def show_pdf_details(self, pdf_id: int):
+        """Show detailed PDF information"""
+        try:
+            pdf_details = get_pdf_full_details(pdf_id)
+            
+            if pdf_details.get('error'):
+                st.error(f"Error loading PDF details: {pdf_details['error']}")
+                return
+            
+            st.title(f"📄 {pdf_details['pdf_name']}")
+            
+            # Basic info
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Status", pdf_details['status'].title())
+            with col2:
+                if pdf_details['final_word_count']:
+                    st.metric("Words", f"{pdf_details['final_word_count']:,}")
+            with col3:
+                if pdf_details['final_page_count']:
+                    st.metric("Pages", pdf_details['final_page_count'])
+            
+            # Processing info
+            if pdf_details['obfuscation_applied']:
+                st.subheader("🔒 Privacy Protection Applied")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Pages Removed", pdf_details['pages_removed_count'])
+                with col2:
+                    st.metric("Paragraphs Obfuscated", pdf_details['paragraphs_obfuscated_count'])
+            
+            # Analyses
+            if pdf_details['analyses']:
+                st.subheader("🔍 Analysis Results")
+                
+                for analysis in pdf_details['analyses']:
+                    with st.expander(f"Analysis {analysis['version']} - {analysis['analysis_date'][:10]}", expanded=True):
+                        
+                        if analysis['summary']:
+                            st.write("**Summary:**")
+                            st.write(analysis['summary'])
+                        
+                        # Key findings
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write("**Data Usage Mentioned:**", "✅ Yes" if analysis['data_usage_mentioned'] else "❌ No")
+                        with col2:
+                            st.write("**Data Limitations Exist:**", "✅ Yes" if analysis['data_limitations_exists'] else "❌ No")
+                        
+                        # Clauses
+                        if analysis['clauses']:
+                            st.write("**Extracted Clauses:**")
+                            for clause in analysis['clauses']:
+                                clause_color = {
+                                    'PI': '🔒',
+                                    'CI': '🤐', 
+                                    'DATA_USAGE': '📊',
+                                    'DATA_RETENTION': '📅'
+                                }.get(clause['clause_type'], '📄')
+                                
+                                st.write(f"{clause_color} **{clause['clause_type']}** (Page {clause['page_number']})")
+                                st.write(f"_{clause['clause_text']}_")
+                                st.write("")
+            
+            # Feedback section
+            st.subheader("💬 Your Feedback")
+            
+            # Show existing feedback
+            if pdf_details['feedbacks']:
+                st.write("**Previous Feedback:**")
+                for feedback in pdf_details['feedbacks']:
+                    st.write(f"_{feedback['general_feedback']}_ - {feedback['feedback_date'][:10]}")
+            
+            # Add new feedback
+            with st.form(f"feedback_form_{pdf_id}"):
+                feedback_text = st.text_area("Share your thoughts about this analysis:")
+                rating = st.select_slider("Rate the analysis quality:", options=[1, 2, 3, 4, 5], value=3)
+                
+                if st.form_submit_button("Submit Feedback"):
+                    if feedback_text.strip():
+                        feedback_result = store_user_feedback(
+                            pdf_id=pdf_id,
+                            user_session_id=st.session_state.user_session_id,
+                            feedback_text=feedback_text,
+                            rating=rating
+                        )
+                        
+                        if feedback_result.get('status') == 'stored':
+                            st.success("✅ Thank you for your feedback!")
+                            st.experimental_rerun()
+                        else:
+                            st.error(f"❌ Failed to save feedback: {feedback_result.get('error')}")
+                    else:
+                        st.warning("Please enter some feedback text.")
+        
+        except Exception as e:
+            st.error(f"Error displaying PDF details: {e}")
+    
+    def run(self):
+        """Main Streamlit app runner"""
+        st.set_page_config(
+            page_title="Contract Analysis Platform",
+            page_icon="📄",
+            layout="wide"
+        )
+        
+        # Check if viewing specific PDF
+        if hasattr(st.session_state, 'selected_pdf_id'):
+            self.show_pdf_details(st.session_state.selected_pdf_id)
+            
+            if st.button("← Back to Dashboard"):
+                del st.session_state.selected_pdf_id
+                st.experimental_rerun()
+        
+        # Check if showing recently processed PDF
+        elif hasattr(st.session_state, 'last_processed_pdf'):
+            self.show_pdf_details(st.session_state.last_processed_pdf)
+            
+            if st.button("← Back to Dashboard"):
+                del st.session_state.last_processed_pdf
+                st.experimental_rerun()
+        
+        # Default dashboard view
+        else:
+            self.show_dashboard()
+            st.divider()
+            self.show_pdf_upload()
+
+# ===========================
+# USAGE EXAMPLES
+# ===========================
+
 if __name__ == "__main__":
-    from db_handler import DatabaseHandler
-    from config import get_config
+    # Example 1: Direct PDF processing
+    print("🧪 Testing PDF processing...")
     
-    # Get configuration
-    config = get_config()
+    # Simulate file upload
+    sample_pdf_data = b"Sample PDF content for testing"
+    processor = PDFProcessor()
     
-    # Create database handler
-    db_handler = DatabaseHandler(config['database'])
+    result = processor.process_uploaded_pdf(
+        file_data=sample_pdf_data,
+        filename="test_contract.pdf",
+        user_session_id="test_session_123"
+    )
     
-    # Initialize schema if needed
-    db_handler.initialize_schema()
+    print(f"Processing result: {result}")
     
-    # Create PDF processor
-    pdf_processor = PDFDatabaseProcessor(db_handler)
-    
-    # Process a PDF file
-    pdf_path = "sample.pdf"
-    session_id = str(uuid.uuid4())
-    
-    # Create session
-    db_handler.create_session(session_id)
-    
-    # Process PDF
-    success, result = pdf_processor.process_and_store_pdf(pdf_path, session_id)
-    
-    if success:
-        print(f"Successfully processed PDF: {result['filename']}")
-        print(f"PDF ID: {result['pdf_id']}")
-        print(f"Word count: {result['word_count']}")
-        print(f"Page count: {len(result['pages'])}")
-    else:
-        print(f"Failed to process PDF: {result.get('error', 'Unknown error')}")
-    
-    # Close database connections
-    db_handler.close()
+    # Example 2: Streamlit app
+    # Run with: streamlit run streamlit_app.py
+    app = StreamlitApp()
+    app.run()
