@@ -1,162 +1,189 @@
-There are two issues here:
+The issue is that multiple tests are calling `TestPDFOperations().test_create_pdf()` which creates PDFs with the same file hash, violating the unique constraint. You need to either clean the database between tests or make each test generate unique data.
 
-## **🔧 Issue 1: 'dict' object has no attribute 'id'**
+## **🔧 Solution 1: Add Database Cleanup (Recommended)**
 
-The problem is in your test - you're creating a user that returns a dict, but then trying to access `user.id` instead of `user['id']`.
-
-**Fix the test_create_pdf method:**
+Add a cleanup method that runs before each test class:
 
 ```python
-def test_create_pdf(self):
-    """Test PDF creation"""
-    print("\n📄 Testing PDF creation...")
-    
-    # Create a user first
-    user = create_user(session_id=generate_session_id(), username="pdf_test_user")
-    
-    # Sample PDF data
-    pdf_content = b"Sample PDF content for testing"
-    file_hash = generate_file_hash(pdf_content)
-    
-    pdf_data = {
-        'pdf_name': 'test_contract.pdf',
-        'file_hash': file_hash,
-        'upload_date': datetime.utcnow(),
-        'layout': 'single-column',
-        'original_word_count': 1500,
-        'original_page_count': 5,
-        'parsability': 0.95,
-        'final_word_count': 1200,
-        'final_page_count': 4,
-        'avg_words_per_page': 300.0,
-        'raw_content': {"pages": [{"text": "Sample content"}]},
-        'final_content': "Processed sample content",
-        'obfuscation_applied': True,
-        'pages_removed_count': 1,
-        'paragraphs_obfuscated_count': 5,
-        'obfuscation_summary': {"method": "entity_replacement", "confidence": 0.8},
-        'uploaded_by': user['id']  # ✅ Use dict key, not user.id
-    }
-    
-    pdf = create_pdf(pdf_data)
-    
-    assert pdf['id'] is not None, "PDF ID should be auto-generated"
-    assert pdf['pdf_name'] == 'test_contract.pdf', "PDF name should match"
-    assert pdf['file_hash'] == file_hash, "File hash should match"
-    assert pdf['uploaded_by'] == user['id'], "Uploaded by should match user ID"
-    assert pdf['original_word_count'] == 1500, "Original word count should match"
-    
-    print(f"✅ PDF created with ID: {pdf['id']}")
-    return pdf, user
-```
-
-## **🔧 Issue 2: Duplicate key violation**
-
-The second test is trying to use the same file hash as the first test. You need to generate unique hashes for each test.
-
-**Fix the test_get_pdf_by_hash method:**
-
-```python
-def test_get_pdf_by_hash(self):
-    """Test PDF retrieval by hash for deduplication"""
-    print("\n🔍 Testing PDF retrieval by hash...")
-    
-    # Create a user first
-    user = create_user(session_id=generate_session_id(), username="hash_test_user")
-    
-    # Create unique content for this test
-    pdf_content = b"Unique PDF content for hash test"
-    file_hash = generate_file_hash(pdf_content)
-    
-    pdf_data = {
-        'pdf_name': 'hash_test_contract.pdf',
-        'file_hash': file_hash,
-        'uploaded_by': user['id']  # ✅ Use dict key
-    }
-    
-    # Create the PDF first
-    created_pdf = create_pdf(pdf_data)
-    
-    # Now retrieve PDF by hash
-    retrieved_pdf = get_pdf_by_hash(file_hash)
-    
-    assert retrieved_pdf is not None, "PDF should be found"
-    assert retrieved_pdf['id'] == created_pdf['id'], "PDF IDs should match"
-    assert retrieved_pdf['file_hash'] == file_hash, "File hashes should match"
-    
-    print(f"✅ PDF retrieved successfully by hash")
-    return retrieved_pdf
-```
-
-**Fix the test_pdf_deduplication method:**
-
-```python
-def test_pdf_deduplication(self):
-    """Test that duplicate PDFs are detected"""
-    print("\n🔄 Testing PDF deduplication...")
-    
-    # Create first PDF
-    user = create_user(session_id=generate_session_id(), username="dedup_test_user")
-    
-    pdf_content = b"Duplicate test content for deduplication test"
-    file_hash = generate_file_hash(pdf_content)
-    
-    pdf_data = {
-        'pdf_name': 'original.pdf',
-        'file_hash': file_hash,
-        'uploaded_by': user['id']  # ✅ Use dict key
-    }
-    
-    # Create first PDF
-    pdf1 = create_pdf(pdf_data)
-    
-    # Try to create duplicate PDF with same hash
-    pdf_data['pdf_name'] = 'duplicate.pdf'
-    
-    try:
-        pdf2 = create_pdf(pdf_data)
-        pytest.fail("Should not allow duplicate file hash")
-    except Exception as e:
-        print(f"✅ Duplicate prevention working: {type(e).__name__}")
-```
-
-## **🎯 Alternative: Clean Test State**
-
-To avoid hash collisions between tests, you can also add a setup method that cleans the database between tests:
-
-```python
-class TestPDFOperations:
-    """Test PDF-related database operations"""
-    
+class TestDatabaseSetup:
     def setup_method(self):
         """Clean database before each test"""
-        with db_manager.get_session() as session:
-            # Clean up any existing test data
-            session.execute(text("DELETE FROM clauses"))
-            session.execute(text("DELETE FROM analyses"))
-            session.execute(text("DELETE FROM feedback"))
-            session.execute(text("DELETE FROM pdfs"))
-            session.execute(text("DELETE FROM users"))
+        self.cleanup_database()
     
-    def test_create_pdf(self):
-        # ... test code
+    def cleanup_database(self):
+        """Remove all test data"""
+        try:
+            with db_manager.get_session() as session:
+                # Delete in reverse dependency order
+                session.execute(text("DELETE FROM clauses"))
+                session.execute(text("DELETE FROM feedback"))
+                session.execute(text("DELETE FROM analyses"))
+                session.execute(text("DELETE FROM pdfs"))
+                session.execute(text("DELETE FROM users"))
+                print("🧹 Database cleaned for testing")
+        except Exception as e:
+            print(f"⚠️ Cleanup warning: {e}")
+
+# Add cleanup to all test classes
+class TestUserOperations:
+    def setup_method(self):
+        TestDatabaseSetup().cleanup_database()
+
+class TestPDFOperations:
+    def setup_method(self):
+        TestDatabaseSetup().cleanup_database()
+
+class TestAnalysisOperations:
+    def setup_method(self):
+        TestDatabaseSetup().cleanup_database()
+
+class TestClauseOperations:
+    def setup_method(self):
+        TestDatabaseSetup().cleanup_database()
+
+class TestFeedbackOperations:
+    def setup_method(self):
+        TestDatabaseSetup().cleanup_database()
+
+class TestRelationships:
+    def setup_method(self):
+        TestDatabaseSetup().cleanup_database()
+
+class TestDataManipulation:
+    def setup_method(self):
+        TestDatabaseSetup().cleanup_database()
 ```
 
-Or generate unique content for each test:
+## **🔧 Solution 2: Create Independent Test Data**
+
+Instead of calling other test methods, create fresh data in each test:
+
+```python
+class TestAnalysisOperations:
+    def create_test_pdf(self, name_suffix=""):
+        """Create a test PDF with unique data"""
+        user = create_user(
+            session_id=generate_session_id(),
+            username=f"analysis_test_user{name_suffix}"
+        )
+        
+        pdf_content = f"Analysis test PDF content{name_suffix}".encode()
+        file_hash = generate_file_hash(pdf_content)
+        
+        pdf_data = {
+            'pdf_name': f'analysis_test{name_suffix}.pdf',
+            'file_hash': file_hash,
+            'uploaded_by': user['id']
+        }
+        
+        pdf = create_pdf(pdf_data)
+        return pdf, user
+    
+    def test_create_analysis(self):
+        """Test analysis creation"""
+        print("\n🔍 Testing analysis creation...")
+        
+        # Create PDF with unique data for this test
+        pdf, user = self.create_test_pdf("_analysis")
+        
+        analysis_data = {
+            'pdf_id': pdf['id'],
+            'analysis_date': datetime.utcnow(),
+            'version': 'v1.0',
+            'form_number': 'FORM-2024-001',
+            'summary': 'Test analysis for analysis operations'
+        }
+        
+        analysis = create_analysis(analysis_data)
+        
+        assert analysis['id'] is not None, "Analysis ID should be auto-generated"
+        assert analysis['pdf_id'] == pdf['id'], "PDF ID should match"
+        
+        print(f"✅ Analysis created with ID: {analysis['id']}")
+        return analysis, pdf
+```
+
+## **🔧 Solution 3: Generate Unique Hashes**
+
+Add timestamp or random data to make each hash unique:
 
 ```python
 import time
+import random
 
-def generate_unique_content(base_content: str) -> bytes:
-    """Generate unique content with timestamp"""
+def generate_unique_file_hash(base_content: str = "test content") -> str:
+    """Generate unique file hash with timestamp and random data"""
     timestamp = str(time.time())
-    return f"{base_content}_{timestamp}".encode()
+    random_num = str(random.randint(1000, 9999))
+    unique_content = f"{base_content}_{timestamp}_{random_num}".encode()
+    return generate_file_hash(unique_content)
 
-# In your tests:
-pdf_content = generate_unique_content("Sample PDF content")
+# Use in tests:
+def test_create_analysis(self):
+    user = create_user(session_id=generate_session_id(), username="analysis_test_user")
+    
+    pdf_data = {
+        'pdf_name': 'analysis_test.pdf',
+        'file_hash': generate_unique_file_hash("analysis test"),  # Unique hash
+        'uploaded_by': user['id']
+    }
+    
+    pdf = create_pdf(pdf_data)
+    # ... rest of test
 ```
 
-The key fixes are:
-1. **Use `user['id']` instead of `user.id`** in all tests
-2. **Generate unique file hashes** for each test to avoid duplicates
-3. **Ensure all database functions return dictionaries** consistently
+## **🔧 Solution 4: Use Test Fixtures (Most Professional)**
+
+Create reusable test fixtures:
+
+```python
+class TestFixtures:
+    @staticmethod
+    def create_test_user(name_suffix=""):
+        return create_user(
+            session_id=generate_session_id(),
+            username=f"test_user{name_suffix}_{int(time.time())}"
+        )
+    
+    @staticmethod
+    def create_test_pdf(user_id, name_suffix=""):
+        timestamp = int(time.time())
+        pdf_content = f"Test PDF content {name_suffix} {timestamp}".encode()
+        
+        return create_pdf({
+            'pdf_name': f'test{name_suffix}_{timestamp}.pdf',
+            'file_hash': generate_file_hash(pdf_content),
+            'uploaded_by': user_id,
+            'original_word_count': 1000,
+            'final_word_count': 800
+        })
+    
+    @staticmethod
+    def create_test_analysis(pdf_id, version="v1.0"):
+        return create_analysis({
+            'pdf_id': pdf_id,
+            'version': version,
+            'summary': f'Test analysis {int(time.time())}'
+        })
+
+# Use in tests:
+class TestAnalysisOperations:
+    def test_create_analysis(self):
+        user = TestFixtures.create_test_user("analysis")
+        pdf = TestFixtures.create_test_pdf(user['id'], "analysis")
+        analysis = TestFixtures.create_test_analysis(pdf['id'])
+        
+        assert analysis['id'] is not None
+        # ... rest of test
+```
+
+## **🎯 Recommended Approach**
+
+Use **Solution 1 (Database Cleanup)** as it's the most straightforward:
+
+1. Add cleanup to each test class
+2. Each test runs with a clean database
+3. No need to worry about unique data generation
+4. Tests are isolated and predictable
+
+This ensures each test starts with a clean state and prevents constraint violations.
