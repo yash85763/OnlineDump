@@ -1,255 +1,135 @@
-Here are the specific changes needed to add content highlighting and automatic page navigation:
+To design a database schema for a contract analysis application that allows users to upload PDF contracts, process and analyze them, and provide feedback, while also handling user authentication and session management, we need to identify the key entities and their relationships. Below, I’ll outline the required tables, their columns, and how they are linked, followed by a textual description of the database diagram since I cannot draw it here.
+Required Tables and Columns
+1. users Table
 
-## **1. Add New Functions for Page Detection:**
+This table stores user information for authentication and session management.
 
-**Add these functions after the `sanitize_search_text` function:**
+    Columns:
+        id (Primary Key, e.g., INTEGER): Unique identifier for each user.
+        username (e.g., VARCHAR): User’s login name.
+        password_hash (e.g., VARCHAR): Hashed password for security.
+        session_id (e.g., VARCHAR, unique): Tracks the user’s current session.
+        created_at (e.g., DATETIME): Timestamp of account creation.
+        last_active (e.g., DATETIME): Timestamp of last activity.
 
-```python
-def find_clause_in_pages(clause_text, pages_content):
-    """Find which page contains the clause text"""
-    clause_words = set(clause_text.lower().split())
-    best_matches = []
-    
-    for page in pages_content:
-        page_number = page.get('page_number', 0)
-        page_text = ' '.join(page.get('paragraphs', [])).lower()
-        page_words = set(page_text.split())
-        
-        # Calculate word overlap
-        common_words = clause_words.intersection(page_words)
-        if common_words:
-            match_ratio = len(common_words) / len(clause_words)
-            if match_ratio > 0.3:  # At least 30% word overlap
-                best_matches.append((page_number, match_ratio, page_text))
-    
-    # Sort by match ratio and return best match
-    if best_matches:
-        best_matches.sort(key=lambda x: x[1], reverse=True)
-        return best_matches[0][0]  # Return page number
-    return None
+2. pdfs Table
 
-def create_pdf_url_with_page(pdf_bytes, page_number=None, search_text=None):
-    """Create PDF URL with specific page and search parameters"""
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    pdf_url = f'data:application/pdf;base64,{base64_pdf}'
-    
-    params = []
-    if page_number:
-        params.append(f'page={page_number}')
-    if search_text:
-        sanitized_text = sanitize_search_text(search_text)
-        encoded_text = urllib.parse.quote(sanitized_text)
-        params.append(f'search={encoded_text}')
-    
-    if params:
-        pdf_url += '#' + '&'.join(params)
-    
-    return pdf_url
-```
+This table stores details about uploaded PDF contracts.
 
-## **2. Update Session State Initialization:**
+    Columns:
+        id (Primary Key, e.g., INTEGER): Unique identifier for each PDF.
+        pdf_name (e.g., VARCHAR): Name of the PDF file.
+        file_hash (e.g., VARCHAR, unique): Hash for deduplication.
+        upload_date (e.g., DATETIME): When the PDF was uploaded.
+        processed_date (e.g., DATETIME): When the PDF was processed.
+        layout (e.g., VARCHAR): Layout type (e.g., single-column).
+        original_word_count (e.g., INTEGER): Word count before processing.
+        original_page_count (e.g., INTEGER): Page count before processing.
+        parsability (e.g., FLOAT): Measure of how parseable the PDF is.
+        final_word_count (e.g., INTEGER): Word count after processing.
+        final_page_count (e.g., INTEGER): Page count after processing.
+        avg_words_per_page (e.g., FLOAT): Average words per page.
+        raw_content (e.g., JSON): Raw extracted content (pages and paragraphs).
+        final_content (e.g., TEXT): Processed content.
+        obfuscation_applied (e.g., BOOLEAN): Whether obfuscation was applied.
+        pages_removed_count (e.g., INTEGER): Number of pages removed.
+        paragraphs_obfuscated_count (e.g., INTEGER): Number of paragraphs obfuscated.
+        obfuscation_summary (e.g., JSON): Summary of obfuscation details.
+        uploaded_by (Foreign Key to users.id, e.g., INTEGER): Links to the user who uploaded the PDF.
 
-**Add to the `session_vars` dictionary in `initialize_session_state()`:**
+3. analyses Table
 
-```python
-session_vars = {
-    # ... existing variables ...
-    'current_page_number': 1,  # Add this
-    'clause_page_mapping': {},  # Add this - stores clause to page mapping
-    'pages_content': {},  # Add this - stores pages content per PDF
-}
-```
+This table stores the results of contract analyses.
 
-## **3. Modify the PDF Processing Function:**
+    Columns:
+        id (Primary Key, e.g., INTEGER): Unique identifier for each analysis.
+        pdf_id (Foreign Key to pdfs.id, e.g., INTEGER): Links to the analyzed PDF.
+        analysis_date (e.g., DATETIME): When the analysis was performed.
+        version (e.g., VARCHAR): Version of the analysis (e.g., "v1.0").
+        form_number (e.g., VARCHAR): Contract form number, if applicable.
+        pi_clause (e.g., TEXT): Personal information clause extracted.
+        ci_clause (e.g., TEXT): Confidential information clause extracted.
+        data_usage_mentioned (e.g., BOOLEAN): Whether data usage is mentioned.
+        data_limitations_exists (e.g., BOOLEAN): Whether data limitations exist.
+        summary (e.g., TEXT): Summary of the analysis.
+        raw_json (e.g., JSON): Raw analysis output.
+        processed_by (e.g., VARCHAR): Who or what processed it (e.g., "AI").
+        processing_time (e.g., FLOAT): Time taken for analysis (in seconds).
 
-**In `process_pdf_enhanced()`, after storing the analysis results, add:**
+4. clauses Table
 
-```python
-# Store pages content for clause mapping
-st.session_state.pages_content[pdf_name] = pages_content
+This table stores specific clauses extracted from the contracts, including their positions for highlighting.
 
-# Create clause to page mapping
-if analysis_results.get('relevant_clauses'):
-    clause_mapping = {}
-    for i, clause in enumerate(analysis_results['relevant_clauses']):
-        page_num = find_clause_in_pages(clause['text'], pages_content)
-        if page_num:
-            clause_mapping[i] = page_num
-    st.session_state.clause_page_mapping[pdf_name] = clause_mapping
-```
+    Columns:
+        id (Primary Key, e.g., INTEGER): Unique identifier for each clause.
+        analysis_id (Foreign Key to analyses.id, e.g., INTEGER): Links to the analysis.
+        clause_type (e.g., VARCHAR): Type of clause (e.g., "PI", "CI").
+        clause_text (e.g., TEXT): Text of the clause.
+        page_number (e.g., INTEGER): Page where the clause appears.
+        paragraph_index (e.g., INTEGER): Paragraph index on that page (0-based).
+        clause_order (e.g., INTEGER): Order of the clause in the contract.
 
-## **4. Update the PDF Viewer Display Function:**
+5. feedback Table
 
-**Replace the `display_pdf_iframe` function with:**
+This table stores user feedback on the PDF’s analysis.
 
-```python
-def display_pdf_iframe_with_page(pdf_bytes, page_number=None, search_text=None):
-    """Display PDF with specific page and optional search text"""
-    pdf_url = create_pdf_url_with_page(pdf_bytes, page_number, search_text)
-    
-    iframe_html = f'''
-    <iframe id="pdfViewer" 
-            src="{pdf_url}" 
-            width="100%" 
-            height="600px" 
-            type="application/pdf"
-            style="border: 1px solid #ddd; border-radius: 5px;">
-    </iframe>
-    '''
-    
-    if search_text:
-        iframe_html += f'''
-        <script>
-            setTimeout(function() {{
-                const iframe = document.getElementById('pdfViewer');
-                if (iframe && iframe.contentWindow) {{
-                    try {{
-                        iframe.contentWindow.postMessage({{
-                            type: 'search',
-                            query: '{sanitize_search_text(search_text)}'
-                        }}, '*');
-                    }} catch (e) {{
-                        console.log('Search message failed:', e);
-                    }}
-                }}
-            }}, 1000);
-        </script>
-        '''
-    
-    return iframe_html
-```
+    Columns:
+        id (Primary Key, e.g., INTEGER): Unique identifier for each feedback entry.
+        pdf_id (Foreign Key to pdfs.id, e.g., INTEGER): Links to the PDF being reviewed.
+        feedback_date (e.g., DATETIME): When the feedback was provided.
+        general_feedback (e.g., TEXT): User’s feedback comments.
+        user_id (Foreign Key to users.id, e.g., INTEGER): Links to the user who provided feedback.
 
-## **5. Update the PDF Display Section:**
+Table Relationships
 
-**In the middle pane (col2), replace the PDF display try block with:**
+The tables are linked via foreign keys to establish the following relationships:
 
-```python
-# PDF display with page navigation
-current_page = st.session_state.get('current_page_number', 1)
+    Users to PDFs: One-to-Many
+        A user can upload multiple PDFs, but each PDF is uploaded by one user.
+        pdfs.uploaded_by references users.id.
+    PDFs to Analyses: One-to-Many
+        A PDF can have multiple analyses (e.g., different versions), but each analysis pertains to one PDF.
+        analyses.pdf_id references pdfs.id.
+    Analyses to Clauses: One-to-Many
+        An analysis can identify multiple clauses, but each clause belongs to one analysis.
+        clauses.analysis_id references analyses.id.
+    PDFs to Feedback: One-to-Many
+        A PDF can have multiple feedback entries, but each feedback entry pertains to one PDF.
+        feedback.pdf_id references pdfs.id.
+    Users to Feedback: One-to-Many
+        A user can provide multiple feedback entries, but each feedback entry is from one user.
+        feedback.user_id references users.id.
 
-try:
-    pdf_display = display_pdf_iframe_with_page(
-        current_pdf_bytes, 
-        current_page, 
-        st.session_state.search_text
-    )
-    st.markdown(pdf_display, unsafe_allow_html=True)
-    
-    # Page navigation controls
-    col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
-    with col_nav2:
-        if st.session_state.current_pdf in st.session_state.obfuscation_summaries:
-            total_pages = st.session_state.obfuscation_summaries[st.session_state.current_pdf].get('total_final_pages', 1)
-        else:
-            total_pages = 10  # Default fallback
-            
-        new_page = st.number_input(
-            "Go to page:", 
-            min_value=1, 
-            max_value=total_pages,
-            value=current_page,
-            key=f"page_nav_{st.session_state.current_pdf}"
-        )
-        
-        if new_page != current_page:
-            st.session_state.current_page_number = new_page
-            st.rerun()
+Database Diagram Description
 
-except Exception as e:
-    st.error(f"❌ Error displaying PDF: {e}")
-    # ... rest of error handling stays the same
-```
+Since I cannot provide a visual diagram, here’s a textual representation:
 
-## **6. Enhance the Clause Display Section:**
+    users Table:
+        Central entity with id as the primary key.
+        Connected to pdfs via uploaded_by (FK) and to feedback via user_id (FK).
+    pdfs Table:
+        Has id as the primary key and uploaded_by as a foreign key to users.id.
+        Connected to analyses via pdf_id (FK) and to feedback via pdf_id (FK).
+    analyses Table:
+        Has id as the primary key and pdf_id as a foreign key to pdfs.id.
+        Connected to clauses via analysis_id (FK).
+    clauses Table:
+        Has id as the primary key and analysis_id as a foreign key to analyses.id.
+        No outgoing connections.
+    feedback Table:
+        Has id as the primary key, pdf_id as a foreign key to pdfs.id, and user_id as a foreign key to users.id.
 
-**Replace the clause expander section in the right pane with:**
+The flow is:
 
-```python
-# Relevant Clauses with enhanced navigation
-st.markdown("### 📄 Relevant Clauses")
-clauses = json_data.get("relevant_clauses", [])
+    Users → PDFs (users upload PDFs).
+    PDFs → Analyses (PDFs are analyzed).
+    Analyses → Clauses (analyses extract clauses).
+    Users and PDFs → Feedback (users provide feedback on PDFs).
 
-if clauses:
-    clause_mapping = st.session_state.clause_page_mapping.get(st.session_state.current_pdf, {})
-    
-    for i, clause in enumerate(clauses):
-        # Get page number for this clause
-        clause_page = clause_mapping.get(i)
-        page_info = f" (Page {clause_page})" if clause_page else ""
-        
-        with st.expander(f"📑 Clause {i+1}: {clause['type'].capitalize()}{page_info}", expanded=False):
-            st.markdown(f"**Type:** `{clause['type']}`")
-            if clause_page:
-                st.markdown(f"**Found on Page:** {clause_page}")
-            
-            st.markdown(f"**Content:**")
-            st.markdown(f"<div class='extract-text'>{clause['text']}</div>", unsafe_allow_html=True)
-            
-            # Enhanced search functionality
-            col_search1, col_search2 = st.columns(2)
-            with col_search1:
-                if st.button(f"🔍 Search Text", key=f"search_clause_{i}"):
-                    st.session_state.search_text = clause['text'][:100]
-                    st.success(f"Searching for clause {i+1}...")
-                    st.rerun()
-            
-            with col_search2:
-                if clause_page and st.button(f"📄 Go to Page {clause_page}", key=f"goto_page_{i}"):
-                    st.session_state.current_page_number = clause_page
-                    st.session_state.search_text = clause['text'][:50]  # Also search
-                    st.success(f"Navigating to page {clause_page}...")
-                    st.rerun()
-            
-            if not clause_page:
-                st.info("💡 Page location not detected for this clause")
-            
-            if len(clause['text']) > 100:
-                st.caption("⚠️ Long text may not highlight fully")
-else:
-    st.info("No relevant clauses detected in this contract.")
-```
+Additional Notes
 
-## **7. Add Page Reset on PDF Change:**
+    The clauses table includes page_number and paragraph_index to support clause highlighting by linking back to the raw_content JSON in the pdfs table.
+    Feedback is linked to pdfs rather than analyses to reflect general feedback on a PDF’s analysis, though linking to analyses could be an alternative for version-specific feedback.
+    Session management is simplified with session_id in the users table; a separate sessions table could be added for more complex needs.
 
-**In the `set_current_pdf` function, add:**
-
-```python
-def set_current_pdf(pdf_name):
-    """Set the current PDF to display"""
-    st.session_state.current_pdf = pdf_name
-    st.session_state.search_text = None
-    st.session_state.current_page_number = 1  # Add this line
-```
-
-## **8. Optional: Add Clause Summary with Page Numbers:**
-
-**Add this section after the contract status in the right pane:**
-
-```python
-# Quick clause navigation
-if clauses and st.session_state.current_pdf in st.session_state.clause_page_mapping:
-    clause_mapping = st.session_state.clause_page_mapping[st.session_state.current_pdf]
-    if clause_mapping:
-        st.markdown("### 🚀 Quick Navigation")
-        cols = st.columns(min(len(clause_mapping), 4))
-        
-        for idx, (clause_idx, page_num) in enumerate(clause_mapping.items()):
-            col_idx = idx % len(cols)
-            with cols[col_idx]:
-                clause_type = clauses[clause_idx]['type'].capitalize()
-                if st.button(f"📄 {clause_type}\nPage {page_num}", key=f"quick_nav_{clause_idx}"):
-                    st.session_state.current_page_number = page_num
-                    st.session_state.search_text = clauses[clause_idx]['text'][:50]
-                    st.rerun()
-```
-
-These changes will:
-- ✅ **Detect which page** each clause appears on
-- ✅ **Automatically navigate** to the correct page when user clicks "Go to Page"
-- ✅ **Highlight the clause text** in the PDF viewer
-- ✅ **Show page numbers** in clause titles
-- ✅ **Add quick navigation** buttons for rapid access
-- ✅ **Maintain page state** when switching between PDFs
-- ✅ **Provide visual feedback** when navigating
-
-The system will now intelligently match clauses to pages and provide seamless navigation between the analysis results and the corresponding PDF content!​​​​​​​​​​​​​​​​
+This schema supports user authentication, PDF upload and processing, contract analysis, clause extraction with highlighting, and feedback collection, meeting all specified requirements.
