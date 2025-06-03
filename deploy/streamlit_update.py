@@ -250,6 +250,14 @@ def render_feedback_form(analysis_id, clause_id=None, feedback_type="general", l
     with st.expander(label):
         st.markdown("<div class='feedback-form'>", unsafe_allow_html=True)
         
+        # Form number selection
+        form_number = st.selectbox(
+            "Select Form Number",
+            options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            key=f"form_number_{form_key}",
+            index=0  # Default to form 1
+        )
+        
         # Feedback rating
         rating = st.radio(
             "Is this analysis correct?",
@@ -257,24 +265,19 @@ def render_feedback_form(analysis_id, clause_id=None, feedback_type="general", l
             key=f"rating_{form_key}"
         )
         
-        # Convert rating to boolean
-        correct_map = {
-            "Correct": True,
-            "Partially Correct": None,
-            "Incorrect": False
+        # Convert rating to integer for database storage
+        rating_map = {
+            "Correct": 5,
+            "Partially Correct": 3,
+            "Incorrect": 1
         }
-        correct = correct_map[rating]
+        rating_value = rating_map[rating]
         
-        # Feedback value
-        feedback_value = st.text_area(
-            "Your feedback",
+        # Single feedback text box
+        feedback_text = st.text_area(
+            "Your feedback/comments",
+            placeholder="Please provide your feedback or comments about this analysis...",
             key=f"feedback_{form_key}"
-        )
-        
-        # Suggested correction
-        suggested_correction = st.text_area(
-            "Suggested correction (if applicable)",
-            key=f"correction_{form_key}"
         )
         
         # Submit button
@@ -288,23 +291,26 @@ def render_feedback_form(analysis_id, clause_id=None, feedback_type="general", l
             if analysis:
                 pdf_id = analysis.get('pdf_id')
             
-            # Prepare feedback data
+            # Prepare feedback data according to database schema
             feedback_data = {
                 "pdf_id": pdf_id,
-                "feedback_type": feedback_type,
-                "feedback_value": feedback_value,
-                "correct": correct,
-                "suggested_correction": suggested_correction if suggested_correction else None,
-                "clause_id": clause_id
+                "form_number_feedback": form_number,  # Integer form number
+                "general_feedback": feedback_text,    # Single feedback text
+                "rating": rating_value,               # Integer rating (1-5)
+                "user_session_id": st.session_state.get('session_id', 'anonymous')
             }
             
-            # Store feedback
-            if session_manager.store_feedback(analysis_id, feedback_data):
-                st.session_state.feedback_submitted[form_key] = True
-                st.success("Feedback submitted successfully!")
-                st.rerun()
-            else:
-                st.error("Error submitting feedback. Please try again.")
+            # Store feedback using the database function
+            try:
+                feedback_id = store_feedback_data(feedback_data)
+                if feedback_id:
+                    st.session_state.feedback_submitted[form_key] = True
+                    st.success("Feedback submitted successfully!")
+                    st.rerun()
+                else:
+                    st.error("Error submitting feedback. Please try again.")
+            except Exception as e:
+                st.error(f"Error submitting feedback: {str(e)}")
         
         st.markdown("</div>", unsafe_allow_html=True)
 
