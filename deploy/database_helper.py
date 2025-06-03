@@ -205,6 +205,27 @@ def get_pdf_by_hash(file_hash: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error getting PDF by hash: {e}")
         return None
 
+def get_pdfs_by_session(session_id: str, limit: int = 50) -> List[dict]:
+    """Get all PDFs uploaded by a session"""
+    with db_manager.get_session() as session:
+        pdfs = session.query(PDF)\
+                     .filter(PDF.uploaded_by_session == session_id)\
+                     .order_by(PDF.upload_date.desc())\
+                     .limit(limit)\
+                     .all()
+        
+        return [
+            {
+                'id': pdf.id,
+                'pdf_name': pdf.pdf_name,
+                'upload_date': pdf.upload_date.isoformat() if pdf.upload_date else None,
+                'final_word_count': pdf.final_word_count,
+                'final_page_count': pdf.final_page_count,
+                'status': 'processed' if pdf.processed_date else 'uploaded'
+            }
+            for pdf in pdfs
+        ]
+
 # ANALYSIS OPERATIONS
 def store_analysis_results(pdf_id: int, analysis_results: Dict[str, Any], 
                           version: str = "v1.0") -> Dict[str, Any]:
