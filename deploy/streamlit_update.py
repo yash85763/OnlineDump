@@ -231,23 +231,73 @@ def init_session_state():
     if 'loading_preloaded' not in st.session_state:
         st.session_state.loading_preloaded = False
 
-def render_feedback_form(analysis_id, clause_id=None, feedback_type="general", label="Provide Feedback"):
-    """Render a feedback form for an analysis or clause
+def render_feedback_form(pdf_id, analysis_id=None, clause_id=None, feedback_type="general", label="Provide Feedback"):
+    """Render a robust feedback form for an analysis or clause
     
     Args:
-        analysis_id: Analysis UUID
-        clause_id: Optional clause UUID
+        pdf_id: PDF ID (required)
+        analysis_id: Optional analysis ID
+        clause_id: Optional clause ID
         feedback_type: Type of feedback
         label: Form label
     """
-    form_key = f"{analysis_id}_{clause_id}_{feedback_type}"
+    import streamlit as st
+    from datetime import datetime
     
-    # Check if feedback was already submitted
+    # Create unique form key
+    form_key = f"feedback_{pdf_id}_{analysis_id}_{clause_id}_{feedback_type}"
+    
+    # Initialize session state for feedback tracking
+    if 'feedback_submitted' not in st.session_state:
+        st.session_state.feedback_submitted = {}
+    
+    # Check if user already provided feedback for this PDF
+    def has_existing_feedback(pdf_id, user_session_id=None):
+        """Check if feedback already exists for this PDF and user"""
+        try:
+            sql = """
+                SELECT id FROM feedback 
+                WHERE pdf_id = %s 
+                AND user_session_id = %s 
+                LIMIT 1
+            """
+            
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (pdf_id, user_session_id or 'anonymous'))
+                    result = cur.fetchone()
+                    return result is not None
+        except Exception as e:
+            st.error(f"Error checking existing feedback: {str(e)}")
+            return False
+    
+    # Get or create session ID
+    if 'session_id' not in st.session_state:
+        import uuid
+        st.session_state.session_id = str(uuid.uuid4())
+    
+    user_session_id = st.session_state.session_id
+    
+    # Check if feedback was already submitted in current session
     if form_key in st.session_state.feedback_submitted and st.session_state.feedback_submitted[form_key]:
-        st.markdown(f"<div class='feedback-submitted'>Thank you for your feedback!</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='feedback-submitted'>✅ Thank you for your feedback!</div>", unsafe_allow_html=True)
         return
     
-    with st.expander(label):
+    # Check if feedback already exists in database
+    if has_existing_feedback(pdf_id, user_session_id):
+        st.markdown(f"<div class='feedback-submitted'>✅ You have already provided feedback for this document.</div>", unsafe_allow_html=True)
+        
+        # Option to provide additional feedback
+        if st.button("Provide Additional Feedback", key=f"additional_{form_key}"):
+            st.session_state[f"allow_additional_{form_key}"] = True
+            st.rerun()
+        
+        # Exit if not allowing additional feedback
+        if not st.session_state.get(f"allow_additional_{form_key}", False):
+            return
+    
+    # Render the feedback form
+    with st.expander(label, expanded=True):
         st.markdown("<div class='feedback-form'>", unsafe_allow_html=True)
         
         # Form number selection
@@ -255,14 +305,16 @@ def render_feedback_form(analysis_id, clause_id=None, feedback_type="general", l
             "Select Form Number",
             options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             key=f"form_number_{form_key}",
-            index=0  # Default to form 1
+            index=0,  # Default to form 1
+            help="Select the form number that best matches this document"
         )
         
         # Feedback rating
         rating = st.radio(
             "Is this analysis correct?",
             ["Correct", "Partially Correct", "Incorrect"],
-            key=f"rating_{form_key}"
+            key=f"rating_{form_key}",
+            help="Rate the accuracy of the analysis"
         )
         
         # Convert rating to integer for database storage
@@ -277,42 +329,140 @@ def render_feedback_form(analysis_id, clause_id=None, feedback_type="general", l
         feedback_text = st.text_area(
             "Your feedback/comments",
             placeholder="Please provide your feedback or comments about this analysis...",
-            key=f"feedback_{form_key}"
+            key=f"feedback_{form_key}",
+            help="Provide detailed feedback about the analysis accuracy, suggestions for improvement, etc."
         )
         
+        # Validation
+        if not feedback_text.strip():
+            st.warning("Please provide some feedback before submitting.")
+        
         # Submit button
-        if st.button("Submit Feedback", key=f"submit_{form_key}"):
-            # Get session manager
-            session_manager = get_session_manager()
-            
-            # Get PDF ID (may need to retrieve from analysis)
-            pdf_id = None
-            analysis = session_manager.get_analysis(analysis_id)
-            if analysis:
-                pdf_id = analysis.get('pdf_id')
-            
-            # Prepare feedback data according to database schema
-            feedback_data = {
-                "pdf_id": pdf_id,
-                "form_number_feedback": form_number,  # Integer form number
-                "general_feedback": feedback_text,    # Single feedback text
-                "rating": rating_value,               # Integer rating (1-5)
-                "user_session_id": st.session_state.get('session_id', 'anonymous')
-            }
-            
-            # Store feedback using the database function
-            try:
-                feedback_id = store_feedback_data(feedback_data)
-                if feedback_id:
-                    st.session_state.feedback_submitted[form_key] = True
-                    st.success("Feedback submitted successfully!")
-                    st.rerun()
-                else:
-                    st.error("Error submitting feedback. Please try again.")
-            except Exception as e:
-                st.error(f"Error submitting feedback: {str(e)}")
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            submit_clicked = st.button(
+                "Submit Feedback", 
+                key=f"submit_{form_key}",
+                disabled=not feedback_text.strip(),
+                type="primary"
+            )
+        
+        if submit_clicked:
+            # Show loading spinner
+            with st.spinner("Submitting feedback..."):
+                try:
+                    # Prepare feedback data according to database schema
+                    feedback_data = {
+                        "pdf_id": pdf_id,
+                        "feedback_date": datetime.now(),
+                        "form_number_feedback": form_number,
+                        "general_feedback": feedback_text.strip(),
+                        "rating": rating_value,
+                        "user_session_id": user_session_id
+                    }
+                    
+                    # Store feedback using the database function
+                    feedback_id = store_feedback_data(feedback_data)
+                    
+                    if feedback_id:
+                        # Mark as submitted in session state
+                        st.session_state.feedback_submitted[form_key] = True
+                        
+                        # Show success message
+                        st.success("✅ Feedback submitted successfully!")
+                        
+                        # Optional: Store feedback ID for reference
+                        if 'feedback_ids' not in st.session_state:
+                            st.session_state.feedback_ids = []
+                        st.session_state.feedback_ids.append(feedback_id)
+                        
+                        # Rerun to update UI
+                        st.rerun()
+                    else:
+                        st.error("❌ Error submitting feedback. No feedback ID returned.")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error submitting feedback: {str(e)}")
+                    
+                    # Log error for debugging (if logging is set up)
+                    print(f"Feedback submission error: {str(e)}")
         
         st.markdown("</div>", unsafe_allow_html=True)
+
+def get_user_feedback_history(user_session_id=None):
+    """Get feedback history for a user session"""
+    try:
+        if not user_session_id:
+            user_session_id = st.session_state.get('session_id', 'anonymous')
+        
+        sql = """
+            SELECT f.*, p.pdf_name 
+            FROM feedback f
+            LEFT JOIN pdfs p ON f.pdf_id = p.id
+            WHERE f.user_session_id = %s
+            ORDER BY f.feedback_date DESC
+        """
+        
+        with db.get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, (user_session_id,))
+                results = cur.fetchall()
+                return [dict(row) for row in results]
+                
+    except Exception as e:
+        print(f"Error getting feedback history: {str(e)}")
+        return []
+
+def display_feedback_summary(pdf_id):
+    """Display feedback summary for a PDF"""
+    try:
+        sql = """
+            SELECT 
+                COUNT(*) as total_feedback,
+                AVG(rating) as avg_rating,
+                COUNT(CASE WHEN rating >= 4 THEN 1 END) as positive_feedback,
+                COUNT(CASE WHEN rating <= 2 THEN 1 END) as negative_feedback
+            FROM feedback 
+            WHERE pdf_id = %s
+        """
+        
+        with db.get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, (pdf_id,))
+                result = cur.fetchone()
+                
+                if result and result['total_feedback'] > 0:
+                    st.markdown("### Feedback Summary")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Total Feedback", result['total_feedback'])
+                    with col2:
+                        st.metric("Average Rating", f"{result['avg_rating']:.1f}/5")
+                    with col3:
+                        st.metric("Positive", result['positive_feedback'])
+                    with col4:
+                        st.metric("Negative", result['negative_feedback'])
+                
+    except Exception as e:
+        st.error(f"Error displaying feedback summary: {str(e)}")
+
+# # Example usage function
+# def example_usage():
+#     """Example of how to use the robust feedback form"""
+    
+#     # Example: Render feedback form for a specific PDF
+#     pdf_id = 123  # Replace with actual PDF ID
+#     analysis_id = "abc-123"  # Optional analysis ID
+    
+#     render_feedback_form(
+#         pdf_id=pdf_id,
+#         analysis_id=analysis_id,
+#         label="Rate This Analysis"
+#     )
+    
+#     # Display feedback summary
+#     display_feedback_summary(pdf_id)
 
 def main():
     """Main application entry point"""
