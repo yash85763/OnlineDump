@@ -560,6 +560,8 @@ def process_batch_pdfs(logger):
 def render_feedback_form(pdf_name, file_stem, json_data):
     """Render feedback form for a specific PDF"""
     feedback_key = f"feedback_{file_stem}"
+    
+    # Check if feedback was already submitted
     if st.session_state.feedback_submitted.get(feedback_key, False):
         st.success("✅ Thank you! Your feedback has been submitted for this document.")
         if st.button("Submit New Feedback", key=f"new_feedback_{file_stem}"):
@@ -572,137 +574,157 @@ def render_feedback_form(pdf_name, file_stem, json_data):
     st.write("Help us improve our analysis by providing feedback on the results:")
     
     with st.form(f"feedback_form_{file_stem}"):
-        col1, col2 = st.columns(2)
+        # Form number selection (1-10)
+        form_number = st.selectbox(
+            "Select Form Number",
+            options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            index=0,  # Default to form 1
+            help="Select the form number that best matches this document",
+            key=f"form_number_{file_stem}"
+        )
         
-        with col1:
-            st.write("**Form Number Analysis**")
-            form_number_correct = st.selectbox(
-                "Is the form number correctly identified?",
-                ["Select...", "Yes, correct", "No, incorrect", "Not applicable"],
-                key=f"form_correct_{file_stem}"
-            )
-            form_number_feedback = st.text_area(
-                "Form Number Comments",
-                placeholder="Please provide details...",
-                height=60,
-                key=f"form_feedback_{file_stem}"
-            )
-            
-            st.write("**PI Clause Detection**")
-            pi_clause_correct = st.selectbox(
-                "Is the PI clause detection accurate?",
-                ["Select...", "Yes, accurate", "No, missed clauses", "No, false positives", "Not applicable"],
-                key=f"pi_correct_{file_stem}"
-            )
-            pi_clause_feedback = st.text_area(
-                "PI Clause Comments",
-                placeholder="Please provide details...",
-                height=60,
-                key=f"pi_feedback_{file_stem}"
-            )
+        # Rating selection
+        rating = st.radio(
+            "Is this analysis correct?",
+            ["Correct", "Partially Correct", "Incorrect"],
+            help="Rate the accuracy of the analysis",
+            key=f"rating_{file_stem}"
+        )
         
-        with col2:
-            st.write("**CI Clause Detection**")
-            ci_clause_correct = st.selectbox(
-                "Is the CI clause detection accurate?",
-                ["Select...", "Yes, accurate", "No, missed clauses", "No, false positives", "Not applicable"],
-                key=f"ci_correct_{file_stem}"
-            )
-            ci_clause_feedback = st.text_area(
-                "CI Clause Comments",
-                placeholder="Please provide details...",
-                height=60,
-                key=f"ci_feedback_{file_stem}"
-            )
-            
-            st.write("**Summary Quality**")
-            summary_quality = st.selectbox(
-                "How would you rate the summary quality?",
-                ["Select...", "Excellent", "Good", "Fair", "Poor"],
-                key=f"summary_quality_{file_stem}"
-            )
-            summary_feedback = st.text_area(
-                "Summary Comments",
-                placeholder="Please provide details...",
-                height=60,
-                key=f"summary_feedback_{file_stem}"
-            )
+        # Convert rating to integer for database storage
+        rating_map = {
+            "Correct": 5,
+            "Partially Correct": 3,
+            "Incorrect": 1
+        }
+        rating_value = rating_map[rating]
         
-        st.write("**Overall Assessment**")
-        col3, col4 = st.columns([2, 1])
-        with col3:
-            general_feedback = st.text_area(
-                "General Comments",
-                placeholder="Any other comments, suggestions, or issues you noticed?",
-                height=80,
-                key=f"general_feedback_{file_stem}"
-            )
-        with col4:
-            rating = st.slider(
-                "Overall Rating", 
-                1, 5, 3, 
-                help="1=Poor, 5=Excellent",
-                key=f"rating_{file_stem}"
-            )
-            st.write(f"Rating: {'⭐' * rating}")
+        # Single feedback text box
+        feedback_text = st.text_area(
+            "Your feedback/comments",
+            placeholder="Please provide your feedback or comments about this analysis...",
+            height=120,
+            help="Provide detailed feedback about the analysis accuracy, suggestions for improvement, etc.",
+            key=f"feedback_text_{file_stem}"
+        )
         
+        # Submit button
         submitted = st.form_submit_button("🚀 Submit Feedback", use_container_width=True)
         
         if submitted:
-            if (form_number_correct == "Select..." and pi_clause_correct == "Select..." and 
-                ci_clause_correct == "Select..." and summary_quality == "Select..." and 
-                not general_feedback.strip()):
-                st.error("Please provide at least some feedback before submitting.")
+            # Validation - require feedback text
+            if not feedback_text.strip():
+                st.error("Please provide some feedback before submitting.")
                 return
             
+            # Get PDF ID from session state
             pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
             
             if pdf_id:
-                feedback_text_parts = []
-                if form_number_correct != "Select...":
-                    feedback_text_parts.append(f"Form Number: {form_number_correct}")
-                    if form_number_feedback.strip():
-                        feedback_text_parts.append(f"Form Details: {form_number_feedback}")
-                
-                if pi_clause_correct != "Select...":
-                    feedback_text_parts.append(f"PI Clause: {pi_clause_correct}")
-                    if pi_clause_feedback.strip():
-                        feedback_text_parts.append(f"PI Details: {pi_clause_feedback}")
-                
-                if ci_clause_correct != "Select...":
-                    feedback_text_parts.append(f"CI Clause: {ci_clause_correct}")
-                    if ci_clause_feedback.strip():
-                        feedback_text_parts.append(f"CI Details: {ci_clause_feedback}")
-                
-                if summary_quality != "Select...":
-                    feedback_text_parts.append(f"Summary Quality: {summary_quality}")
-                    if summary_feedback.strip():
-                        feedback_text_parts.append(f"Summary Details: {summary_feedback}")
-                
-                structured_feedback = " | ".join(feedback_text_parts)
-                
+                # Prepare feedback data according to database schema
                 feedback_data = {
                     'pdf_id': pdf_id,
                     'feedback_date': datetime.now(),
-                    'form_number_feedback': f"{form_number_correct}: {form_number_feedback}" if form_number_feedback.strip() else form_number_correct,
-                    'general_feedback': f"{structured_feedback} | General: {general_feedback}" if general_feedback.strip() else structured_feedback,
-                    'rating': rating,
+                    'form_number_feedback': form_number,  # INTEGER form number
+                    'general_feedback': feedback_text.strip(),  # Single feedback text
+                    'rating': rating_value,  # INTEGER rating (1-5)
                     'user_session_id': get_session_id()
                 }
                 
                 try:
+                    # Store feedback using the database function
                     feedback_id = store_feedback_data(feedback_data)
-                    st.success("🎉 Thank you for your valuable feedback! It helps us improve our analysis.")
-                    st.session_state.feedback_submitted[feedback_key] = True
-                    st.balloons()
-                    st.rerun()
+                    
+                    if feedback_id:
+                        st.success("🎉 Thank you for your valuable feedback! It helps us improve our analysis.")
+                        st.session_state.feedback_submitted[feedback_key] = True
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error("❌ Error submitting feedback. No feedback ID returned.")
+                        
                 except Exception as e:
                     st.error(f"❌ Failed to save feedback: {str(e)}")
+                    print(f"Feedback submission error: {str(e)}")  # For debugging
             else:
                 st.error("❌ Cannot submit feedback - PDF not found in database")
     
     st.markdown("</div>", unsafe_allow_html=True)
 
+def get_session_id():
+    """Get or create session ID for user tracking"""
+    if 'session_id' not in st.session_state:
+        import uuid
+        st.session_state.session_id = str(uuid.uuid4())
+    return st.session_state.session_id
+
+def display_feedback_summary_for_pdf(pdf_name):
+    """Display feedback summary for a specific PDF"""
+    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+    
+    if not pdf_id:
+        return
+    
+    try:
+        sql = """
+            SELECT 
+                COUNT(*) as total_feedback,
+                AVG(rating) as avg_rating,
+                COUNT(CASE WHEN rating >= 4 THEN 1 END) as positive_feedback,
+                COUNT(CASE WHEN rating <= 2 THEN 1 END) as negative_feedback
+            FROM feedback 
+            WHERE pdf_id = %s
+        """
+        
+        with db.get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, (pdf_id,))
+                result = cur.fetchone()
+                
+                if result and result['total_feedback'] > 0:
+                    st.markdown(f"### Feedback Summary for '{pdf_name}'")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Total Feedback", result['total_feedback'])
+                    with col2:
+                        st.metric("Average Rating", f"{result['avg_rating']:.1f}/5")
+                    with col3:
+                        st.metric("Positive", result['positive_feedback'])
+                    with col4:
+                        st.metric("Negative", result['negative_feedback'])
+                else:
+                    st.info(f"No feedback yet for '{pdf_name}'")
+                
+    except Exception as e:
+        st.error(f"Error displaying feedback summary: {str(e)}")
+
+def check_existing_feedback_for_pdf(pdf_name, user_session_id=None):
+    """Check if user already provided feedback for this PDF"""
+    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+    
+    if not pdf_id:
+        return False
+    
+    if not user_session_id:
+        user_session_id = get_session_id()
+    
+    try:
+        sql = """
+            SELECT id FROM feedback 
+            WHERE pdf_id = %s 
+            AND user_session_id = %s 
+            LIMIT 1
+        """
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (pdf_id, user_session_id))
+                result = cur.fetchone()
+                return result is not None
+    except Exception as e:
+        print(f"Error checking existing feedback: {str(e)}")
+        return False
 # Main Application
 def main():
     # Initialize session state
