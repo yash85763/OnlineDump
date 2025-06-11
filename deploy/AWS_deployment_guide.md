@@ -1,500 +1,401 @@
-# AWS Deployment Guide for Contract Analysis Application
+Here are the two functionalities you requested:
 
-This guide provides instructions for deploying the Contract Analysis application on AWS EC2 with Aurora PostgreSQL database integration.
+## 1. Display Previous Feedbacks Below Feedback Form
 
-## Prerequisites
+**Create a function to retrieve previous feedbacks:**
 
-- AWS account with appropriate permissions
-- Basic knowledge of AWS services, Linux, and PostgreSQL
-- Domain name (optional, for HTTPS setup)
+```python
+def get_previous_feedbacks(pdf_id):
+    """Retrieve all previous feedbacks for a given PDF from database"""
+    try:
+        from config.database import get_database_connection
+        
+        conn = get_database_connection()
+        cursor = conn.cursor()
+        
+        query = """
+        SELECT feedback_date, form_number_feedback, general_feedback, rating, user_session_id
+        FROM feedback_table 
+        WHERE pdf_id = %s 
+        ORDER BY feedback_date DESC
+        """
+        
+        cursor.execute(query, (pdf_id,))
+        feedbacks = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        return feedbacks
+        
+    except Exception as e:
+        print(f"Error retrieving feedbacks: {e}")
+        return []
 
-## Step 1: Set Up Aurora PostgreSQL Database
-
-### Create an Aurora PostgreSQL cluster
-
-1. Log in to the AWS Management Console
-2. Navigate to Amazon RDS
-3. Click "Create database"
-4. Choose "Standard create"
-5. Select "Amazon Aurora" as the engine type
-6. Select "Amazon Aurora PostgreSQL-Compatible Edition"
-7. Choose the latest PostgreSQL version (at least 14.x)
-8. Select "Production" for Template
-9. Configure cluster settings:
-   - Cluster identifier: `contract-analyzer-db`
-   - Master username: `dbadmin` (remember this)
-   - Master password: Create a secure password (remember this)
-10. Under instance configuration:
-    - Select "Burstable classes" and "db.t4g.medium" for development/testing
-    - Select "Memory optimized" and "db.r6g.large" for production
-11. Under Availability & durability:
-    - Development/testing: Choose "Don't create an Aurora Replica"
-    - Production: Choose "Create an Aurora Replica" for high availability
-12. Under Connectivity:
-    - Create a new VPC or use an existing one
-    - Create a new security group
-    - Set Public access to "No" for security
-13. Under Additional configuration:
-    - Initial database name: `contracts_db`
-    - Enable automated backups
-    - Set backup retention period (7-35 days recommended)
-14. Click "Create database"
-
-### Configure Security Group
-
-1. Navigate to EC2 > Security Groups
-2. Find the security group created for your Aurora cluster
-3. Add a rule that allows PostgreSQL traffic (port 5432) from your EC2 instance security group (you'll configure this later)
-
-## Step 2: Set Up EC2 Instance
-
-### Launch an EC2 Instance
-
-1. Navigate to EC2 in the AWS Management Console
-2. Click "Launch instance"
-3. Configure the instance:
-   - Name: `contract-analyzer-app`
-   - AMI: Amazon Linux 2023 or Ubuntu 22.04 LTS
-   - Instance type: t2.medium recommended (2 vCPU, 4 GiB Memory)
-   - Create or select a key pair for SSH access
-   - Create a new security group or use an existing one
-   - Allow HTTP (80), HTTPS (443), and SSH (22) inbound traffic
-4. Launch the instance
-
-### Configure Security Group
-
-1. Go to EC2 > Security Groups
-2. Find the security group for your EC2 instance
-3. Add inbound rules:
-   - SSH (port 22) from your IP address
-   - HTTP (port 80) from anywhere (0.0.0.0/0)
-   - HTTPS (port 443) from anywhere (0.0.0.0/0)
-   - Streamlit (port 8501) from anywhere or restrict to your IP
-
-## Step 3: Configure the EC2 Instance
-
-### Connect to the Instance
-
-```bash
-ssh -i /path/to/your-key.pem ec2-user@your-instance-public-ip
+def render_previous_feedbacks(pdf_name):
+    """Display previous feedbacks for the current PDF"""
+    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+    
+    if not pdf_id:
+        return
+    
+    previous_feedbacks = get_previous_feedbacks(pdf_id)
+    
+    if not previous_feedbacks:
+        st.info("📝 No previous feedback found for this document.")
+        return
+    
+    st.markdown("### 📋 Previous Feedback History")
+    st.markdown(f"**{len(previous_feedbacks)} feedback(s) submitted for this document:**")
+    
+    for i, feedback in enumerate(previous_feedbacks):
+        feedback_date, form_feedback, general_feedback, rating, session_id = feedback
+        
+        with st.expander(f"📅 Feedback #{i+1} - {feedback_date.strftime('%Y-%m-%d %H:%M')}", expanded=False):
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                if form_feedback and form_feedback != "Select...":
+                    st.markdown(f"**📋 Specific Feedback:** {form_feedback}")
+                
+                if general_feedback and general_feedback.strip():
+                    st.markdown(f"**💬 General Comments:** {general_feedback}")
+                
+                # Show session info (truncated for privacy)
+                session_display = f"{session_id[:8]}..." if session_id else "Unknown"
+                st.caption(f"Session: {session_display}")
+            
+            with col2:
+                if rating:
+                    st.markdown(f"**⭐ Rating:** {'⭐' * int(rating)} ({rating}/5)")
+                
+                st.caption(f"📅 {feedback_date.strftime('%b %d, %Y')}")
 ```
 
-### Install Required Software
+**Update the horizontal feedback form to include previous feedbacks:**
 
-For Amazon Linux 2023:
-
-```bash
-# Update system
-sudo dnf update -y
-
-# Install git, Python, and PostgreSQL client
-sudo dnf install -y git python3 python3-pip python3-devel postgresql15 postgresql15-devel gcc
-
-# Install system dependencies for PDF processing
-sudo dnf install -y poppler-utils
-
-# Create application directory
-sudo mkdir -p /opt/contract-analyzer
-sudo chown ec2-user:ec2-user /opt/contract-analyzer
-
-# Create directories for uploaded and processed files
-mkdir -p /opt/contract-analyzer/preloaded_contracts/pdfs
-mkdir -p /opt/contract-analyzer/preloaded_contracts/jsons
-mkdir -p /opt/contract-analyzer/temp
+```python
+def render_horizontal_feedback_form(pdf_name, file_stem, json_data):
+    """Render feedback form for a specific PDF in horizontal layout with previous feedbacks"""
+    feedback_key = f"feedback_{file_stem}"
+    if st.session_state.feedback_submitted.get(feedback_key, False):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.success("✅ Thank you! Your feedback has been submitted for this document.")
+        with col2:
+            if st.button("Submit New Feedback", key=f"new_feedback_{file_stem}"):
+                st.session_state.feedback_submitted[feedback_key] = False
+                st.rerun()
+        
+        # Show previous feedbacks even after submission
+        st.markdown("---")
+        render_previous_feedbacks(pdf_name)
+        return
+    
+    # ... [existing feedback form code] ...
+    
+    # After the form submission logic, add previous feedbacks section
+    st.markdown("---")
+    render_previous_feedbacks(pdf_name)
 ```
 
-For Ubuntu 22.04:
+## 2. Load Existing PDFs from Database on App Start
 
-```bash
-# Update system
-sudo apt update
-sudo apt upgrade -y
+**Create function to load existing PDFs from database:**
 
-# Install git, Python, and PostgreSQL client
-sudo apt install -y git python3 python3-pip python3-dev libpq-dev build-essential
+```python
+def load_existing_pdfs_from_database():
+    """Load all existing PDFs from database into session state"""
+    try:
+        from config.database import get_database_connection
+        
+        conn = get_database_connection()
+        cursor = conn.cursor()
+        
+        # Query to get all processed PDFs with their latest analysis
+        query = """
+        SELECT DISTINCT p.id, p.filename, p.file_size, p.upload_date, p.final_content,
+               a.form_number, a.summary, a.analysis_date,
+               a.pi_clause, a.ci_clause, a.data_usage_mentioned, a.data_limitations_exists
+        FROM pdf_table p
+        LEFT JOIN analysis_table a ON p.id = a.pdf_id
+        WHERE a.id = (
+            SELECT MAX(id) FROM analysis_table a2 WHERE a2.pdf_id = p.id
+        )
+        ORDER BY p.upload_date DESC
+        """
+        
+        cursor.execute(query)
+        existing_pdfs = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        # Load PDFs into session state
+        for pdf_data in existing_pdfs:
+            (pdf_id, filename, file_size, upload_date, final_content,
+             form_number, summary, analysis_date,
+             pi_clause, ci_clause, data_usage_mentioned, data_limitations_exists) = pdf_data
+            
+            # Store PDF metadata
+            st.session_state.pdf_database_ids[filename] = pdf_id
+            st.session_state.analysis_status[filename] = "Processed"
+            
+            # Create analysis data structure
+            file_stem = Path(filename).stem
+            st.session_state.json_data[file_stem] = {
+                'form_number': form_number or 'Not available',
+                'summary': summary or 'No summary available',
+                'pi_clause': bool(pi_clause),
+                'ci_clause': bool(ci_clause),
+                'data_usage_mentioned': bool(data_usage_mentioned),
+                'data_limitations_exists': bool(data_limitations_exists),
+                'relevant_clauses': [],  # Will be loaded separately if needed
+                'analysis_date': analysis_date
+            }
+            
+            # Convert final_content to pages structure for page matching
+            if final_content:
+                st.session_state.raw_pdf_data[filename] = {
+                    'pages': convert_string_to_pages_structure(final_content, filename)
+                }
+            
+            # Create mock processing messages for UI consistency
+            st.session_state.processing_messages[filename] = [
+                f"📄 Loaded from database (ID: {pdf_id})",
+                f"📅 Originally processed: {analysis_date.strftime('%Y-%m-%d %H:%M') if analysis_date else 'Unknown'}",
+                f"📊 File size: {file_size} bytes" if file_size else "📊 File size: Unknown",
+                "✅ Ready for viewing"
+            ]
+        
+        return len(existing_pdfs)
+        
+    except Exception as e:
+        print(f"Error loading existing PDFs: {e}")
+        return 0
 
-# Install system dependencies for PDF processing
-sudo apt install -y poppler-utils
-
-# Create application directory
-sudo mkdir -p /opt/contract-analyzer
-sudo chown ubuntu:ubuntu /opt/contract-analyzer
-
-# Create directories for uploaded and processed files
-mkdir -p /opt/contract-analyzer/preloaded_contracts/pdfs
-mkdir -p /opt/contract-analyzer/preloaded_contracts/jsons
-mkdir -p /opt/contract-analyzer/temp
+def load_pdf_clauses(pdf_id, file_stem):
+    """Load relevant clauses for a specific PDF"""
+    try:
+        from config.database import get_database_connection
+        
+        conn = get_database_connection()
+        cursor = conn.cursor()
+        
+        query = """
+        SELECT c.clause_type, c.clause_text, c.clause_order
+        FROM clause_table c
+        JOIN analysis_table a ON c.analysis_id = a.id
+        WHERE a.pdf_id = %s
+        ORDER BY c.clause_order
+        """
+        
+        cursor.execute(query, (pdf_id,))
+        clauses = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        # Convert to the expected format
+        relevant_clauses = []
+        for clause_type, clause_text, clause_order in clauses:
+            relevant_clauses.append({
+                'type': clause_type,
+                'text': clause_text,
+                'order': clause_order
+            })
+        
+        # Update the session data
+        if file_stem in st.session_state.json_data:
+            st.session_state.json_data[file_stem]['relevant_clauses'] = relevant_clauses
+        
+        return relevant_clauses
+        
+    except Exception as e:
+        print(f"Error loading clauses: {e}")
+        return []
 ```
 
-## Step 4: Clone and Set Up Application
+**Update the session state initialization:**
 
-### Clone the Repository
-
-```bash
-cd /opt/contract-analyzer
-git clone https://github.com/yourusername/contract-analyzer.git .
-```
-
-Alternatively, you can upload your code using SFTP or SCP:
-
-```bash
-# From your local machine
-scp -i /path/to/your-key.pem -r /path/to/your/project/* ec2-user@your-instance-public-ip:/opt/contract-analyzer/
-```
-
-### Create Virtual Environment and Install Dependencies
-
-```bash
-cd /opt/contract-analyzer
-python3 -m venv venv
-source venv/bin/activate
-
-# Install requirements
-pip install --upgrade pip
-pip install streamlit psycopg2-binary pdfminer.six PyPDF2 scikit-learn boto3 sentence-transformers faiss-cpu
-pip install -r requirements.txt  # If you have a requirements.txt file
-```
-
-### Configure Application Settings
-
-Create a configuration file with your database credentials:
-
-```bash
-cd /opt/contract-analyzer
-cat > config.json << EOL
-{
-  "database": {
-    "host": "your-aurora-cluster-endpoint.rds.amazonaws.com",
-    "port": 5432,
-    "dbname": "contracts_db",
-    "user": "dbadmin",
-    "password": "your-secure-password",
-    "min_connections": 1,
-    "max_connections": 10
-  },
-  "aws": {
-    "region": "us-east-1",
-    "s3_bucket": "contract-analyzer-storage"
-  },
-  "application": {
-    "debug": false,
-    "log_level": "INFO",
-    "preloaded_contracts_dir": "/opt/contract-analyzer/preloaded_contracts",
-    "temp_dir": "/opt/contract-analyzer/temp"
-  }
-}
-EOL
-
-# Secure the config file
-chmod 600 config.json
-```
-
-Alternatively, you can use environment variables (more secure):
-
-```bash
-# Create an environment file
-cat > .env << EOL
-DB_HOST=your-aurora-cluster-endpoint.rds.amazonaws.com
-DB_PORT=5432
-DB_NAME=contracts_db
-DB_USER=dbadmin
-DB_PASSWORD=your-secure-password
-AWS_REGION=us-east-1
-S3_BUCKET=contract-analyzer-storage
-EOL
-
-# Secure the env file
-chmod 600 .env
-```
-
-## Step 5: Test the Application
-
-Test the application locally on the EC2 instance:
-
-```bash
-cd /opt/contract-analyzer
-source venv/bin/activate
-
-# Load environment variables if using .env file
-export $(grep -v '^#' .env | xargs)
-
-# Run the Streamlit app
-streamlit run streamlit_app.py
-```
-
-You should see output indicating that Streamlit is running, typically on port 8501.
-
-## Step 6: Set Up Service for Production
-
-Create a systemd service for running the application:
-
-```bash
-sudo tee /etc/systemd/system/contract-analyzer.service << EOL
-[Unit]
-Description=Contract Analyzer Streamlit Application
-After=network.target
-
-[Service]
-User=ec2-user
-WorkingDirectory=/opt/contract-analyzer
-ExecStart=/opt/contract-analyzer/venv/bin/streamlit run streamlit_app.py --server.port=8501 --server.address=0.0.0.0
-Restart=on-failure
-RestartSec=5s
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=contract-analyzer
-Environment="LC_ALL=en_US.UTF-8"
-Environment="LANG=en_US.UTF-8"
-# Include environment variables from file
-EnvironmentFile=/opt/contract-analyzer/.env
-
-[Install]
-WantedBy=multi-user.target
-EOL
-```
-
-For Ubuntu, change `User=ec2-user` to `User=ubuntu`.
-
-Start and enable the service:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl start contract-analyzer
-sudo systemctl enable contract-analyzer
-
-# Check status
-sudo systemctl status contract-analyzer
-```
-
-## Step 7: Set Up Nginx as a Reverse Proxy (Optional but Recommended)
-
-Install and configure Nginx to serve your application:
-
-```bash
-# For Amazon Linux
-sudo dnf install -y nginx
-
-# For Ubuntu
-sudo apt install -y nginx
-```
-
-Create an Nginx configuration file:
-
-```bash
-sudo tee /etc/nginx/conf.d/contract-analyzer.conf << EOL
-server {
-    listen 80;
-    server_name your-domain.com;  # Replace with your domain or public IP
-
-    location / {
-        proxy_pass http://localhost:8501;
-        proxy_http_version 1.1;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header Host \$host;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400;
+```python
+def initialize_session_state():
+    """Initialize all session state variables"""
+    # Database initialization
+    if 'database_initialized' not in st.session_state:
+        try:
+            if check_database_connection():
+                initialize_database()
+                st.session_state.database_initialized = True
+                st.session_state.database_status = "Connected"
+            else:
+                st.session_state.database_initialized = False
+                st.session_state.database_status = "Failed to connect"
+        except Exception as e:
+            st.session_state.database_initialized = False
+            st.session_state.database_status = f"Error: {str(e)}"
+    
+    # Session state variables
+    session_vars = {
+        'pdf_files': {},
+        'json_data': {},
+        'raw_pdf_data': {},
+        'current_pdf': None,
+        'analysis_status': {},
+        'processing_messages': {},
+        'pdf_database_ids': {},
+        'search_text': None,
+        'feedback_submitted': {},
+        'obfuscation_summaries': {},
+        'session_id': get_session_id(),
+        'batch_processing_status': None,
+        'batch_processed_count': 0,
+        'processing_mode': None,
+        'processing_in_progress': False,
+        'existing_pdfs_loaded': False  # New flag to track if we've loaded existing PDFs
     }
-}
-EOL
+    
+    for var, default_value in session_vars.items():
+        if var not in st.session_state:
+            st.session_state[var] = default_value
+    
+    # Load existing PDFs from database on first run
+    if (st.session_state.database_initialized and 
+        not st.session_state.existing_pdfs_loaded):
+        
+        try:
+            loaded_count = load_existing_pdfs_from_database()
+            st.session_state.existing_pdfs_loaded = True
+            
+            if loaded_count > 0:
+                print(f"Loaded {loaded_count} existing PDFs from database")
+        except Exception as e:
+            print(f"Failed to load existing PDFs: {e}")
 ```
 
-Start and enable Nginx:
+**Update the document list section to always show the AgGrid:**
 
-```bash
-sudo systemctl start nginx
-sudo systemctl enable nginx
+```python
+        # Document list and selection - ALWAYS SHOW (even without uploaded files)
+        st.subheader("📋 Available Documents")
+        
+        # Combine uploaded PDFs and existing PDFs from database
+        all_pdfs = {}
+        
+        # Add existing PDFs from database
+        for pdf_name in st.session_state.pdf_database_ids.keys():
+            if pdf_name not in st.session_state.pdf_files:  # Don't duplicate uploaded files
+                all_pdfs[pdf_name] = "from_database"
+        
+        # Add currently uploaded PDFs
+        for pdf_name in st.session_state.pdf_files.keys():
+            all_pdfs[pdf_name] = "uploaded"
+        
+        if all_pdfs:
+            pdf_data = []
+            for pdf_name, source in all_pdfs.items():
+                status = st.session_state.analysis_status.get(pdf_name, "Ready")
+                db_id = st.session_state.pdf_database_ids.get(pdf_name, "N/A")
+                
+                # Get file size
+                if source == "uploaded":
+                    file_size = len(st.session_state.pdf_files[pdf_name]) / 1024
+                else:
+                    file_size = "N/A"  # Size not available for database PDFs
+                
+                status_emoji = "✅" if status == "Processed" else "⏳" if "processing" in status.lower() else "📄"
+                source_emoji = "📤" if source == "uploaded" else "💾"
+                
+                pdf_data.append({
+                    'Status': status_emoji,
+                    'Source': source_emoji,
+                    'PDF Name': pdf_name,
+                    'Size (KB)': f"{file_size:.1f}" if isinstance(file_size, (int, float)) else str(file_size),
+                    'DB ID': str(db_id)
+                })
+            
+            pdf_df = pd.DataFrame(pdf_data)
+            gb = GridOptionsBuilder.from_dataframe(pdf_df)
+            gb.configure_selection(selection_mode='single', use_checkbox=False)
+            gb.configure_grid_options(domLayout='normal')
+            gb.configure_default_column(cellStyle={'fontSize': '14px'})
+            gb.configure_column("PDF Name", cellStyle={'fontWeight': 'bold'})
+            gridOptions = gb.build()
+
+            grid_response = AgGrid(
+                pdf_df,
+                gridOptions=gridOptions,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
+                height=300,
+                fit_columns_on_grid_load=True,
+                theme='streamlit'
+            )
+
+            selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+            if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+                selected_pdf = selected_rows.iloc[0]['PDF Name']
+                
+                # Handle on-demand processing (only for uploaded PDFs)
+                if (st.session_state.processing_mode == "on_demand" and 
+                    selected_pdf != st.session_state.get('current_pdf') and
+                    st.session_state.analysis_status.get(selected_pdf) != "Processed" and
+                    selected_pdf in st.session_state.pdf_files):  # Only process uploaded files
+                    
+                    # Process the selected PDF immediately
+                    st.session_state.processing_messages[selected_pdf] = []
+                    with st.spinner(f"🔄 Processing {selected_pdf} on-demand..."):
+                        success, result = process_pdf_enhanced(
+                            st.session_state.pdf_files[selected_pdf], 
+                            selected_pdf, 
+                            st.empty(),
+                            logger
+                        )
+                        
+                        if success:
+                            st.session_state.analysis_status[selected_pdf] = "Processed"
+                            st.success(f"✅ On-demand analysis complete for {selected_pdf}")
+                        else:
+                            st.session_state.analysis_status[selected_pdf] = f"❌ Failed: {result}"
+                            st.error(f"❌ Failed to process {selected_pdf}: {result}")
+                
+                # Set current PDF for viewing (works for both uploaded and database PDFs)
+                if selected_pdf != st.session_state.get('current_pdf'):
+                    set_current_pdf(selected_pdf)
+                    
+                    # Load clauses for database PDFs if not already loaded
+                    file_stem = Path(selected_pdf).stem
+                    if (selected_pdf in st.session_state.pdf_database_ids and 
+                        file_stem in st.session_state.json_data and
+                        not st.session_state.json_data[file_stem].get('relevant_clauses')):
+                        
+                        pdf_id = st.session_state.pdf_database_ids[selected_pdf]
+                        load_pdf_clauses(pdf_id, file_stem)
+        else:
+            st.info("📄 No documents available. Upload PDFs or check database connection.")
+            
+        # Show legend for source icons
+        st.caption("📤 = Uploaded this session | 💾 = From database")
 ```
 
-## Step 8: Set Up HTTPS with Let's Encrypt (Optional)
+## Key Features Added:
 
-If you have a domain name pointing to your EC2 instance, you can set up HTTPS:
+### 1. Previous Feedbacks Display:
+- Shows all previous feedback for the current PDF
+- Displays feedback date, comments, ratings, and session info
+- Expandable format for easy viewing
+- Automatically loads when viewing any PDF
 
-```bash
-# For Amazon Linux
-sudo dnf install -y certbot python3-certbot-nginx
+### 2. Existing PDFs Loading:
+- Loads all previously analyzed PDFs from database on app start
+- Shows them in the AgGrid with a source indicator (📤 for uploaded, 💾 for database)
+- Preserves analysis results and allows viewing without reprocessing
+- Lazy loads clauses when a database PDF is selected
+- Maintains consistent UI for both uploaded and database PDFs
 
-# For Ubuntu
-sudo apt install -y certbot python3-certbot-nginx
+### 3. Enhanced AgGrid:
+- Always visible (even without uploads)
+- Shows source of each PDF
+- Distinguishes between uploaded and database PDFs
+- Maintains all existing functionality
 
-# Get SSL certificate
-sudo certbot --nginx -d your-domain.com
-
-# Follow the prompts and certbot will automatically configure Nginx
-```
-
-## Step 9: Set Up Database Initialization Script
-
-Create a script to initialize the database schema:
-
-```bash
-cd /opt/contract-analyzer
-cat > init_db.py << EOL
-#!/usr/bin/env python3
-
-from db_handler import DatabaseHandler
-from config import get_config
-
-def main():
-    print("Initializing database schema...")
-    config = get_config()
-    db = DatabaseHandler(config['database'])
-    db.initialize_schema()
-    db.close()
-    print("Database schema initialized successfully.")
-
-if __name__ == "__main__":
-    main()
-EOL
-
-chmod +x init_db.py
-```
-
-Run the initialization script:
-
-```bash
-cd /opt/contract-analyzer
-source venv/bin/activate
-python init_db.py
-```
-
-## Step 10: Set Up Backup and Monitoring
-
-### Set Up Database Backups
-
-Aurora PostgreSQL automatically creates backups based on the retention period you set. For additional backup options:
-
-1. Navigate to RDS > Databases > your-database
-2. Click "Actions" > "Take snapshot" to create manual snapshots
-3. Consider setting up automated snapshot exports to S3
-
-### Set Up CloudWatch Monitoring
-
-1. Navigate to CloudWatch in the AWS Management Console
-2. Set up alarms for:
-   - EC2 instance CPU utilization
-   - EC2 instance memory utilization
-   - RDS database connections
-   - RDS CPU utilization
-   - RDS free storage space
-
-### Set Up Application Logging
-
-Modify your application to log to CloudWatch:
-
-1. Install the AWS CloudWatch Logs agent on your EC2 instance
-2. Configure it to send your application logs to CloudWatch
-
-```bash
-# Install CloudWatch agent
-sudo dnf install -y amazon-cloudwatch-agent  # Amazon Linux
-sudo apt install -y amazon-cloudwatch-agent  # Ubuntu
-
-# Configure CloudWatch agent
-sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-config-wizard
-
-# Start the CloudWatch agent
-sudo systemctl start amazon-cloudwatch-agent
-sudo systemctl enable amazon-cloudwatch-agent
-```
-
-## Step 11: Load Test Data (Optional)
-
-To load pre-loaded contracts:
-
-1. Upload your PDF files to the EC2 instance:
-
-```bash
-# From your local machine
-scp -i /path/to/your-key.pem /path/to/your/pdfs/* ec2-user@your-instance-public-ip:/opt/contract-analyzer/preloaded_contracts/pdfs/
-
-# From your local machine
-scp -i /path/to/your-key.pem /path/to/your/jsons/* ec2-user@your-instance-public-ip:/opt/contract-analyzer/preloaded_contracts/jsons/
-```
-
-2. Set proper permissions:
-
-```bash
-# On your EC2 instance
-cd /opt/contract-analyzer
-chmod -R 755 preloaded_contracts
-```
-
-## Common Issues and Troubleshooting
-
-### Database Connection Issues
-
-If you're having trouble connecting to the Aurora PostgreSQL database:
-
-1. Verify security group settings to ensure your EC2 instance can access the database
-2. Check that the database endpoint, username, and password are correct
-3. Test the connection using the `psql` command:
-
-```bash
-psql -h your-aurora-cluster-endpoint.rds.amazonaws.com -U dbadmin -d contracts_db
-```
-
-### Streamlit Application Not Starting
-
-If the Streamlit application fails to start:
-
-1. Check the logs: `sudo journalctl -u contract-analyzer`
-2. Verify that all dependencies are installed: `pip install -r requirements.txt`
-3. Ensure the configuration file has correct settings
-
-### Web Interface Not Loading
-
-If you can't access the web interface:
-
-1. Check that the Streamlit application is running: `sudo systemctl status contract-analyzer`
-2. Verify that the EC2 security group allows traffic on port 8501 (or 80/443 if using Nginx)
-3. If using Nginx, check its status: `sudo systemctl status nginx`
-4. Check Nginx logs: `sudo tail -f /var/log/nginx/error.log`
-
-## Maintenance Tasks
-
-### Updating the Application
-
-To update the application code:
-
-```bash
-cd /opt/contract-analyzer
-git pull  # If you've cloned a repository
-
-# Or upload new files using SCP/SFTP
-
-# Restart the application
-sudo systemctl restart contract-analyzer
-```
-
-### Database Maintenance
-
-To perform database maintenance:
-
-1. Navigate to RDS > Databases > your-database
-2. For minor version upgrades, AWS can automatically apply these during maintenance windows
-3. For major version upgrades, you'll need to manually initiate the process
-
-### Scaling
-
-As your application grows:
-
-1. For vertical scaling, you can resize your EC2 instance to a larger type
-2. For horizontal scaling, consider using AWS Elastic Beanstalk or ECS with a load balancer
-3. For the database, Aurora can automatically scale storage and you can adjust instance size as needed
-
-## Security Best Practices
-
-1. **Use AWS Secrets Manager** for storing database credentials instead of config files
-2. **Implement IAM roles** for EC2 to securely access AWS services without storing credentials
-3. **Enable VPC flow logs** to monitor network traffic
-4. **Use Security Groups** to restrict access to only necessary ports
-5. **Keep your software updated** with regular system updates
-6. **Set up AWS CloudTrail** to log all API activity for auditing
-7. **Backup your data** regularly and test restores
-8. **Implement AWS WAF** if your application is publicly accessible
-9. **Use private subnets** for your database and application services when possible
-
-## Conclusion
-
-You've now deployed your Contract Analysis application on AWS EC2 with Aurora PostgreSQL. This setup provides a scalable, reliable, and secure environment for your application. Monitor your resources regularly, keep your software updated, and implement proper backup strategies to ensure continued operation.
+The system now provides a complete view of all available documents and their feedback history, making it much more user-friendly for ongoing work with contract analysis.
