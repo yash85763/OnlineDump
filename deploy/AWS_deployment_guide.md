@@ -45,58 +45,132 @@ def render_previous_feedbacks(pdf_name):
         st.info("📝 No previous feedback found for this document.")
         return
     
+    st.markdown("---")
     st.markdown("### 📋 Previous Feedback History")
     st.markdown(f"**{len(previous_feedbacks)} feedback(s) submitted for this document:**")
     
     for i, feedback in enumerate(previous_feedbacks):
-        feedback_date, form_feedback, general_feedback, rating, session_id = feedback
+        feedback_date, form_number, general_feedback, rating, session_id = feedback
+        
+        # Convert rating back to text
+        rating_text = {5: "Correct", 3: "Partially Correct", 1: "Incorrect"}.get(rating, f"Rating: {rating}")
         
         with st.expander(f"📅 Feedback #{i+1} - {feedback_date.strftime('%Y-%m-%d %H:%M')}", expanded=False):
             col1, col2 = st.columns([3, 1])
             
             with col1:
-                if form_feedback and form_feedback != "Select...":
-                    st.markdown(f"**📋 Specific Feedback:** {form_feedback}")
-                
-                if general_feedback and general_feedback.strip():
-                    st.markdown(f"**💬 General Comments:** {general_feedback}")
+                st.markdown(f"**📋 Form Number:** {form_number}")
+                st.markdown(f"**📝 Feedback:** {general_feedback}")
                 
                 # Show session info (truncated for privacy)
                 session_display = f"{session_id[:8]}..." if session_id else "Unknown"
                 st.caption(f"Session: {session_display}")
             
             with col2:
-                if rating:
-                    st.markdown(f"**⭐ Rating:** {'⭐' * int(rating)} ({rating}/5)")
-                
+                # Show rating with appropriate emoji
+                rating_emoji = {"Correct": "✅", "Partially Correct": "⚠️", "Incorrect": "❌"}.get(rating_text, "📊")
+                st.markdown(f"**{rating_emoji} {rating_text}**")
                 st.caption(f"📅 {feedback_date.strftime('%b %d, %Y')}")
-```
 
-**Update the horizontal feedback form to include previous feedbacks:**
-
-```python
-def render_horizontal_feedback_form(pdf_name, file_stem, json_data):
-    """Render feedback form for a specific PDF in horizontal layout with previous feedbacks"""
+def render_feedback_form(pdf_name, file_stem, json_data):
+    """Render feedback form for a specific PDF"""
     feedback_key = f"feedback_{file_stem}"
+    
+    # Check if feedback was already submitted
     if st.session_state.feedback_submitted.get(feedback_key, False):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.success("✅ Thank you! Your feedback has been submitted for this document.")
-        with col2:
-            if st.button("Submit New Feedback", key=f"new_feedback_{file_stem}"):
-                st.session_state.feedback_submitted[feedback_key] = False
-                st.rerun()
+        st.success("✅ Thank you! Your feedback has been submitted for this document.")
+        if st.button("Submit New Feedback", key=f"new_feedback_{file_stem}"):
+            st.session_state.feedback_submitted[feedback_key] = False
+            st.rerun()
         
-        # Show previous feedbacks even after submission
-        st.markdown("---")
+        # Show previous feedbacks after submission
         render_previous_feedbacks(pdf_name)
         return
     
-    # ... [existing feedback form code] ...
+    st.markdown("<div class='feedback-section'>", unsafe_allow_html=True)
+    st.subheader("📝 Your Feedback Matters")
+    st.write("Help us improve our analysis by providing feedback on the results:")
     
-    # After the form submission logic, add previous feedbacks section
-    st.markdown("---")
+    with st.form(f"feedback_form_{file_stem}"):
+        # Form number selection (1-10)
+        form_number = st.selectbox(
+            "Select Form Number",
+            options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            index=0,  # Default to form 1
+            help="Select the form number that best matches this document",
+            key=f"form_number_{file_stem}"
+        )
+        
+        # Rating selection
+        rating = st.radio(
+            "Is this analysis correct?",
+            ["Correct", "Partially Correct", "Incorrect"],
+            help="Rate the accuracy of the analysis",
+            key=f"rating_{file_stem}"
+        )
+        
+        # Convert rating to integer for database storage
+        rating_map = {
+            "Correct": 5,
+            "Partially Correct": 3,
+            "Incorrect": 1
+        }
+        rating_value = rating_map[rating]
+        
+        # Single feedback text box
+        feedback_text = st.text_area(
+            "Your feedback/comments",
+            placeholder="Please provide your feedback or comments about this analysis...",
+            height=120,
+            help="Provide detailed feedback about the analysis accuracy, suggestions for improvement, etc.",
+            key=f"feedback_text_{file_stem}"
+        )
+        
+        # Submit button
+        submitted = st.form_submit_button("🚀 Submit Feedback", use_container_width=True)
+        
+        if submitted:
+            # Validation - require feedback text
+            if not feedback_text.strip():
+                st.error("Please provide some feedback before submitting.")
+                return
+            
+            # Get PDF ID from session state
+            pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+            
+            if pdf_id:
+                # Prepare feedback data according to database schema
+                feedback_data = {
+                    'pdf_id': pdf_id,
+                    'feedback_date': datetime.now(),
+                    'form_number_feedback': form_number,  # INTEGER form number
+                    'general_feedback': feedback_text.strip(),  # Single feedback text
+                    'rating': rating_value,  # INTEGER rating (1-5)
+                    'user_session_id': get_session_id()
+                }
+                
+                try:
+                    # Store feedback using the database function
+                    feedback_id = store_feedback_data(feedback_data)
+                    
+                    if feedback_id:
+                        st.success("🎉 Thank you for your valuable feedback! It helps us improve our analysis.")
+                        st.session_state.feedback_submitted[feedback_key] = True
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error("❌ Error submitting feedback. No feedback ID returned.")
+                        
+                except Exception as e:
+                    st.error(f"❌ Failed to save feedback: {str(e)}")
+                    print(f"Feedback submission error: {str(e)}")  # For debugging
+            else:
+                st.error("❌ Cannot submit feedback - PDF not found in database")
+    
+    # Show previous feedbacks below the form (always visible)
     render_previous_feedbacks(pdf_name)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 ```
 
 ## 2. Load Existing PDFs from Database on App Start
