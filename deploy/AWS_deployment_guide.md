@@ -8,169 +8,164 @@ Here are the two functionalities you requested:
 def get_previous_feedbacks(pdf_id):
     """Retrieve all previous feedbacks for a given PDF from database"""
     try:
-        from config.database import get_database_connection
+        from config.database import db
         
-        conn = get_database_connection()
-        cursor = conn.cursor()
-        
-        query = """
-        SELECT feedback_date, form_number_feedback, general_feedback, rating, user_session_id
-        FROM feedback_table 
-        WHERE pdf_id = %s 
-        ORDER BY feedback_date DESC
-        """
-        
-        cursor.execute(query, (pdf_id,))
-        feedbacks = cursor.fetchall()
-        
-        cursor.close()
-        conn.close()
-        
-        return feedbacks
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                query = """
+                SELECT feedback_date, form_number_feedback, general_feedback, rating, user_session_id
+                FROM feedback 
+                WHERE pdf_id = %s 
+                ORDER BY feedback_date DESC
+                """
+                
+                cur.execute(query, (pdf_id,))
+                feedbacks = cur.fetchall()
+                
+                return feedbacks
         
     except Exception as e:
         print(f"Error retrieving feedbacks: {e}")
         return []
 
-def render_previous_feedbacks(pdf_name):
-    """Display previous feedbacks for the current PDF"""
-    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
-    
-    if not pdf_id:
-        return
-    
-    previous_feedbacks = get_previous_feedbacks(pdf_id)
-    
-    if not previous_feedbacks:
-        st.info("📝 No previous feedback found for this document.")
-        return
-    
-    st.markdown("---")
-    st.markdown("### 📋 Previous Feedback History")
-    st.markdown(f"**{len(previous_feedbacks)} feedback(s) submitted for this document:**")
-    
-    for i, feedback in enumerate(previous_feedbacks):
-        feedback_date, form_number, general_feedback, rating, session_id = feedback
+def load_existing_pdfs_from_database():
+    """Load all existing PDFs from database into session state"""
+    try:
+        from config.database import db
         
-        # Convert rating back to text
-        rating_text = {5: "Correct", 3: "Partially Correct", 1: "Incorrect"}.get(rating, f"Rating: {rating}")
-        
-        with st.expander(f"📅 Feedback #{i+1} - {feedback_date.strftime('%Y-%m-%d %H:%M')}", expanded=False):
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                st.markdown(f"**📋 Form Number:** {form_number}")
-                st.markdown(f"**📝 Feedback:** {general_feedback}")
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Query to get all processed PDFs with their latest analysis
+                query = """
+                SELECT DISTINCT p.id, p.pdf_name, p.final_word_count, p.upload_date, p.final_content,
+                       a.form_number, a.summary, a.analysis_date,
+                       a.pi_clause, a.ci_clause, a.data_usage_mentioned, a.data_limitations_exists
+                FROM pdfs p
+                LEFT JOIN analyses a ON p.id = a.pdf_id
+                WHERE a.id = (
+                    SELECT MAX(id) FROM analyses a2 WHERE a2.pdf_id = p.id
+                )
+                ORDER BY p.upload_date DESC
+                LIMIT 50
+                """
                 
-                # Show session info (truncated for privacy)
-                session_display = f"{session_id[:8]}..." if session_id else "Unknown"
-                st.caption(f"Session: {session_display}")
+                cur.execute(query)
+                existing_pdfs = cur.fetchall()
+        
+        # Load PDFs into session state
+        loaded_count = 0
+        for pdf_data in existing_pdfs:
+            (pdf_id, filename, file_size, upload_date, final_content,
+             form_number, summary, analysis_date,
+             pi_clause, ci_clause, data_usage_mentioned, data_limitations_exists) = pdf_data
             
-            with col2:
-                # Show rating with appropriate emoji
-                rating_emoji = {"Correct": "✅", "Partially Correct": "⚠️", "Incorrect": "❌"}.get(rating_text, "📊")
-                st.markdown(f"**{rating_emoji} {rating_text}**")
-                st.caption(f"📅 {feedback_date.strftime('%b %d, %Y')}")
-
-def render_feedback_form(pdf_name, file_stem, json_data):
-    """Render feedback form for a specific PDF"""
-    feedback_key = f"feedback_{file_stem}"
-    
-    # Check if feedback was already submitted
-    if st.session_state.feedback_submitted.get(feedback_key, False):
-        st.success("✅ Thank you! Your feedback has been submitted for this document.")
-        if st.button("Submit New Feedback", key=f"new_feedback_{file_stem}"):
-            st.session_state.feedback_submitted[feedback_key] = False
-            st.rerun()
-        
-        # Show previous feedbacks after submission
-        render_previous_feedbacks(pdf_name)
-        return
-    
-    st.markdown("<div class='feedback-section'>", unsafe_allow_html=True)
-    st.subheader("📝 Your Feedback Matters")
-    st.write("Help us improve our analysis by providing feedback on the results:")
-    
-    with st.form(f"feedback_form_{file_stem}"):
-        # Form number selection (1-10)
-        form_number = st.selectbox(
-            "Select Form Number",
-            options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-            index=0,  # Default to form 1
-            help="Select the form number that best matches this document",
-            key=f"form_number_{file_stem}"
-        )
-        
-        # Rating selection
-        rating = st.radio(
-            "Is this analysis correct?",
-            ["Correct", "Partially Correct", "Incorrect"],
-            help="Rate the accuracy of the analysis",
-            key=f"rating_{file_stem}"
-        )
-        
-        # Convert rating to integer for database storage
-        rating_map = {
-            "Correct": 5,
-            "Partially Correct": 3,
-            "Incorrect": 1
-        }
-        rating_value = rating_map[rating]
-        
-        # Single feedback text box
-        feedback_text = st.text_area(
-            "Your feedback/comments",
-            placeholder="Please provide your feedback or comments about this analysis...",
-            height=120,
-            help="Provide detailed feedback about the analysis accuracy, suggestions for improvement, etc.",
-            key=f"feedback_text_{file_stem}"
-        )
-        
-        # Submit button
-        submitted = st.form_submit_button("🚀 Submit Feedback", use_container_width=True)
-        
-        if submitted:
-            # Validation - require feedback text
-            if not feedback_text.strip():
-                st.error("Please provide some feedback before submitting.")
-                return
+            # Skip if already loaded (from current session uploads)
+            if filename in st.session_state.pdf_database_ids:
+                continue
             
-            # Get PDF ID from session state
-            pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+            # Store PDF metadata
+            st.session_state.pdf_database_ids[filename] = pdf_id
+            st.session_state.analysis_status[filename] = "Processed"
             
-            if pdf_id:
-                # Prepare feedback data according to database schema
-                feedback_data = {
-                    'pdf_id': pdf_id,
-                    'feedback_date': datetime.now(),
-                    'form_number_feedback': form_number,  # INTEGER form number
-                    'general_feedback': feedback_text.strip(),  # Single feedback text
-                    'rating': rating_value,  # INTEGER rating (1-5)
-                    'user_session_id': get_session_id()
+            # Create analysis data structure
+            file_stem = Path(filename).stem
+            st.session_state.json_data[file_stem] = {
+                'form_number': form_number or 'Not available',
+                'summary': summary or 'No summary available',
+                'pi_clause': bool(pi_clause) if pi_clause is not None else False,
+                'ci_clause': bool(ci_clause) if ci_clause is not None else False,
+                'data_usage_mentioned': bool(data_usage_mentioned) if data_usage_mentioned is not None else False,
+                'data_limitations_exists': bool(data_limitations_exists) if data_limitations_exists is not None else False,
+                'relevant_clauses': [],  # Will be loaded when needed
+                'analysis_date': analysis_date,
+                'loaded_from_database': True  # Flag to identify database PDFs
+            }
+            
+            # Convert final_content to pages structure for page matching
+            if final_content:
+                st.session_state.raw_pdf_data[filename] = {
+                    'pages': convert_string_to_pages_structure(final_content, filename)
                 }
+            
+            # Create processing messages for UI consistency
+            st.session_state.processing_messages[filename] = [
+                f"💾 Loaded from database (ID: {pdf_id})",
+                f"📅 Originally processed: {analysis_date.strftime('%Y-%m-%d %H:%M') if analysis_date else 'Unknown'}",
+                f"📊 File size: {file_size} words" if file_size else "📊 File size: Unknown",
+                "✅ Analysis complete - Ready for viewing"
+            ]
+            
+            loaded_count += 1
+        
+        return loaded_count
+        
+    except Exception as e:
+        print(f"Error loading existing PDFs: {e}")
+        return 0
+
+def load_pdf_clauses(pdf_id, file_stem):
+    """Load relevant clauses for a specific PDF"""
+    try:
+        from config.database import db
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                query = """
+                SELECT c.clause_type, c.clause_text, c.clause_order
+                FROM clauses c
+                JOIN analyses a ON c.analysis_id = a.id
+                WHERE a.pdf_id = %s
+                ORDER BY c.clause_order
+                """
                 
-                try:
-                    # Store feedback using the database function
-                    feedback_id = store_feedback_data(feedback_data)
-                    
-                    if feedback_id:
-                        st.success("🎉 Thank you for your valuable feedback! It helps us improve our analysis.")
-                        st.session_state.feedback_submitted[feedback_key] = True
-                        st.balloons()
-                        st.rerun()
-                    else:
-                        st.error("❌ Error submitting feedback. No feedback ID returned.")
-                        
-                except Exception as e:
-                    st.error(f"❌ Failed to save feedback: {str(e)}")
-                    print(f"Feedback submission error: {str(e)}")  # For debugging
-            else:
-                st.error("❌ Cannot submit feedback - PDF not found in database")
-    
-    # Show previous feedbacks below the form (always visible)
-    render_previous_feedbacks(pdf_name)
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+                cur.execute(query, (pdf_id,))
+                clauses = cur.fetchall()
+        
+        # Convert to the expected format
+        relevant_clauses = []
+        for clause_type, clause_text, clause_order in clauses:
+            relevant_clauses.append({
+                'type': clause_type,
+                'text': clause_text,
+                'order': clause_order
+            })
+        
+        # Update the session data
+        if file_stem in st.session_state.json_data:
+            st.session_state.json_data[file_stem]['relevant_clauses'] = relevant_clauses
+        
+        return relevant_clauses
+        
+    except Exception as e:
+        print(f"Error loading clauses: {e}")
+        return []
+
+def convert_string_to_pages_structure(final_content, pdf_name):
+    """Convert final_content string back to pages structure for page matching"""
+    try:
+        if not final_content:
+            return []
+        
+        # Split content into paragraphs
+        paragraphs = [p.strip() for p in final_content.split('\n') if p.strip()]
+        
+        # Estimate pages (roughly 20-30 paragraphs per page)
+        paragraphs_per_page = 25
+        pages_content = []
+        
+        for i in range(0, len(paragraphs), paragraphs_per_page):
+            page_paragraphs = paragraphs[i:i + paragraphs_per_page]
+            page_data = {
+                'page_number': (i // paragraphs_per_page) + 1,
+                'paragraphs': page_paragraphs
+            }
+            pages_content.append(page_data)
+        
+        return pages_content
+        
+    except Exception as e:
+        print(f"Error converting string to pages structure for {pdf_name}: {e}")
+        return []
 ```
 
 ## 2. Load Existing PDFs from Database on App Start
