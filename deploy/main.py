@@ -204,7 +204,52 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
+def load_processed_pdfs_from_database():
+    """Load all processed PDFs from database on app startup"""
+    try:
+        from config.database import get_all_processed_pdfs, initialize_database
+        
+        # Initialize database connection
+        initialize_database()
+        
+        # Get all processed PDFs
+        processed_pdfs = get_all_processed_pdfs()
+        
+        for pdf_record in processed_pdfs:
+            pdf_name = pdf_record['pdf_name']
+            
+            # Skip if already loaded in session
+            if pdf_name in st.session_state.pdf_files:
+                continue
+            
+            # Convert raw_content back to bytes for PDF display
+            if pdf_record['final_content']:
+                # Assuming final_content is stored as base64 string
+                try:
+                    pdf_bytes = base64.b64decode(pdf_record['final_content'])
+                    st.session_state.pdf_files[pdf_name] = pdf_bytes
+                except:
+                    # If not base64, skip this PDF
+                    continue
+            
+            # Load analysis data
+            if pdf_record['raw_analysis_json']:
+                file_stem = Path(pdf_name).stem
+                if isinstance(pdf_record['raw_analysis_json'], str):
+                    st.session_state.json_data[file_stem] = json.loads(pdf_record['raw_analysis_json'])
+                else:
+                    st.session_state.json_data[file_stem] = pdf_record['raw_analysis_json']
+                
+                st.session_state.analysis_status[pdf_name] = "Processed"
+            else:
+                st.session_state.analysis_status[pdf_name] = "Not processed"
+        
+        if processed_pdfs:
+            st.success(f"Loaded {len(processed_pdfs)} processed PDFs from database")
+            
+    except Exception as e:
+        st.warning(f"Could not load PDFs from database: {str(e)}")
+        
 # Session Management Functions
 def get_session_id():
     """Get or create session ID"""
