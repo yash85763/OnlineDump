@@ -926,26 +926,26 @@ def main():
         # Document list and selection
         if st.session_state.pdf_files:
             st.subheader("📋 Available Documents")
-
+        
             st.write(f"DEBUG: Found {len(st.session_state.pdf_files)} PDFs in session state")
-            for pdf_name, status in st.sesison_state.analysis_status.items():
+            for pdf_name, status in st.session_state.analysis_status.items():
                 st.write(f" - {pdf_name}: {status}")
-            
+        
             pdf_data = []
             for pdf_name in st.session_state.pdf_files.keys():
                 status = st.session_state.analysis_status.get(pdf_name, "Ready")
                 db_id = st.session_state.pdf_database_ids.get(pdf_name, "N/A")
                 file_size = len(st.session_state.pdf_files[pdf_name]) / 1024
-                
+        
                 status_emoji = "✅" if status == "Processed" else "⏳" if "processing" in status.lower() else "📄"
-                
+        
                 pdf_data.append({
                     'Status': status_emoji,
                     'PDF Name': pdf_name,
                     'Size (KB)': f"{file_size:.1f}",
                     'DB ID': str(db_id)
                 })
-            
+        
             pdf_df = pd.DataFrame(pdf_data)
             gb = GridOptionsBuilder.from_dataframe(pdf_df)
             gb.configure_selection(selection_mode='single', use_checkbox=False)
@@ -953,7 +953,7 @@ def main():
             gb.configure_default_column(cellStyle={'fontSize': '14px'})
             gb.configure_column("PDF Name", cellStyle={'fontWeight': 'bold'})
             gridOptions = gb.build()
-
+        
             grid_response = AgGrid(
                 pdf_df,
                 gridOptions=gridOptions,
@@ -962,12 +962,60 @@ def main():
                 fit_columns_on_grid_load=True,
                 theme='streamlit'
             )
-
+        
             selected_rows = grid_response.get('selected_rows', pd.DataFrame())
             if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
                 selected_pdf = selected_rows.iloc[0]['PDF Name']
                 if selected_pdf != st.session_state.get('current_pdf'):
                     set_current_pdf(selected_pdf)
+                    # Fetch data from database for the selected PDF
+                    pdf_id = st.session_state.pdf_database_ids.get(selected_pdf)
+                    if pdf_id:
+                        try:
+                            # Fetch PDF data
+                            pdf_record = get_pdf_by_id(pdf_id)
+                            if pdf_record and pdf_record.get('final_content'):
+                                try:
+                                    pdf_bytes = base64.b64decode(pdf_record['final_content'])
+                                    st.session_state.pdf_files[selected_pdf] = pdf_bytes
+                                    st.session_state.analysis_status[selected_pdf] = "Processed"
+                                except Exception as e:
+                                    st.error(f"Could not decode PDF bytes for {selected_pdf}: {str(e)}")
+                                    st.session_state.analysis_status[selected_pdf] = "Error loading PDF"
+                                
+                                # Store raw PDF data for page matching
+                                if pdf_record.get('raw_analysis_json'):
+                                    try:
+                                        raw_analysis = json.loads(pdf_record['raw_analysis_json']) if isinstance(pdf_record['raw_analysis_json'], str) else pdf_record['raw_analysis_json']
+                                        st.session_state.raw_pdf_data[selected_pdf] = {
+                                            'pages': raw_analysis.get('pages', [])
+                                        }
+                                    except Exception as e:
+                                        st.warning(f"Could not parse raw analysis data for {selected_pdf}: {str(e)}")
+                                
+                                # Fetch latest analysis data
+                                analysis_record = get_latest_analysis(pdf_id)
+                                if analysis_record and analysis_record.get('raw_json'):
+                                    file_stem = Path(selected_pdf).stem
+                                    try:
+                                        analysis_data = json.loads(analysis_record['raw_json']) if isinstance(analysis_record['raw_json'], str) else analysis_record['raw_json']
+                                        st.session_state.json_data[file_stem] = analysis_data
+                                        st.session_state.analysis_status[selected_pdf] = "Processed"
+                                    except Exception as e:
+                                        st.warning(f"Could not parse analysis data for {selected_pdf}: {str(e)}")
+                                        st.session_state.analysis_status[selected_pdf] = "Error loading analysis"
+                                else:
+                                    st.warning(f"No analysis data found for {selected_pdf}")
+                                    st.session_state.analysis_status[selected_pdf] = "No analysis data"
+                            else:
+                                st.error(f"No PDF content found for {selected_pdf}")
+                                st.session_state.analysis_status[selected_pdf] = "No PDF content"
+                        except Exception as e:
+                            st.error(f"Error fetching data for {selected_pdf}: {str(e)}")
+                            st.session_state.analysis_status[selected_pdf] = f"Error: {str(e)}"
+                    else:
+                        st.error(f"No database ID found for {selected_pdf}")
+                        st.session_state.analysis_status[selected_pdf] = "No database ID"
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -993,6 +1041,58 @@ def main():
                     with col_obf1:
                         st.metric("Original Pages", obf_summary.get('total_original_pages', 0))
                     with col_obf2:
+        with col3:
+            st.markdown('<div class="analysis-panel">', unsafe_allow_html=True)
+            st.header("📊 Analysis Results")
+            
+            if st.session_state.current_pdf and st.session_state.current_pdf in st.session_state.pdf_files:
+                file_stem = Path(st.session_state.current_pdf).stem
+                if file_stem in st.session_state.json_data:
+                    analysis_data = st.session_state.json_data[file_stem]
+                    
+                    # Display key analysis metrics
+                    col_metric1, col_metric2, col_metric3 = st.columns(3)
+                    with col_metric1:
+                        st.metric("Form Number", analysis_data.get('form_number', 'N/A'))
+                    with col_metric2:
+                        st.metric("Data Usage", analysis_data.get('data_usage_mentioned', 'N/A'))
+                    with col_metric3:
+                        st.metric("Data Limitations", analysis_data.get('data_limitations_exists', 'N/A'))
+                    
+                    # Display summary
+                    st.subheader("📝 Summary")
+                    st.markdown(f"<div class='extract-text'>{analysis_data.get('summary', 'No summary available')}</div>", unsafe_allow_html=True)
+                    
+                    # Display clauses with page numbers
+                    st.subheader("🔍 Relevant Clauses")
+                    clauses = analysis_data.get('relevant_clauses', [])
+                    raw_pdf_data = st.session_state.raw_pdf_data.get(st.session_state.current_pdf, {})
+                    
+                    for clause in clauses:
+                        clause_type = clause.get('type', 'Unknown')
+                        clause_text = clause.get('text', '')
+                        
+                        # Find page number for the clause
+                        page_info = find_clause_page_number(clause_text, raw_pdf_data)
+                        page_number = page_info.get('page_number', None)
+                        similarity_score = page_info.get('similarity_score', 0.0)
+                        
+                        st.markdown(f"**{clause_type}**")
+                        if page_number:
+                            st.markdown(f"<div class='page-info'>📄 Page {page_number} (Similarity: {similarity_score:.2%})</div>", unsafe_allow_html=True)
+                        else:
+                            st.markdown("<div class='page-info'>📄 Page not identified</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='extract-text'>{clause_text}</div>", unsafe_allow_html=True)
+                    
+                    # Display feedback form
+                    st.subheader("📝 Feedback")
+                    render_feedback_form(st.session_state.current_pdf, file_stem, analysis_data)
+                else:
+                    st.info("No analysis data available for the selected PDF.")
+            else:
+                st.info("Select a PDF to view analysis results.")
+    
+            st.markdown('</div>', unsafe_allow_html=True)
                         
 
 if __name__ == "__main__":
