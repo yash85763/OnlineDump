@@ -811,6 +811,11 @@ def main():
         - 90% similarity matching with original content
         - Smart text comparison algorithms
         """)
+
+    # Load processed PDFs from database on startup
+    if 'database_loaded' not in st.session_state:
+        load_processed_pdfs_from_database()
+        st.session_state.database_loaded = True
     
     # Main layout
     col1, col2, col3 = st.columns([25, 40, 35])
