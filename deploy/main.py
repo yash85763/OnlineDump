@@ -204,16 +204,38 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
 def load_processed_pdfs_from_database():
     """Load all processed PDFs from database on app startup"""
     try:
-        from config.database import get_all_processed_pdfs, initialize_database
+        # Import at the function level to avoid import issues
+        import sys
+        import os
+        
+        # Add the current directory to Python path if needed
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.append(current_dir)
+        
+        from config.database import get_all_processed_pdfs, initialize_database, check_database_connection
+        
+        # Check database connection first
+        if not check_database_connection():
+            st.warning("Database connection failed - cannot load previous PDFs")
+            return
         
         # Initialize database connection
         initialize_database()
         
         # Get all processed PDFs
         processed_pdfs = get_all_processed_pdfs()
+        
+        if not processed_pdfs:
+            st.info("No previously processed PDFs found in database")
+            return
+        
+        loaded_count = 0
         
         for pdf_record in processed_pdfs:
             pdf_name = pdf_record['pdf_name']
@@ -222,33 +244,52 @@ def load_processed_pdfs_from_database():
             if pdf_name in st.session_state.pdf_files:
                 continue
             
-            # Convert raw_content back to bytes for PDF display
-            if pdf_record['final_content']:
-                # Assuming final_content is stored as base64 string
+            # Load PDF bytes from final_content
+            if pdf_record.get('final_content'):
                 try:
+                    # Assuming final_content is stored as base64 string
                     pdf_bytes = base64.b64decode(pdf_record['final_content'])
                     st.session_state.pdf_files[pdf_name] = pdf_bytes
-                except:
-                    # If not base64, skip this PDF
+                    loaded_count += 1
+                except Exception as e:
+                    st.warning(f"Could not decode PDF bytes for {pdf_name}: {str(e)}")
                     continue
-            
-            # Load analysis data
-            if pdf_record['raw_analysis_json']:
-                file_stem = Path(pdf_name).stem
-                if isinstance(pdf_record['raw_analysis_json'], str):
-                    st.session_state.json_data[file_stem] = json.loads(pdf_record['raw_analysis_json'])
-                else:
-                    st.session_state.json_data[file_stem] = pdf_record['raw_analysis_json']
-                
-                st.session_state.analysis_status[pdf_name] = "Processed"
             else:
-                st.session_state.analysis_status[pdf_name] = "Not processed"
-        
-        if processed_pdfs:
-            st.success(f"Loaded {len(processed_pdfs)} processed PDFs from database")
+                st.warning(f"No PDF content found for {pdf_name}")
+                continue
             
+            # Load analysis data from raw_analysis_json
+            if pdf_record.get('raw_analysis_json'):
+                file_stem = Path(pdf_name).stem
+                try:
+                    if isinstance(pdf_record['raw_analysis_json'], str):
+                        analysis_data = json.loads(pdf_record['raw_analysis_json'])
+                    else:
+                        analysis_data = pdf_record['raw_analysis_json']
+                    
+                    st.session_state.json_data[file_stem] = analysis_data
+                    st.session_state.analysis_status[pdf_name] = "Processed"
+                    
+                except Exception as e:
+                    st.warning(f"Could not parse analysis data for {pdf_name}: {str(e)}")
+                    st.session_state.analysis_status[pdf_name] = "Error loading analysis"
+            else:
+                st.session_state.analysis_status[pdf_name] = "No analysis data"
+        
+        if loaded_count > 0:
+            st.success(f"✅ Loaded {loaded_count} processed PDFs from database")
+            
+            # Set the first loaded PDF as current if none is selected
+            if not st.session_state.current_pdf and st.session_state.pdf_files:
+                st.session_state.current_pdf = list(st.session_state.pdf_files.keys())[0]
+        
+    except ImportError as e:
+        st.error(f"Cannot import database module: {str(e)}")
+        st.error("Make sure config/database.py exists and is properly configured")
     except Exception as e:
         st.warning(f"Could not load PDFs from database: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         
 # Session Management Functions
 def get_session_id():
@@ -814,8 +855,9 @@ def main():
 
     # Load processed PDFs from database on startup
     if 'database_loaded' not in st.session_state:
-        load_processed_pdfs_from_database()
-        st.session_state.database_loaded = True
+        with st.spinner("Loading previously processed PDFs from database..."):
+            load_processed_pdfs_from_database()
+            st.session_state.database_loaded = True
     
     # Main layout
     col1, col2, col3 = st.columns([25, 40, 35])
@@ -884,6 +926,10 @@ def main():
         # Document list and selection
         if st.session_state.pdf_files:
             st.subheader("📋 Available Documents")
+
+            st.write(f"DEBUG: Found {len(st.session_state.pdf_files)} PDFs in session state")
+            for pdf_name, status in st.sesison_state.analysis_status.items():
+                st.write(f" - {pdf_name}: {status}")
             
             pdf_data = []
             for pdf_name in st.session_state.pdf_files.keys():
