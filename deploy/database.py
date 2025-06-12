@@ -512,6 +512,23 @@ def check_database_connection() -> bool:
         print(f"Database connection failed: {str(e)}")
         return False
 
+def get_all_processed_pdfs() -> List[Dict[str, Any]]:
+    """Get all PDFs that have been processed and have analysis data"""
+    
+    sql = """
+        SELECT p.*, a.raw_json 
+        FROM pdfs p
+        JOIN analyses a ON p.id = a.pdf_id
+        WHERE p.raw_analysis_json IS NOT NULL
+        ORDER BY p.upload_date DESC
+    """
+    
+    with db.get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql)
+            results = cur.fetchall()
+            return [dict(row) for row in results]
+
 if __name__ == "__main__":
     print("🧪 Testing database setup with psycopg2...")
     
