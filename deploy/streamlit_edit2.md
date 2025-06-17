@@ -426,3 +426,50 @@ This implementation provides:
 5. **Status indicators** - Clear visual feedback on what's loaded vs available
 
 The key insight is storing the complete processing result in `pdf_parsing_data` and having a robust loading system that populates all session state variables correctly.
+
+
+```python
+def debug_database_status():
+    """Debug function to check database and PDF storage status"""
+    st.subheader("🔍 Debug Information")
+    
+    # Check database connection
+    try:
+        from config.database import check_database_connection, get_all_pdfs_with_analysis_status
+        
+        db_connected = check_database_connection()
+        st.write(f"Database Connected: {db_connected}")
+        
+        if db_connected:
+            # Check if there are any PDFs in database
+            all_pdfs = get_all_pdfs_with_analysis_status()
+            st.write(f"PDFs in database: {len(all_pdfs)}")
+            
+            if all_pdfs:
+                st.write("Sample PDF records:")
+                for i, pdf in enumerate(all_pdfs[:3]):  # Show first 3
+                    st.write(f"  {i+1}. {pdf.get('pdf_name', 'No name')} (ID: {pdf.get('id', 'No ID')})")
+            else:
+                st.write("No PDFs found in database")
+                
+                # Check if pdfs table exists
+                try:
+                    from config.database import db
+                    with db.get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT COUNT(*) FROM pdfs")
+                            count = cur.fetchone()[0]
+                            st.write(f"Direct count from pdfs table: {count}")
+                except Exception as e:
+                    st.error(f"Error querying pdfs table: {str(e)}")
+        
+    except Exception as e:
+        st.error(f"Debug error: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+
+# Add this to your main() function temporarily:
+with st.expander("🔍 Debug Database Status", expanded=True):
+    debug_database_status()
+
+```
