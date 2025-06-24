@@ -240,13 +240,59 @@ Add this to your `load_pdf_from_database_with_analysis` function:
 
 ```python
 def load_pdf_from_database_with_analysis(pdf_id, pdf_name):
+    """Load complete PDF data including bytes, analysis, and parsing data for page matching"""
     try: 
         with st.spinner(f"Loading {pdf_name} with analysis..."):
-            # ... your existing code for PDF bytes and analysis ...
+            # Load complete data including analysis
+            complete_data = load_complete_pdf_data(pdf_id)
+
+            if not complete_data:
+                st.error("Could not load PDF data")
+                return False
+                
+            if not complete_data.get('pdf_bytes'):
+                st.error("No PDF bytes found")
+                return False
+                
+            # Step 1: Load PDF bytes for display
+            pdf_bytes = bytes(complete_data['pdf_bytes'])
+            st.session_state.pdf_files[pdf_name] = pdf_bytes
+            st.session_state.loaded_pdfs.add(pdf_name)
+            st.session_state.current_pdf = pdf_name
+            st.session_state.pdf_database_ids[pdf_name] = complete_data["id"]
             
-            # Load PDF parsing data for page number matching
+            # Step 2: Load analysis data for right pane display
+            analyses = complete_data.get('analyses', [])
+            analysis_loaded = False
+            
+            if analyses and len(analyses) > 0:
+                # Get latest analysis
+                latest_analysis = analyses[0]
+                analysis_data = latest_analysis.get('raw_json', {})
+                
+                # Handle JSON parsing
+                if isinstance(analysis_data, str):
+                    try:
+                        analysis_data = json.loads(analysis_data)
+                    except json.JSONDecodeError:
+                        st.warning("Could not parse analysis data")
+                        analysis_data = {}
+                
+                # Store analysis for right pane display
+                file_stem = Path(pdf_name).stem
+                st.session_state.json_data[file_stem] = analysis_data
+                st.session_state.analysis_status[pdf_name] = "Processed"
+                analysis_loaded = True
+                
+                st.success(f"✅ Loaded {pdf_name} with analysis (Version {latest_analysis.get('version', 1)})")
+            else:
+                st.session_state.analysis_status[pdf_name] = "Parsed Only"
+                st.warning(f"⚠️ {pdf_name} loaded but no analysis found")
+            
+            # Step 3: Load PDF parsing data for page number matching
             pdf_parsing_data = complete_data.get('pdf_parsing_data', {})
             if pdf_parsing_data:
+                # Handle JSON parsing if it's stored as string
                 if isinstance(pdf_parsing_data, str):
                     try:
                         pdf_parsing_data = json.loads(pdf_parsing_data)
@@ -261,7 +307,7 @@ def load_pdf_from_database_with_analysis(pdf_id, pdf_name):
                     st.session_state.raw_pdf_data[pdf_name] = {
                         'pages': original_pages
                     }
-                    # NEW: Also populate pages_content for your clause matching
+                    # Also populate pages_content for clause matching
                     st.session_state.pages_content[pdf_name] = original_pages
                     
                     st.write(f"🔍 DEBUG: Loaded {len(original_pages)} pages for page matching")
@@ -274,10 +320,34 @@ def load_pdf_from_database_with_analysis(pdf_id, pdf_name):
                 st.session_state.raw_pdf_data[pdf_name] = {'pages': []}
                 st.session_state.pages_content[pdf_name] = []
             
+            # Step 4: Load obfuscation summary if available
+            obfuscation_summary = complete_data.get('obfuscation_summary', {})
+            if obfuscation_summary:
+                if isinstance(obfuscation_summary, str):
+                    try:
+                        obfuscation_summary = json.loads(obfuscation_summary)
+                    except json.JSONDecodeError:
+                        obfuscation_summary = {}
+                st.session_state.obfuscation_summaries[pdf_name] = obfuscation_summary
+            
+            # Step 5: Initialize clause page mapping for this PDF
+            if pdf_name not in st.session_state.get('clause_page_mapping', {}):
+                if 'clause_page_mapping' not in st.session_state:
+                    st.session_state.clause_page_mapping = {}
+                st.session_state.clause_page_mapping[pdf_name] = {}
+            
+            # Success message
+            if analysis_loaded:
+                st.success(f"✅ Successfully loaded {pdf_name} with analysis and page data")
+            else:
+                st.success(f"✅ Successfully loaded {pdf_name} (PDF only, no analysis)")
+            
             return True
             
     except Exception as e:
         st.error(f"Loading failed: {str(e)}")
+        import traceback
+        st.error(f"Details: {traceback.format_exc()}")
         return False
 ```
 
