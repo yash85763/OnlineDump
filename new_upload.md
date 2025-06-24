@@ -217,3 +217,152 @@ After making these changes:
 The key insight is that your `find_clause_page_number` function needs `st.session_state.raw_pdf_data[pdf_name]` to be populated with the original pages data, which we're now loading from the `pdf_parsing_data` field in the database.
 
 Let me know what the debug output shows and if the page numbers start appearing!
+
+
+---
+
+
+I can see two issues here:
+
+## Issue 1: Missing `pages_content` for database PDFs
+
+Your code is looking for `st.session_state.pages_content[pdf_name]` but when loading from database, you're only populating `st.session_state.raw_pdf_data[pdf_name]`. 
+
+## Issue 2: Re-selection not working
+
+The PDF doesn't reload when you click it again because it's already marked as "loaded" but the display isn't updating.
+
+## Here are the fixes:
+
+### Fix 1: Update your loading function to populate `pages_content`
+
+Add this to your `load_pdf_from_database_with_analysis` function:
+
+```python
+def load_pdf_from_database_with_analysis(pdf_id, pdf_name):
+    try: 
+        with st.spinner(f"Loading {pdf_name} with analysis..."):
+            # ... your existing code for PDF bytes and analysis ...
+            
+            # Load PDF parsing data for page number matching
+            pdf_parsing_data = complete_data.get('pdf_parsing_data', {})
+            if pdf_parsing_data:
+                if isinstance(pdf_parsing_data, str):
+                    try:
+                        pdf_parsing_data = json.loads(pdf_parsing_data)
+                    except json.JSONDecodeError:
+                        st.warning("Could not parse PDF parsing data")
+                        pdf_parsing_data = {}
+                
+                # Extract original pages for page matching
+                original_pages = pdf_parsing_data.get('original_pages', [])
+                if original_pages:
+                    # Populate BOTH raw_pdf_data AND pages_content
+                    st.session_state.raw_pdf_data[pdf_name] = {
+                        'pages': original_pages
+                    }
+                    # NEW: Also populate pages_content for your clause matching
+                    st.session_state.pages_content[pdf_name] = original_pages
+                    
+                    st.write(f"🔍 DEBUG: Loaded {len(original_pages)} pages for page matching")
+                else:
+                    st.warning("No original pages data found for page matching")
+                    st.session_state.raw_pdf_data[pdf_name] = {'pages': []}
+                    st.session_state.pages_content[pdf_name] = []
+            else:
+                st.warning("No PDF parsing data found")
+                st.session_state.raw_pdf_data[pdf_name] = {'pages': []}
+                st.session_state.pages_content[pdf_name] = []
+            
+            return True
+            
+    except Exception as e:
+        st.error(f"Loading failed: {str(e)}")
+        return False
+```
+
+### Fix 2: Add `pages_content` to session state initialization
+
+Add this to your `initialize_session_state()` function:
+
+```python
+session_vars = {
+    'pdf_files': {},
+    'json_data': {},
+    'raw_pdf_data': {},
+    'pages_content': {},        # ADD THIS LINE
+    'clause_page_mapping': {},  # ADD THIS LINE TOO
+    'current_pdf': None,
+    # ... rest of your existing variables
+}
+```
+
+### Fix 3: Fix the re-selection issue
+
+Update your row selection handler to always set current PDF and refresh:
+
+```python
+# Handle row selection - FIXED VERSION
+selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+    selected_pdf_name = selected_rows.iloc[0]['PDF Name']
+    source = selected_rows.iloc[0]['Source']
+    db_id = selected_rows.iloc[0]['DB ID']
+    
+    if source == 'Database':
+        try:
+            pdf_id = int(db_id)
+            
+            # Check if already loaded
+            if selected_pdf_name not in st.session_state.loaded_pdfs:
+                # Load from database
+                if load_pdf_from_database_with_analysis(pdf_id, selected_pdf_name):
+                    st.session_state.current_pdf = selected_pdf_name
+                    st.rerun()
+            else:
+                # Already loaded - just set as current and refresh
+                # ALWAYS set current PDF and rerun, even if it's the same
+                st.session_state.current_pdf = selected_pdf_name
+                st.rerun()
+                    
+        except ValueError:
+            st.error(f"Could not convert DB ID to integer: {db_id}")
+            
+    elif source == 'Session':
+        # Session PDF - always set as current and refresh
+        st.session_state.current_pdf = selected_pdf_name
+        st.rerun()
+```
+
+### Fix 4: Fix the typos in your clause mapping code
+
+Your current code has some typos. Here's the corrected version:
+
+```python
+if (st.session_state.current_pdf and 
+    file_stem in st.session_state.json_data and 
+    st.session_state.current_pdf not in st.session_state.clause_page_mapping):  # Fixed typo here
+    
+    pdf_name = st.session_state.current_pdf
+    json_data = st.session_state.json_data[file_stem]  # Fixed typo here
+    
+    if pdf_name not in st.session_state.pages_content:        
+        st.warning("Page content missing - clause navigation unavailable")
+    else:
+        pages_content = st.session_state.pages_content[pdf_name]
+        clause_mapping = {}
+        for i, clause in enumerate(json_data.get('relevant_clauses', [])):
+            page_num = find_clause_in_pages(clause['text'], pages_content)  # Fixed typo here
+            if page_num:
+                clause_mapping[i] = page_num
+        st.session_state.clause_page_mapping[pdf_name] = clause_mapping
+```
+
+## Test the fixes:
+
+1. **Click on a database PDF** - should load with page content
+2. **Check clause dropdowns** - should show page numbers
+3. **Click another PDF, then click back** - should reload the first PDF properly
+4. **Check debug messages** - should confirm pages_content is populated
+
+Let me know if the page navigation works now and if the re-selection issue is resolved!
