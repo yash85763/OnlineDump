@@ -130,4 +130,90 @@ After making these changes:
 3. **Look at the right pane** - does analysis data appear?
 4. **Check the analysis status** in the grid - does it update to "Processed"?
 
-Let me know what happens and any error messages you see!
+
+Looking at your code, I can see the issue. The page navigation isn't working because we're not loading the **original parsing data** that's needed for page number matching. 
+
+Currently, your `load_pdf_from_database_with_analysis` function only loads:
+1. PDF bytes (for display)
+2. Analysis data (for right pane)
+
+But it's missing:
+3. **PDF parsing data** (for page number matching)
+
+## Here's what needs to be added to your loading function:
+
+Add this section to your `load_pdf_from_database_with_analysis` function, right after loading the analysis data:
+
+```python
+def load_pdf_from_database_with_analysis(pdf_id, pdf_name):
+    try: 
+        with st.spinner(f"Loading {pdf_name} with analysis..."):
+            # ... your existing code for PDF bytes and analysis ...
+            
+            # NEW: Load PDF parsing data for page number matching
+            pdf_parsing_data = complete_data.get('pdf_parsing_data', {})
+            if pdf_parsing_data:
+                # Handle JSON parsing if it's stored as string
+                if isinstance(pdf_parsing_data, str):
+                    try:
+                        pdf_parsing_data = json.loads(pdf_parsing_data)
+                    except json.JSONDecodeError:
+                        st.warning("Could not parse PDF parsing data")
+                        pdf_parsing_data = {}
+                
+                # Extract original pages for page matching
+                original_pages = pdf_parsing_data.get('original_pages', [])
+                if original_pages:
+                    st.session_state.raw_pdf_data[pdf_name] = {
+                        'pages': original_pages
+                    }
+                    st.write(f"🔍 DEBUG: Loaded {len(original_pages)} pages for page matching")
+                else:
+                    st.warning("No original pages data found for page matching")
+                    st.session_state.raw_pdf_data[pdf_name] = {'pages': []}
+            else:
+                st.warning("No PDF parsing data found")
+                st.session_state.raw_pdf_data[pdf_name] = {'pages': []}
+            
+            return True
+            
+    except Exception as e:
+        st.error(f"Loading failed: {str(e)}")
+        return False
+```
+
+## Debug to verify the data structure:
+
+Add this debug section temporarily to see what's in your `pdf_parsing_data`:
+
+```python
+# Add this right after loading pdf_parsing_data:
+if pdf_parsing_data:
+    st.write("🔍 DEBUG: PDF parsing data keys:", list(pdf_parsing_data.keys()))
+    
+    original_pages = pdf_parsing_data.get('original_pages', [])
+    st.write(f"🔍 DEBUG: Original pages count: {len(original_pages)}")
+    
+    if original_pages:
+        first_page = original_pages[0]
+        st.write(f"🔍 DEBUG: First page keys: {list(first_page.keys())}")
+        
+        paragraphs = first_page.get('paragraphs', [])
+        st.write(f"🔍 DEBUG: First page paragraphs count: {len(paragraphs)}")
+        
+        if paragraphs:
+            st.write(f"🔍 DEBUG: First paragraph preview: {paragraphs[0][:100]}...")
+```
+
+## Test the page matching:
+
+After making these changes:
+
+1. **Click on a database PDF** with analysis
+2. **Check the debug messages** - do you see the parsing data being loaded?
+3. **Go to the right pane** and expand a clause dropdown
+4. **Look for page numbers** - they should now appear
+
+The key insight is that your `find_clause_page_number` function needs `st.session_state.raw_pdf_data[pdf_name]` to be populated with the original pages data, which we're now loading from the `pdf_parsing_data` field in the database.
+
+Let me know what the debug output shows and if the page numbers start appearing!
