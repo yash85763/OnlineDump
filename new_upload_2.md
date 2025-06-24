@@ -338,3 +338,291 @@ CREATE INDEX idx_users_session_id ON users(session_id);
 - Better error handling for missing tables
 
 The verification will only run when the app starts, not after each PDF upload.
+
+
+
+---
+
+Good point! If you can’t display PDFs larger than 1.5 MB, there’s no need to store the bytes. Here’s how to update the code:
+
+## 1. Update the Enhanced PDF Handler
+
+Modify the `process_pdf_with_database()` function in `enhanced_pdf_handler.py`:
+
+```python
+def process_pdf_with_database(self, pdf_path: str = None, pdf_bytes: bytes = None, 
+                            pdf_name: str = None, uploaded_by: str = "system") -> Dict[str, Any]:
+    """Process a PDF file through the complete pipeline and store in database."""
+    
+    try:
+        # ... your existing validation code ...
+        
+        # Check PDF size and decide whether to store bytes
+        pdf_size_mb = len(pdf_bytes) / (1024 * 1024)
+        store_pdf_bytes = pdf_size_mb <= 1.5
+        
+        print(f"🔍 DEBUG: PDF size: {pdf_size_mb:.2f} MB")
+        print(f"🔍 DEBUG: Will store PDF bytes: {store_pdf_bytes}")
+        
+        # ... existing processing code (extract content, obfuscation, etc.) ...
+        
+        # Prepare data for database storage
+        pdf_data = {
+            'pdf_name': pdf_name,
+            'file_hash': file_hash,
+            'upload_date': datetime.now(),
+            'processed_date': datetime.now(),
+            'layout': layout_type,
+            'original_word_count': original_word_count,
+            'original_page_count': original_page_count,
+            'parsability': True,
+            'final_word_count': final_word_count,
+            'final_page_count': final_page_count,
+            'avg_words_per_page': avg_words_per_page,
+            'raw_content': raw_content,
+            'final_content': final_content,
+            'pdf_bytes': pdf_bytes if store_pdf_bytes else None,  # Store NULL if too large
+            'pdf_parsing_data': complete_processing_result,
+            'obfuscation_applied': obfuscation_applied,
+            'pages_removed_count': obfuscation_summary.get('pages_removed_count', 0),
+            'paragraphs_obfuscated_count': obfuscation_summary.get('paragraphs_obfuscated_count', 0),
+            'obfuscation_summary': obfuscation_summary,
+            'uploaded_by': uploaded_by,
+            'file_size_mb': pdf_size_mb  # Store size for reference
+        }
+        
+        # Add file size info to the return result
+        complete_processing_result["file_size_mb"] = pdf_size_mb
+        complete_processing_result["pdf_bytes_stored"] = store_pdf_bytes
+        
+        # ... rest of your existing code ...
+        
+        return complete_processing_result
+        
+    except Exception as e:
+        # ... existing error handling ...
+```
+
+## 2. Update Database Schema
+
+Add a file size column to track the original size. Update your manual table creation:
+
+```sql
+-- Add this column to your pdfs table:
+ALTER TABLE pdfs ADD COLUMN file_size_mb FLOAT;
+
+-- Or if creating fresh table, include:
+CREATE TABLE pdfs (
+    -- ... your existing columns ...
+    pdf_bytes BYTEA,                    -- Will be NULL for files > 1.5MB
+    file_size_mb FLOAT,                 -- NEW: Store original file size
+    pdf_parsing_data JSONB,
+    -- ... rest of columns ...
+);
+```
+
+## 3. Update the database storage function
+
+Modify `store_pdf_data()` in `database.py`:
+
+```python
+def store_pdf_data(pdf_data: Dict[str, Any]) -> int:
+    """Store PDF data after parsing and obfuscation process"""
+    
+    sql = """
+        INSERT INTO pdfs (
+            pdf_name, file_hash, upload_date, processed_date,
+            layout, original_word_count, original_page_count, parsability,
+            final_word_count, final_page_count, avg_words_per_page,
+            raw_content, final_content, pdf_bytes, file_size_mb, pdf_parsing_data,
+            obfuscation_applied, pages_removed_count, paragraphs_obfuscated_count,
+            obfuscation_summary, uploaded_by
+        ) VALUES (
+            %(pdf_name)s, %(file_hash)s, %(upload_date)s, %(processed_date)s,
+            %(layout)s, %(original_word_count)s, %(original_page_count)s, %(parsability)s,
+            %(final_word_count)s, %(final_page_count)s, %(avg_words_per_page)s,
+            %(raw_content)s, %(final_content)s, %(pdf_bytes)s, %(file_size_mb)s, %(pdf_parsing_data)s,
+            %(obfuscation_applied)s, %(pages_removed_count)s, %(paragraphs_obfuscated_count)s,
+            %(obfuscation_summary)s, %(uploaded_by)s
+        ) RETURNING id
+    """
+    
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                # ... your existing data preparation code ...
+                
+                # Handle NULL pdf_bytes explicitly
+                if 'pdf_bytes' not in prepared_data or prepared_data['pdf_bytes'] is None:
+                    prepared_data['pdf_bytes'] = None
+                    print(f"🔍 DEBUG: Storing NULL pdf_bytes for large file")
+                
+                cur.execute(sql, prepared_data)
+                pdf_id = cur.fetchone()[0]
+                conn.commit()
+                
+                print(f"✅ PDF stored successfully with ID: {pdf_id}")
+                return pdf_id
+                
+            except Exception as e:
+                print(f"❌ Error storing PDF data: {str(e)}")
+                conn.rollback()
+                raise
+```
+
+## 4. Update the loading function
+
+Modify `load_pdf_from_database_with_analysis()` in `main.py`:
+
+```python
+def load_pdf_from_database_with_analysis(pdf_id, pdf_name):
+    try:
+        show_processing_overlay(
+            message=f"Loading {pdf_name}",
+            submessage="Retrieving PDF and analysis data from database..."
+        )
+        
+        complete_data = load_complete_pdf_data(pdf_id)
+        
+        if not complete_data:
+            st.error("Could not load PDF data")
+            return False
+        
+        # Check if PDF bytes are available
+        pdf_bytes = complete_data.get('pdf_bytes')
+        file_size_mb = complete_data.get('file_size_mb', 0)
+        
+        if pdf_bytes:
+            # PDF bytes available - load for viewing
+            st.session_state.pdf_files[pdf_name] = bytes(pdf_bytes)
+            st.session_state.loaded_pdfs.add(pdf_name)
+            st.session_state.current_pdf = pdf_name
+            st.success(f"✅ Loaded {pdf_name} ({file_size_mb:.2f} MB)")
+        else:
+            # No PDF bytes - large file
+            st.session_state.loaded_pdfs.add(pdf_name)
+            st.session_state.current_pdf = pdf_name
+            st.warning(f"⚠️ {pdf_name} ({file_size_mb:.2f} MB) - PDF viewer not available (file too large)")
+            st.info("Analysis data and page navigation are still available")
+        
+        st.session_state.pdf_database_ids[pdf_name] = complete_data["id"]
+        
+        # ... rest of your analysis and parsing data loading code ...
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Loading failed: {str(e)}")
+        return False
+    finally:
+        hide_processing_overlay()
+```
+
+## 5. Update the PDF viewer to handle missing bytes
+
+Update your PDF viewer section in the middle pane:
+
+```python
+# Middle pane: PDF viewer
+with col2:
+    st.markdown('<div class="pdf-viewer">', unsafe_allow_html=True)
+    st.header("📖 Document Viewer")
+    
+    if st.session_state.current_pdf:
+        if st.session_state.current_pdf in st.session_state.pdf_files:
+            # PDF bytes available - show viewer
+            current_pdf_bytes = st.session_state.pdf_files[st.session_state.current_pdf]
+            
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                st.subheader(f"📄 {st.session_state.current_pdf}")
+            with col_info2:
+                file_size_mb = len(current_pdf_bytes) / (1024 * 1024)
+                st.metric("File Size", f"{file_size_mb:.2f} MB")
+            
+            # Show PDF viewer
+            pdf_display = display_pdf_iframe(current_pdf_bytes, st.session_state.search_text)
+            st.markdown(pdf_display, unsafe_allow_html=True)
+            
+        else:
+            # PDF bytes not available - show placeholder
+            st.subheader(f"📄 {st.session_state.current_pdf}")
+            
+            # Get file size from database if available
+            pdf_id = st.session_state.pdf_database_ids.get(st.session_state.current_pdf)
+            if pdf_id:
+                try:
+                    from config.database import db
+                    with db.get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT file_size_mb FROM pdfs WHERE id = %s", (pdf_id,))
+                            result = cur.fetchone()
+                            file_size = result[0] if result else "Unknown"
+                except:
+                    file_size = "Unknown"
+            else:
+                file_size = "Unknown"
+            
+            st.info(f"📊 File Size: {file_size} MB")
+            st.warning("🔍 PDF viewer not available - file is too large (>1.5 MB)")
+            st.markdown("""
+            **Available options:**
+            - ✅ View analysis results in the right pane
+            - ✅ Use clause page navigation
+            - ✅ Submit feedback
+            - ❌ PDF visual preview (file too large)
+            """)
+    else:
+        st.info("Select a PDF to view")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+```
+
+## 6. Update the AgGrid to show file size and PDF availability
+
+Update your `create_unified_pdf_grid()` function:
+
+```python
+def create_unified_pdf_grid():
+    """Create AgGrid showing all available PDFs (database + session)"""
+    pdf_data = []
+    
+    # Add PDFs from database metadata
+    for pdf_record in st.session_state.available_pdfs_metadata:
+        file_size_kb = pdf_record.get('file_size_bytes', 0) / 1024
+        file_size_mb = file_size_kb / 1024
+        
+        # Determine if PDF viewer is available
+        has_pdf_bytes = pdf_record.get('file_size_bytes', 0) > 0 and file_size_mb <= 1.5
+        viewer_status = "📖 Viewable" if has_pdf_bytes else "📊 Data Only"
+        
+        # ... existing status logic ...
+        
+        pdf_data.append({
+            'Status': status_emoji,
+            'Load': load_status,
+            'PDF Name': pdf_record['pdf_name'],
+            'Size (MB)': f"{file_size_mb:.2f}",  # Change to MB
+            'Viewer': viewer_status,              # NEW column
+            'Pages': f"{pdf_record.get('final_page_count', 0)}",
+            'Words': f"{pdf_record.get('final_word_count', 0)}",
+            'Analysis': analysis_status,
+            'DB ID': str(pdf_record['id']),
+            'Upload Date': pdf_record.get('upload_date', '').split('T')[0] if pdf_record.get('upload_date') else '',
+            'Source': 'Database'
+        })
+    
+    # ... rest of your existing code for session PDFs ...
+    
+    return pdf_data
+```
+
+## Summary of changes:
+
+1. **Storage Logic**: Only store PDF bytes if file ≤ 1.5 MB
+1. **Database Schema**: Added `file_size_mb` column
+1. **Loading Logic**: Handle NULL pdf_bytes gracefully
+1. **UI Updates**: Show appropriate messages for large files
+1. **Grid Display**: Show viewer availability status
+
+This saves significant database space while still providing full analysis functionality for large files!​​​​​​​​​​​​​​​​
