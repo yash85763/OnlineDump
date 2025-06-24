@@ -626,3 +626,252 @@ def create_unified_pdf_grid():
 1. **Grid Display**: Show viewer availability status
 
 This saves significant database space while still providing full analysis functionality for large files!​​​​​​​​​​​​​​​​
+
+
+
+---
+---
+---
+
+
+The issue is that for PDFs larger than 1.5 MB, we’re not storing the PDF bytes but we’re still storing the PDF record in the database with all the metadata. The feedback system should still work because the PDF record exists with a valid ID.
+
+Let me help you debug this:
+
+## 1. Debug the feedback issue
+
+Add debug information to your feedback submission to see what’s happening:
+
+```python
+def render_feedback_form(pdf_name, file_stem, json_data):
+    """Render feedback form for a specific PDF"""
+    feedback_key = f"feedback_{file_stem}"
+    
+    # DEBUG: Check PDF database ID
+    pdf_id = st.session_state.pdf_database_ids.get(pdf_name)
+    st.write(f"🔍 DEBUG: PDF Name: {pdf_name}")
+    st.write(f"🔍 DEBUG: PDF ID in session: {pdf_id}")
+    st.write(f"🔍 DEBUG: PDF in database_ids: {pdf_name in st.session_state.pdf_database_ids}")
+    
+    # Check if feedback was already submitted
+    if st.session_state.feedback_submitted.get(feedback_key, False):
+        st.success("✅ Thank you! Your feedback has been submitted for this document.")
+        if st.button("Submit New Feedback", key=f"new_feedback_{file_stem}"):
+            st.session_state.feedback_submitted[feedback_key] = False
+            st.rerun()
+        return
+    
+    st.markdown("<div class='feedback-section'>", unsafe_allow_html=True)
+    st.subheader("📝 Your Feedback Matters")
+    st.write("Help us improve our analysis by providing feedback on the results:")
+    
+    with st.form(f"feedback_form_{file_stem}"):
+        # ... your existing form fields ...
+        
+        # Submit button
+        submitted = st.form_submit_button("🚀 Submit Feedback", use_container_width=True)
+        
+        if submitted:
+            # Validation
+            if not feedback_text.strip():
+                st.error("Please provide some feedback before submitting.")
+                return
+            
+            # DEBUG: Show what we're trying to submit
+            st.write(f"🔍 DEBUG: Attempting to submit feedback for PDF ID: {pdf_id}")
+            
+            if pdf_id:
+                # Verify PDF exists in database
+                try:
+                    from config.database import get_pdf_by_id
+                    pdf_record = get_pdf_by_id(pdf_id)
+                    st.write(f"🔍 DEBUG: PDF record found: {pdf_record is not None}")
+                    
+                    if pdf_record:
+                        st.write(f"🔍 DEBUG: PDF record name: {pdf_record.get('pdf_name')}")
+                        st.write(f"🔍 DEBUG: PDF has bytes: {pdf_record.get('pdf_bytes') is not None}")
+                    
+                except Exception as e:
+                    st.error(f"🔍 DEBUG: Error checking PDF record: {str(e)}")
+                
+                # Prepare feedback data
+                feedback_data = {
+                    'pdf_id': pdf_id,
+                    'feedback_date': datetime.now(),
+                    'form_number_feedback': form_number,
+                    'general_feedback': feedback_text.strip(),
+                    'rating': rating_value,
+                    'user_session_id': get_session_id()
+                }
+                
+                try:
+                    feedback_id = store_feedback_data(feedback_data)
+                    
+                    if feedback_id:
+                        st.success("🎉 Thank you for your valuable feedback!")
+                        st.session_state.feedback_submitted[feedback_key] = True
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error("❌ Error submitting feedback. No feedback ID returned.")
+                        
+                except Exception as e:
+                    st.error(f"❌ Failed to save feedback: {str(e)}")
+                    import traceback
+                    st.error(f"Full error: {traceback.format_exc()}")
+            else:
+                st.error("❌ Cannot submit feedback - PDF not found in database")
+                st.write("🔍 DEBUG: Available PDF database IDs:")
+                for name, id_val in st.session_state.pdf_database_ids.items():
+                    st.write(f"  - {name}: {id_val}")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+```
+
+## 2. Check if the PDF ID is being stored correctly for large files
+
+Update your loading function to ensure PDF ID is stored even for large files:
+
+```python
+def load_pdf_from_database_with_analysis(pdf_id, pdf_name):
+    try:
+        show_processing_overlay(
+            message=f"Loading {pdf_name}",
+            submessage="Retrieving PDF and analysis data from database..."
+        )
+        
+        complete_data = load_complete_pdf_data(pdf_id)
+        
+        if not complete_data:
+            st.error("Could not load PDF data")
+            return False
+        
+        # IMPORTANT: Always store the PDF database ID, regardless of file size
+        st.session_state.pdf_database_ids[pdf_name] = complete_data["id"]
+        st.session_state.loaded_pdfs.add(pdf_name)
+        st.session_state.current_pdf = pdf_name
+        
+        # Check if PDF bytes are available
+        pdf_bytes = complete_data.get('pdf_bytes')
+        file_size_mb = complete_data.get('file_size_mb', 0)
+        
+        if pdf_bytes:
+            # PDF bytes available - load for viewing
+            st.session_state.pdf_files[pdf_name] = bytes(pdf_bytes)
+            st.success(f"✅ Loaded {pdf_name} ({file_size_mb:.2f} MB) - PDF viewer available")
+        else:
+            # No PDF bytes - large file, but still store ID for feedback
+            st.warning(f"⚠️ {pdf_name} ({file_size_mb:.2f} MB) - PDF viewer not available (file too large)")
+            st.info("✅ Analysis data and feedback are still available")
+        
+        # DEBUG: Confirm PDF ID is stored
+        st.write(f"🔍 DEBUG: Stored PDF ID {complete_data['id']} for {pdf_name}")
+        
+        # ... rest of your analysis and parsing data loading code ...
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Loading failed: {str(e)}")
+        return False
+    finally:
+        hide_processing_overlay()
+```
+
+## 3. Verify the database query includes large files
+
+Update your `get_all_pdfs_metadata()` function to ensure it includes files with NULL pdf_bytes:
+
+```python
+def get_all_pdfs_metadata() -> List[Dict[str, Any]]:
+    """Get metadata for all PDFs in database (including large files with NULL bytes)"""
+    
+    sql = """
+        SELECT 
+            p.id,
+            p.pdf_name,
+            p.file_hash,
+            p.upload_date,
+            p.processed_date,
+            p.layout,
+            p.original_page_count,
+            p.final_page_count,
+            p.final_word_count,
+            p.avg_words_per_page,
+            p.obfuscation_applied,
+            p.pages_removed_count,
+            p.uploaded_by,
+            p.file_size_mb,
+            -- Analysis status
+            CASE 
+                WHEN COUNT(a.id) > 0 THEN 'Analyzed'
+                ELSE 'Parsed Only'
+            END as analysis_status,
+            MAX(a.version) as latest_analysis_version,
+            COUNT(a.id) as analysis_count,
+            -- Size calculation - use file_size_mb if available, otherwise calculate from pdf_bytes
+            CASE 
+                WHEN p.file_size_mb IS NOT NULL THEN p.file_size_mb * 1024 * 1024
+                WHEN p.pdf_bytes IS NOT NULL THEN LENGTH(p.pdf_bytes)
+                ELSE 0
+            END as file_size_bytes
+        FROM pdfs p
+        LEFT JOIN analyses a ON p.id = a.pdf_id
+        GROUP BY p.id, p.pdf_name, p.file_hash, p.upload_date, p.processed_date,
+                 p.layout, p.original_page_count, p.final_page_count, 
+                 p.final_word_count, p.avg_words_per_page, p.obfuscation_applied,
+                 p.pages_removed_count, p.uploaded_by, p.file_size_mb, p.pdf_bytes
+        ORDER BY p.processed_date DESC
+    """
+    
+    with db.get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql)
+            results = cur.fetchall()
+            return [dict(row) for row in results]
+```
+
+## 4. Test the feedback system
+
+Add a test button to verify the feedback system works:
+
+```python
+# Add this temporarily to test feedback for large files
+if st.button("🧪 Test Feedback System"):
+    current_pdf = st.session_state.get('current_pdf')
+    if current_pdf:
+        pdf_id = st.session_state.pdf_database_ids.get(current_pdf)
+        st.write(f"Current PDF: {current_pdf}")
+        st.write(f"PDF ID: {pdf_id}")
+        
+        if pdf_id:
+            try:
+                from config.database import get_pdf_by_id
+                pdf_record = get_pdf_by_id(pdf_id)
+                st.write(f"PDF found in database: {pdf_record is not None}")
+                
+                if pdf_record:
+                    st.write(f"PDF name in DB: {pdf_record['pdf_name']}")
+                    st.write(f"Has PDF bytes: {pdf_record.get('pdf_bytes') is not None}")
+                    st.write(f"File size MB: {pdf_record.get('file_size_mb')}")
+                    st.success("✅ PDF exists in database - feedback should work")
+                else:
+                    st.error("❌ PDF not found in database")
+            except Exception as e:
+                st.error(f"Error checking PDF: {str(e)}")
+        else:
+            st.error("No PDF ID found in session state")
+    else:
+        st.warning("No current PDF selected")
+```
+
+Run this debug code and let me know:
+
+1. **What does the debug output show** when you try to submit feedback for a large PDF?
+1. **Is the PDF ID being stored correctly** in `st.session_state.pdf_database_ids`?
+1. **Does the PDF record exist** in the database when you run the test?
+1. **What’s the exact error message** you’re getting?
+
+This will help identify exactly where the feedback system is failing for large files.​​​​​​​​​​​​​​​​
+
+
