@@ -428,11 +428,133 @@ if (st.session_state.current_pdf and
         st.session_state.clause_page_mapping[pdf_name] = clause_mapping
 ```
 
+
+
+
+---
+---
+---
+
+
+The RecursionError is likely caused by the infinite rerun loop. When you have an infinite loop of `st.rerun()`, it can cause logging or other operations to hit recursion limits.
+
+## Fix 1: Stop the Infinite Rerun Loop
+
+Replace your entire row selection handler with this safer version:
+
+```python
+# Handle row selection - SAFE VERSION (no infinite loops)
+selected_rows = grid_response.get('selected_rows', pd.DataFrame())
+
+# Only process selection if there actually is a selection
+if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+    selected_pdf_name = selected_rows.iloc[0]['PDF Name']
+    source = selected_rows.iloc[0]['Source']
+    db_id = selected_rows.iloc[0]['DB ID']
+    
+    # Create a unique key for this selection to prevent processing the same selection multiple times
+    selection_key = f"{selected_pdf_name}_{source}_{db_id}"
+    
+    # Only process if this is a NEW selection
+    if st.session_state.get('last_selection_key') != selection_key:
+        st.session_state.last_selection_key = selection_key
+        
+        # Only change current PDF if it's different
+        if selected_pdf_name != st.session_state.get('current_pdf'):
+            
+            if source == 'Database':
+                try:
+                    pdf_id = int(db_id)
+                    
+                    # Check if already loaded
+                    if selected_pdf_name not in st.session_state.loaded_pdfs:
+                        # Load from database
+                        if load_pdf_from_database_with_analysis(pdf_id, selected_pdf_name):
+                            st.session_state.current_pdf = selected_pdf_name
+                            # Only rerun after successful load
+                            st.rerun()
+                    else:
+                        # Already loaded - just set as current
+                        st.session_state.current_pdf = selected_pdf_name
+                        # No rerun needed here
+                            
+                except ValueError:
+                    st.error(f"Could not convert DB ID to integer: {db_id}")
+                    
+            elif source == 'Session':
+                # Session PDF - just set as current
+                st.session_state.current_pdf = selected_pdf_name
+                # No rerun needed here
+```
+
+## Fix 2: Add the missing session state variable
+
+Add this to your `initialize_session_state()` function:
+
+```python
+session_vars = {
+    'pdf_files': {},
+    'json_data': {},
+    'raw_pdf_data': {},
+    'pages_content': {},
+    'clause_page_mapping': {},
+    'last_selection_key': None,  # ADD THIS LINE
+    'current_pdf': None,
+    # ... rest of your existing variables
+}
+```
+
+## Fix 3: Safer Logging
+
+Replace that problematic logging line with a safer version:
+
+```python
+# Instead of:
+logger.info(f"\n\n Quick clause navigation st.session_state.clause_page_mapping ({st.session_state.clause_page_mapping}) \n\n")
+
+# Use this safer version:
+try:
+    if hasattr(st.session_state, 'clause_page_mapping'):
+        mapping_summary = f"Clause mappings for {len(st.session_state.clause_page_mapping)} PDFs"
+        logger.info(f"Quick clause navigation: {mapping_summary}")
+    else:
+        logger.info("Clause page mapping not initialized")
+except Exception as e:
+    logger.info(f"Could not log clause mapping: {str(e)}")
+```
+
+## Fix 4: Add debugging without infinite loops
+
+Add this safe debug section in your right pane:
+
+```python
+# Safe debug section (no recursion risk)
+if st.session_state.current_pdf:
+    with st.expander("🔍 Debug Info", expanded=False):
+        st.write(f"Current PDF: {st.session_state.current_pdf}")
+        st.write(f"PDF in loaded_pdfs: {st.session_state.current_pdf in st.session_state.loaded_pdfs}")
+        
+        if hasattr(st.session_state, 'pages_content'):
+            st.write(f"PDF in pages_content: {st.session_state.current_pdf in st.session_state.pages_content}")
+        
+        if hasattr(st.session_state, 'clause_page_mapping'):
+            st.write(f"PDF in clause_page_mapping: {st.session_state.current_pdf in st.session_state.clause_page_mapping}")
+            if st.session_state.current_pdf in st.session_state.clause_page_mapping:
+                mapping = st.session_state.clause_page_mapping[st.session_state.current_pdf]
+                st.write(f"Clause mappings: {len(mapping)} clauses mapped")
+```
+
 ## Test the fixes:
 
-1. **Click on a database PDF** - should load with page content
-2. **Check clause dropdowns** - should show page numbers
-3. **Click another PDF, then click back** - should reload the first PDF properly
-4. **Check debug messages** - should confirm pages_content is populated
+1. **Restart your Streamlit app** to clear any stuck state
+2. **Try clicking PDFs** - the infinite loop should stop
+3. **Check the debug info** - should show what data is available
+4. **Check for RecursionError** - should be gone
 
-Let me know if the page navigation works now and if the re-selection issue is resolved!
+The key changes:
+- Only process NEW selections (using `last_selection_key`)
+- Minimal use of `st.rerun()` 
+- Safer logging
+- No rerun when just switching between already loaded PDFs
+
+Let me know if the RecursionError stops and if you can now click PDFs without infinite loops!
