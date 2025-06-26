@@ -2,6 +2,8 @@ import logging
 import sys
 from datetime import datetime
 from typing import Optional
+# Added import for RotatingFileHandler
+from logging.handlers import RotatingFileHandler
 
 class ECFRLogger:
     """Custom logger for the ECFR API wrapper"""
@@ -15,14 +17,21 @@ class ECFRLogger:
         'ENDC': '\033[0m'       # End color
     }
 
-    def __init__(self, name: str = "ECFRLogger", log_file: Optional[str] = None, level=logging.INFO):
+    def __init__(self, 
+                 name: str = "ECFRLogger", 
+                 log_file: Optional[str] = None, 
+                 level=logging.INFO,
+                 max_bytes: int = 5 * 1024 * 1024,  # 5MB default
+                 backup_count: int = 5):  # Number of backup files
         """
-        Initialize the logger.
+        Initialize the logger with log rotation support.
         
         Args:
             name (str): Logger name
             log_file (str, optional): Path to log file
             level: Logging level
+            max_bytes (int): Maximum size of log file before rotation (in bytes)
+            backup_count (int): Number of backup log files to keep
         """
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
@@ -60,13 +69,21 @@ class ECFRLogger:
         
         self.logger.addHandler(console_handler)
         
-        # File handler if log_file is specified
+        # File handler with rotation if log_file is specified
         if log_file:
             file_formatter = logging.Formatter(
                 fmt='%(asctime)s | %(levelname)8s | %(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S'
             )
-            file_handler = logging.FileHandler(log_file)
+            # Replaced FileHandler with RotatingFileHandler
+            # RotatingFileHandler automatically rotates log files when they reach max_bytes
+            # It keeps backup_count number of old log files (e.g., .1, .2, etc.)
+            file_handler = RotatingFileHandler(
+                filename=log_file,
+                maxBytes=max_bytes,  # Rotate when file reaches this size
+                backupCount=backup_count,  # Number of backup files to keep
+                encoding='utf-8'  # Ensure consistent encoding
+            )
             file_handler.setFormatter(file_formatter)
             file_handler.setLevel(level)
             self.logger.addHandler(file_handler)
