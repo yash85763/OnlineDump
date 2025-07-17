@@ -179,18 +179,22 @@ class PDFParser:
                         interpreter.process_page(page)
                         layout = device.get_result()
                         
-                        # Extract text blocks from page
+                        # Materialize layout children and keep only text boxes.
+                        # (Avoids 'LTPage' not subscriptable + filters out images/figures.)
+                        elements = [obj for obj in layout if isinstance(obj, LTTextBox)]
+                        
                         text_blocks = []
                         page_text = ""
                         
-                        for i, element in enumerate(layout):
-                            if isinstance(element, LTTextBox):
-                                text_content = element.get_text().strip()
-                                if text_content:
-                                    # Get previous and next text for context
-                                    prev_text = layout[i-1].get_text().strip() if i > 0 and isinstance(layout[i-1], LTTextBox) else None
-                                    next_text = layout[i+1].get_text().strip() if i < len(layout)-1 and isinstance(layout[i+1], LTTextBox) else None
-                                    
+                        for i, element in enumerate(elements):
+                            text_content = element.get_text().strip()
+                            if not text_content:
+                                continue
+                        
+                            # Neighbor context (text only)
+                            prev_text = elements[i-1].get_text().strip() if i > 0 else None
+                            next_text = elements[i+1].get_text().strip() if i + 1 < len(elements) else None
+
                                     # Skip likely captions or headings
                                     if not self.is_likely_caption_or_heading(text_content, prev_text, next_text):
                                         text_blocks.append({
