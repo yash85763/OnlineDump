@@ -1,59 +1,111 @@
 #!/usr/bin/env python3
 """
-visualize_pdfminer_layout.py
+pdfminer_layout_inspect.py
 
-Quick visualization of how pdfminer.six "sees" each PDF page.
+Visual debug utility: see how pdfminer.six interprets each page of a PDF.
 
-For every page:
-- Draw page boundary
-- Draw rectangles around LTTextBox objects
-- Draw rectangles around LTTextLine objects (optional flag)
-- Draw rectangles around LTImage objects
-- Draw rectangles around LTFigure objects (containers)
+What it does:
+    • Parses PDF into LTPage layout objects.
+    • Extracts LTTextBox text, coords.
+    • Extracts LTImage raw bytes (best effort) & saves to files.
+    • Draws bounding boxes over page & annotates each text box with short text preview.
+    • Saves per-page PNG visualizations + JSON metadata.
 
-Outputs PNG files (page_001.png, etc.) and/or displays them interactively.
-
-Example:
-    python visualize_pdfminer_layout.py sample.pdf --outdir layout_imgs
+Edit the CONFIG section below (PDF_PATH, OUTDIR) and run:
+    python pdfminer_layout_inspect.py
 """
 
 import os
-import argparse
+import io
+import json
 import logging
+from dataclasses import dataclass, asdict
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
 
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import (
+    LAParams,
     LTPage,
     LTTextBox,
     LTTextLine,
     LTImage,
     LTFigure,
-    LAParams,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("pdfminer_layout_viz")
+# ------------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------------
+PDF_PATH = "sample.pdf"          # <--- change to your PDF file
+OUTDIR   = "layout_debug_output" # All outputs written here
+SHOW_TEXT_LINES = False          # Draw LTTextLine boxes (can get noisy)
+INVERT_Y = True                  # Flip Y so page looks upright in image
+MAX_LABEL_CHARS = 40             # Max chars to show in on-page labels
+SAVE_JSON = True                 # Dump per-page JSON
+EXTRACT_IMAGES = True            # Attempt to save embedded images
+DPI = 150                        # Output PNG resolution
 
 
 # ------------------------------------------------------------------
-# Drawing helpers
+# Logging
 # ------------------------------------------------------------------
-def _add_rect(ax, bbox, label=None, linewidth=1.0, linestyle="-"):
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("pdfminer_layout_inspect")
+
+
+# ------------------------------------------------------------------
+# Data structures
+# ------------------------------------------------------------------
+@dataclass
+class TextBoxInfo:
+    page: int
+    idx: int
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    text: str
+
+@dataclass
+class ImageInfo:
+    page: int
+    idx: int
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    saved_path: Optional[str]  # None if not saved / unknown
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+def ensure_outdir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+
+def sanitize_label(text: str, max_chars: int = 40) -> str:
+    """Strip and compress whitespace; truncate to max_chars for display."""
+    t = " ".join(text.split())
+    if len(t) > max_chars:
+        t = t[:max_chars - 1] + "…"
+    return t
+
+
+def add_rect(ax, bbox, label=None, linewidth=1.0, linestyle="-"):
     """
-    Add a rectangle patch to axes.
-
+    Draw rectangle patch.
     bbox: (x0, y0, x1, y1)
-    Coordinates are already in PDF coordinate space (origin bottom-left).
     """
     x0, y0, x1, y1 = bbox
-    width = x1 - x0
-    height = y1 - y0
+    w = x1 - x0
+    h = y1 - y0
     rect = plt.Rectangle(
-        (x0, y0),
-        width,
-        height,
+        (x0, y0), w, h,
         fill=False,
         linewidth=linewidth,
         linestyle=linestyle,
@@ -65,142 +117,128 @@ def _add_rect(ax, bbox, label=None, linewidth=1.0, linestyle="-"):
             y1,
             label,
             fontsize=6,
-            verticalalignment="bottom",
+            va="bottom",
+            ha="left",
         )
 
 
-def _iter_layout_objects(layout_obj):
-    """
-    Depth-first yield of all layout children.
-    pdfminer LTPage / LTFigure / LTTextBox etc. objects are iterable
-    over their children (where applicable).
-    """
+def iter_layout(layout_obj):
+    """Depth-first iterator over layout tree."""
     yield layout_obj
     if hasattr(layout_obj, "__iter__"):
         for child in layout_obj:
-            yield from _iter_layout_objects(child)
+            yield from iter_layout(child)
+
+
+# --------------- Image Extraction ------------------
+def guess_image_ext(stream_bytes: bytes) -> str:
+    """Heuristic: return file extension based on magic bytes."""
+    if stream_bytes.startswith(b"\xff\xd8"):
+        return ".jpg"
+    if stream_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if stream_bytes.startswith(b"GIF87a") or stream_bytes.startswith(b"GIF89a"):
+        return ".gif"
+    if stream_bytes.startswith(b"BM"):
+        return ".bmp"
+    if stream_bytes[0:4] == b"RIFF" and stream_bytes[8:12] == b"WEBP":
+        return ".webp"
+    # Fallback
+    return ".bin"
+
+
+def save_ltimage(lt_image: LTImage, out_base: str) -> Optional[str]:
+    """
+    Attempt to extract raw image bytes from LTImage and save.
+    Returns saved path or None if failed.
+    """
+    if not hasattr(lt_image, "stream") or lt_image.stream is None:
+        return None
+
+    try:
+        raw_bytes = lt_image.stream.get_rawdata()
+    except Exception:
+        # Some filters require get_data()
+        try:
+            raw_bytes = lt_image.stream.get_data()
+        except Exception as e:
+            logger.warning(f"Failed to get image data: {e}")
+            return None
+
+    ext = guess_image_ext(raw_bytes)
+    out_path = out_base + ext
+    try:
+        with open(out_path, "wb") as f:
+            f.write(raw_bytes)
+        return out_path
+    except Exception as e:
+        logger.warning(f"Failed to write image file: {e}")
+        return None
 
 
 # ------------------------------------------------------------------
-# Visualization core
+# Visualization of a single page
 # ------------------------------------------------------------------
-def visualize_page_layout(
-    layout,
-    show_text_lines=False,
-    show_images=True,
-    show_figures=True,
-    show_page_bbox=True,
-    title_prefix="",
-    ax=None,
+def visualize_page(
+    page_num: int,
+    layout: LTPage,
+    text_boxes: List[TextBoxInfo],
+    images: List[ImageInfo],
+    show_text_lines: bool = False,
+    invert_y: bool = True,
+    out_png: Optional[str] = None,
 ):
-    """
-    Draw bounding boxes for a pdfminer LTPage layout.
+    """Render a page with bounding boxes & labels."""
+    fig, ax = plt.subplots(figsize=(8, 10))
 
-    Parameters
-    ----------
-    layout : LTPage
-    show_text_lines : bool
-        If True, draw LTTextLine boxes inside text boxes.
-    show_images : bool
-        Draw LTImage boxes.
-    show_figures : bool
-        Draw LTFigure container boxes.
-    show_page_bbox : bool
-        Draw page boundary.
-    title_prefix : str
-        Prefix added to axes title (e.g., "Page 1 - ").
-    ax : matplotlib.axes.Axes or None
-        If None, create a new figure/axes.
-
-    Returns
-    -------
-    ax : matplotlib.axes.Axes
-    """
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.figure
-
-    # Page dims
-    page_w = layout.width
-    page_h = layout.height
-
-    # Configure axes to PDF coordinate space
-    ax.set_xlim(0, page_w)
-    ax.set_ylim(0, page_h)
+    # Basic axes config
+    ax.set_xlim(0, layout.width)
+    ax.set_ylim(0, layout.height)
     ax.set_aspect("equal", adjustable="box")
-    ax.invert_yaxis()  # comment out to use origin bottom-left visually; see note below
 
-    # NOTE: Matplotlib's default origin is lower-left for data coords, but we
-    # often invert_yaxis() to display page "as read" (top at top).
-    # Remove ax.invert_yaxis() if you prefer PDF raw coordinates.
+    if invert_y:
+        ax.invert_yaxis()  # so top of page is visually at top
 
-    # Page boundary
-    if show_page_bbox:
-        _add_rect(ax, (0, 0, page_w, page_h), label="PAGE", linewidth=1.5, linestyle="--")
+    # Page border
+    add_rect(ax, (0, 0, layout.width, layout.height), label="PAGE", linewidth=1.5, linestyle="--")
 
-    # Walk tree
-    for obj in _iter_layout_objects(layout):
-        if isinstance(obj, LTTextBox):
-            _add_rect(ax, (obj.x0, obj.y0, obj.x1, obj.y1), label="TextBox", linewidth=0.8)
-            if show_text_lines:
-                for line in obj:
-                    if isinstance(line, LTTextLine):
-                        _add_rect(ax, (line.x0, line.y0, line.x1, line.y1), label="TextLn", linewidth=0.5, linestyle=":")
-        elif show_images and isinstance(obj, LTImage):
-            _add_rect(ax, (obj.x0, obj.y0, obj.x1, obj.y1), label="Image", linewidth=1.0, linestyle="-")
-        elif show_figures and isinstance(obj, LTFigure):
-            _add_rect(ax, (obj.x0, obj.y0, obj.x1, obj.y1), label="Figure", linewidth=1.0, linestyle="-.")
-        # We skip other object types (curves, chars) for clarity.
+    # Draw text boxes
+    for tb in text_boxes:
+        lbl = f"T{tb.idx}: {sanitize_label(tb.text, MAX_LABEL_CHARS)}"
+        add_rect(ax, (tb.x0, tb.y0, tb.x1, tb.y1), label=lbl, linewidth=0.8)
 
-    ax.set_title(f"{title_prefix}size=({page_w:.0f}x{page_h:.0f})")
-    return ax
+    # Draw text lines (optional)
+    if show_text_lines:
+        for obj in iter_layout(layout):
+            if isinstance(obj, LTTextLine):
+                add_rect(ax, (obj.x0, obj.y0, obj.x1, obj.y1), label=None, linewidth=0.5, linestyle=":")
+
+    # Draw images
+    for im in images:
+        lbl = f"I{im.idx}"
+        if im.saved_path:
+            lbl += " img"
+        add_rect(ax, (im.x0, im.y0, im.x1, im.y1), label=lbl, linewidth=1.0, linestyle="-.")
+
+    ax.set_title(f"Page {page_num} (w={layout.width:.0f}, h={layout.height:.0f})")
+    fig.tight_layout()
+
+    if out_png:
+        fig.savefig(out_png, dpi=DPI)
+        logger.info(f"Saved page {page_num} visualization: {out_png}")
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 # ------------------------------------------------------------------
-# Page extraction
+# Extraction pipeline
 # ------------------------------------------------------------------
-def extract_pdf_layouts(pdf_path, laparams=None):
+def extract_pdf(pdf_path: str):
     """
-    Generator yielding (page_number, LTPage) for each page in pdf_path.
+    Parse PDF and collect per-page text boxes & images.
+    Returns list of dicts: {"page_num": int, "layout": LTPage, "text_boxes": [...], "images": [...]}
     """
-    if laparams is None:
-        laparams = LAParams(
-            char_margin=2.0,
-            line_margin=0.5,
-            word_margin=0.1,
-            detect_vertical=True,
-            all_texts=True,
-        )
-
-    for page_num, layout in enumerate(extract_pages(pdf_path, laparams=laparams), start=1):
-        if not isinstance(layout, LTPage):
-            # extract_pages returns top-level LTPage objects, but just in case:
-            logger.warning(f"Unexpected layout type on page {page_num}: {type(layout)}")
-        yield page_num, layout
-
-
-# ------------------------------------------------------------------
-# Main driver
-# ------------------------------------------------------------------
-def main():
-    parser = argparse.ArgumentParser(description="Visualize pdfminer.six layout bounding boxes.")
-    parser.add_argument("pdf", help="Path to PDF file.")
-    parser.add_argument("--outdir", help="Directory to save page PNGs. If omitted, just display.", default=None)
-    parser.add_argument("--no-show", action="store_true", help="Do not display windows (useful for batch).")
-    parser.add_argument("--lines", action="store_true", help="Show LTTextLine boxes.")
-    parser.add_argument("--no-images", action="store_true", help="Do not draw LTImage boxes.")
-    parser.add_argument("--no-figures", action="store_true", help="Do not draw LTFigure boxes.")
-    parser.add_argument("--keep-y-up", action="store_true", help="Do not invert y-axis (raw PDF coords).")
-    args = parser.parse_args()
-
-    pdf_path = args.pdf
-    if not os.path.isfile(pdf_path):
-        raise FileNotFoundError(pdf_path)
-
-    if args.outdir:
-        os.makedirs(args.outdir, exist_ok=True)
-
     laparams = LAParams(
         char_margin=2.0,
         line_margin=0.5,
@@ -209,36 +247,153 @@ def main():
         all_texts=True,
     )
 
-    for page_num, layout in extract_pdf_layouts(pdf_path, laparams=laparams):
-        fig, ax = plt.subplots(figsize=(8, 10))  # scale figure size as you like
+    pages_data = []
+    for page_num, layout in enumerate(extract_pages(pdf_path, laparams=laparams), start=1):
+        if not isinstance(layout, LTPage):
+            logger.warning(f"Unexpected layout type for page {page_num}: {type(layout)}")
 
-        # Draw page
-        visualize_page_layout(
-            layout,
-            show_text_lines=args.lines,
-            show_images=not args.no_images,
-            show_figures=not args.no_figures,
-            show_page_bbox=True,
-            title_prefix=f"Page {page_num} - ",
-            ax=ax,
+        text_boxes: List[TextBoxInfo] = []
+        images: List[ImageInfo] = []
+
+        # Collect objects
+        tb_idx = 0
+        im_idx = 0
+
+        for obj in iter_layout(layout):
+            if isinstance(obj, LTTextBox):
+                text = obj.get_text() if hasattr(obj, "get_text") else ""
+                text_boxes.append(
+                    TextBoxInfo(
+                        page=page_num,
+                        idx=tb_idx,
+                        x0=obj.x0,
+                        y0=obj.y0,
+                        x1=obj.x1,
+                        y1=obj.y1,
+                        text=text,
+                    )
+                )
+                tb_idx += 1
+
+            elif isinstance(obj, LTImage):
+                # We'll save later once we know output directory
+                images.append(
+                    ImageInfo(
+                        page=page_num,
+                        idx=im_idx,
+                        x0=obj.x0,
+                        y0=obj.y0,
+                        x1=obj.x1,
+                        y1=obj.y1,
+                        saved_path=None,
+                    )
+                )
+                im_idx += 1
+
+        pages_data.append(
+            {
+                "page_num": page_num,
+                "layout": layout,
+                "text_boxes": text_boxes,
+                "images": images,
+            }
         )
 
-        # Optionally keep raw PDF origin (y-up)
-        if args.keep_y_up:
-            ax.invert_yaxis()  # invert_yaxis() called in visualize; call again to undo
-            ax.set_ylim(0, layout.height)  # ensure proper limits
+    return pages_data
 
-        fig.tight_layout()
 
-        if args.outdir:
-            out_path = os.path.join(args.outdir, f"page_{page_num:03d}.png")
-            fig.savefig(out_path, dpi=150)
-            logger.info(f"Wrote {out_path}")
+# ------------------------------------------------------------------
+# Save JSON metadata
+# ------------------------------------------------------------------
+def save_page_json(page_dict, out_json_path: str):
+    """
+    Save text boxes + images (coords + text + saved image path) to JSON.
+    `page_dict` is one element from extract_pdf() results.
+    """
+    data = {
+        "page_num": page_dict["page_num"],
+        "width": page_dict["layout"].width,
+        "height": page_dict["layout"].height,
+        "text_boxes": [asdict(tb) for tb in page_dict["text_boxes"]],
+        "images": [asdict(im) for im in page_dict["images"]],
+    }
+    with open(out_json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    logger.info(f"Wrote {out_json_path}")
 
-        if not args.no_show:
-            plt.show()
-        else:
-            plt.close(fig)
+
+# ------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------
+def main():
+    if not os.path.isfile(PDF_PATH):
+        raise FileNotFoundError(f"PDF_PATH not found: {PDF_PATH}")
+
+    ensure_outdir(OUTDIR)
+
+    logger.info(f"Parsing: {PDF_PATH}")
+    pages_data = extract_pdf(PDF_PATH)
+
+    # Extract & save image binaries
+    if EXTRACT_IMAGES:
+        # Re-parse pages w/ layout iteration to access LTImage objects again (since we didn't store refs)
+        laparams = LAParams(
+            char_margin=2.0,
+            line_margin=0.5,
+            word_margin=0.1,
+            detect_vertical=True,
+            all_texts=True,
+        )
+        # We'll walk side by side: pages_data + fresh extract_pages generator
+        fresh_pages = list(extract_pages(PDF_PATH, laparams=laparams))
+        if len(fresh_pages) != len(pages_data):
+            logger.warning("Page count mismatch during image extraction; continuing best-effort.")
+
+        for page_dict in pages_data:
+            pnum = page_dict["page_num"]
+            layout = fresh_pages[pnum - 1] if pnum - 1 < len(fresh_pages) else None
+            if layout is None:
+                continue
+
+            # Map images by index in traversal order
+            im_outdir = os.path.join(OUTDIR, f"page_{pnum:03d}_images")
+            ensure_outdir(im_outdir)
+
+            im_idx = 0
+            for obj in iter_layout(layout):
+                if isinstance(obj, LTImage):
+                    base = os.path.join(im_outdir, f"p{pnum:03d}_img{im_idx:03d}")
+                    saved = save_ltimage(obj, base)
+                    # record
+                    for iminfo in page_dict["images"]:
+                        if iminfo.idx == im_idx:
+                            iminfo.saved_path = saved
+                            break
+                    im_idx += 1
+
+    # Visualization & JSON dump
+    for page_dict in pages_data:
+        pnum = page_dict["page_num"]
+        layout = page_dict["layout"]
+        text_boxes = page_dict["text_boxes"]
+        images = page_dict["images"]
+
+        out_png = os.path.join(OUTDIR, f"page_{pnum:03d}.png")
+        visualize_page(
+            pnum,
+            layout,
+            text_boxes,
+            images,
+            show_text_lines=SHOW_TEXT_LINES,
+            invert_y=INVERT_Y,
+            out_png=out_png,
+        )
+
+        if SAVE_JSON:
+            out_json = os.path.join(OUTDIR, f"page_{pnum:03d}.json")
+            save_page_json(page_dict, out_json)
+
+    logger.info("Done.")
 
 
 if __name__ == "__main__":
