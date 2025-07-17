@@ -3,6 +3,11 @@ import json
 import re
 import numpy as np
 from typing import List, Dict, Tuple, Any
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # PDF processing imports
 try:
@@ -12,10 +17,12 @@ try:
     from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
     from pdfminer.converter import PDFPageAggregator
     from pdfminer.layout import LAParams, LTTextBox, LTPage
+    import pdfminer
     PDFMINER_AVAILABLE = True
+    logger.info(f"Using pdfminer.six version: {pdfminer.__version__}")
 except ImportError:
     PDFMINER_AVAILABLE = False
-    print("Warning: pdfminer.six not available. Install with: pip install pdfminer.six")
+    logger.error("pdfminer.six not available. Install with: pip install pdfminer.six")
 
 class PDFParser:
     """
@@ -131,6 +138,7 @@ class PDFParser:
             return result
             
         except Exception as e:
+            logger.error(f"Error processing PDF {pdf_path}: {str(e)}")
             return {
                 "filename": os.path.basename(pdf_path),
                 "success": False,
@@ -152,53 +160,68 @@ class PDFParser:
         pages_data = []
         total_text = ""
         
-        with open(pdf_path, 'rb') as file:
-            parser = PDFParser(file)
-            document = PDFDocument(parser)  # Initialize document directly with parser
-            
-            if not document.is_extractable:
-                return [], False, "Document is encrypted or not extractable"
-            
-            # Extract content from each page
-            for page_num, page in enumerate(PDFPage.create_pages(document)):
-                interpreter.process_page(page)
-                layout = device.get_result()
+        try:
+            with open(pdf_path, 'rb') as file:
+                parser = PDFParser(file)
+                try:
+                    document = PDFDocument(parser)
+                except Exception as e:
+                    logger.error(f"Failed to initialize PDFDocument: {str(e)}")
+                    return [], False, f"Failed to initialize PDF document: {str(e)}"
                 
-                # Extract text blocks from page
-                text_blocks = []
-                page_text = ""
+                if not document.is_extractable:
+                    logger.warning(f"Document {pdf_path} is not extractable")
+                    return [], False, "Document is encrypted or not extractable"
                 
-                for i, element in enumerate(layout):
-                    if isinstance(element, LTTextBox):
-                        text_content = element.get_text().strip()
-                        if text_content:
-                            # Get previous and next text for context
-                            prev_text = layout[i-1].get_text().strip() if i > 0 and isinstance(layout[i-1], LTTextBox) else None
-                            next_text = layout[i+1].get_text().strip() if i < len(layout)-1 and isinstance(layout[i+1], LTTextBox) else None
-                            
-                            # Skip likely captions or headings
-                            if not self.is_likely_caption_or_heading(text_content, prev_text, next_text):
-                                text_blocks.append({
-                                    'x0': element.x0,
-                                    'y0': element.y0,
-                                    'x1': element.x1,
-                                    'y1': element.y1,
-                                    'text': text_content
-                                })
-                                page_text += text_content + " "
+                # Extract content from each page
+                for page_num, page in enumerate(PDFPage.create_pages(document)):
+                    try:
+                        interpreter.process_page(page)
+                        layout = device.get_result()
+                        
+                        # Extract text blocks from page
+                        text_blocks = []
+                        page_text = ""
+                        
+                        for i, element in enumerate(layout):
+                            if isinstance(element, LTTextBox):
+                                text_content = element.get_text().strip()
+                                if text_content:
+                                    # Get previous and next text for context
+                                    prev_text = layout[i-1].get_text().strip() if i > 0 and isinstance(layout[i-1], LTTextBox) else None
+                                    next_text = layout[i+1].get_text().strip() if i < len(layout)-1 and isinstance(layout[i+1], LTTextBox) else None
+                                    
+                                    # Skip likely captions or headings
+                                    if not self.is_likely_caption_or_heading(text_content, prev_text, next_text):
+                                        text_blocks.append({
+                                            'x0': element.x0,
+                                            'y0': element.y0,
+                                            'x1': element.x1,
+                                            'y1': element.y1,
+                                            'text': text_content
+                                        })
+                                        page_text += text_content + " "
+                        
+                        pages_data.append({
+                            'page_number': page_num + 1,
+                            'width': layout.width if hasattr(layout, 'width') else 612,
+                            'height': layout.height if hasattr(layout, 'height') else 792,
+                            'text_blocks': text_blocks,
+                            'raw_text': page_text.strip()
+                        })
+                        
+                        total_text += page_text
+                    except Exception as e:
+                        logger.error(f"Error processing page {page_num + 1}: {str(e)}")
+                        continue
                 
-                pages_data.append({
-                    'page_number': page_num + 1,
-                    'width': layout.width if hasattr(layout, 'width') else 612,
-                    'height': layout.height if hasattr(layout, 'height') else 792,
-                    'text_blocks': text_blocks,
-                    'raw_text': page_text.strip()
-                })
-                
-                total_text += page_text
+        except Exception as e:
+            logger.error(f"Error opening PDF file {pdf_path}: {str(e)}")
+            return [], False, f"Error opening PDF: {str(e)}"
         
         # Validate extracted content
         if not total_text.strip():
+            logger.warning(f"No text extracted from {pdf_path} - PDF may need OCR")
             return pages_data, False, "No text extracted - PDF may need OCR"
         
         # Calculate quality metrics
@@ -210,12 +233,15 @@ class PDFParser:
         avg_chars_per_page = total_chars / len(pages_data) if pages_data else 0
         
         if avg_chars_per_page < 100:
+            logger.warning(f"Insufficient content in {pdf_path}: {avg_chars_per_page:.1f} chars/page")
             return pages_data, False, f"Insufficient content ({avg_chars_per_page:.1f} chars/page)"
         
         if quality_ratio < self.min_quality_ratio:
+            logger.warning(f"Low quality text in {pdf_path}: ratio {quality_ratio:.2f}")
             return pages_data, False, f"Low quality text (ratio: {quality_ratio:.2f})"
         
         quality_info = f"Quality ratio: {quality_ratio:.2f}, Avg chars/page: {avg_chars_per_page:.1f}"
+        logger.info(f"Extracted content from {pdf_path}: {quality_info}")
         return pages_data, True, quality_info
 
     def _determine_layout(self, pages_data: List[Dict]) -> str:
@@ -249,7 +275,8 @@ class PDFParser:
                 min(counts) > len(x_coordinates) * 0.2):
                 return "double_column"
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error determining layout: {str(e)}")
             pass
         
         return "single_column"
@@ -423,7 +450,7 @@ def parse_single_pdf(pdf_path: str, output_path: str = None) -> Dict[str, Any]:
     
     if output_path:
         parser.save_to_json(result, output_path)
-        print(f"Saved results to: {output_path}")
+        logger.info(f"Saved results to: {output_path}")
     
     return result
 
@@ -448,7 +475,7 @@ def parse_pdf_directory(input_dir: str, output_dir: str) -> List[Dict[str, Any]]
         pdf_path = os.path.join(input_dir, filename)
         output_path = os.path.join(output_dir, f"{os.path.splitext(filename)[0]}.json")
         
-        print(f"Processing: {filename}")
+        logger.info(f"Processing: {filename}")
         result = parser.parse_pdf(pdf_path)
         parser.save_to_json(result, output_path)
         
@@ -456,9 +483,9 @@ def parse_pdf_directory(input_dir: str, output_dir: str) -> List[Dict[str, Any]]
         
         if result["success"]:
             total_paragraphs = sum(page["paragraph_count"] for page in result["pages"])
-            print(f"  ✓ Extracted {total_paragraphs} paragraphs from {result['total_pages']} pages")
+            logger.info(f"Extracted {total_paragraphs} paragraphs from {result['total_pages']} pages")
         else:
-            print(f"  ✗ Failed: {result['error']}")
+            logger.error(f"Failed: {result['error']}")
     
     return results
 
@@ -472,18 +499,18 @@ if __name__ == "__main__":
     if os.path.isfile(args.input) and args.input.lower().endswith('.pdf'):
         result = parse_single_pdf(args.input, args.output)
         if result["success"]:
-            print(f"Successfully parsed {result['filename']}")
-            print(f"Layout: {result['layout']}")
-            print(f"Total pages: {result['total_pages']}")
+            logger.info(f"Successfully parsed {result['filename']}")
+            logger.info(f"Layout: {result['layout']}")
+            logger.info(f"Total pages: {result['total_pages']}")
             total_paragraphs = sum(page["paragraph_count"] for page in result["pages"])
-            print(f"Total paragraphs: {total_paragraphs}")
+            logger.info(f"Total paragraphs: {total_paragraphs}")
         else:
-            print(f"Failed to parse: {result['error']}")
+            logger.error(f"Failed to parse: {result['error']}")
     elif os.path.isdir(args.input):
         if not args.output:
-            print("Error: Output directory must be specified for directory input")
+            logger.error("Output directory must be specified for directory input")
         else:
             results = parse_pdf_directory(args.input, args.output)
-            print(f"Processed {len(results)} PDF files")
+            logger.info(f"Processed {len(results)} PDF files")
     else:
-        print("Error: Input must be a PDF file or a directory")
+        logger.error("Input must be a PDF file or a directory")
