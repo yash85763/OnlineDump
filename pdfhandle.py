@@ -154,7 +154,7 @@ class PDFParser:
         
         with open(pdf_path, 'rb') as file:
             parser = PDFParser(file)
-            document = PDFDocument(parser)
+            document = PDFDocument(parser)  # Initialize document directly with parser
             
             if not document.is_extractable:
                 return [], False, "Document is encrypted or not extractable"
@@ -311,7 +311,7 @@ class PDFParser:
         Sort text blocks by their position on the page.
         """
         if layout_type == "double_column":
-            page_width = max(block['x1'] for block in text_blocks)
+            page_width = max(block['x1'] for block in text_blocks) if text_blocks else 612
             midpoint = page_width / 2
             
             left_blocks = [b for b in text_blocks if (b['x0'] + b['x1']) / 2 < midpoint]
@@ -362,8 +362,7 @@ class PDFParser:
 
     def _join_short_paragraphs(self, paragraphs: List[str]) -> List[str]:
         """
-       ස
-
+        Join paragraphs that are too short or don't end with punctuation.
         """
         if not paragraphs:
             return []
@@ -464,13 +463,14 @@ def parse_pdf_directory(input_dir: str, output_dir: str) -> List[Dict[str, Any]]
     return results
 
 if __name__ == "__main__":
-    # Example: Parse a single PDF
-    pdf_file = "sample_contract.pdf"
-    json_output = "output/sample_contract.json"
-    
-    if os.path.exists(pdf_file):
-        result = parse_single_pdf(pdf_file, json_output)
-        
+    import argparse
+    parser = argparse.ArgumentParser(description="Parse PDF files, ignoring captions and headings.")
+    parser.add_argument("input", help="Path to a PDF file or directory containing PDFs")
+    parser.add_argument("-o", "--output", help="Path to save JSON output or output directory", default=None)
+    args = parser.parse_args()
+
+    if os.path.isfile(args.input) and args.input.lower().endswith('.pdf'):
+        result = parse_single_pdf(args.input, args.output)
         if result["success"]:
             print(f"Successfully parsed {result['filename']}")
             print(f"Layout: {result['layout']}")
@@ -479,3 +479,11 @@ if __name__ == "__main__":
             print(f"Total paragraphs: {total_paragraphs}")
         else:
             print(f"Failed to parse: {result['error']}")
+    elif os.path.isdir(args.input):
+        if not args.output:
+            print("Error: Output directory must be specified for directory input")
+        else:
+            results = parse_pdf_directory(args.input, args.output)
+            print(f"Processed {len(results)} PDF files")
+    else:
+        print("Error: Input must be a PDF file or a directory")
