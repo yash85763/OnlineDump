@@ -228,6 +228,210 @@ def _remove_disclaimer_pages(self, pages_content: List[Dict[str, Any]]) -> List[
         page["page_number"] = i
     
     return filtered_pages
+    
+    
+# REPLACE the existing _parse_html_content method in OCRHybridParser class with this updated version:
+
+def _parse_html_content(self, html_content: str) -> List[Dict[str, Any]]:
+“””
+Parse HTML content and extract paragraphs, stopping at disclaimer section
+“””
+soup = BeautifulSoup(html_content, ‘html.parser’)
+
+```
+# Get all paragraph elements in document order
+all_paragraphs = soup.find_all('p')
+
+paragraphs_before_disclaimer = []
+disclaimer_found = False
+
+for p in all_paragraphs:
+    # Check if this paragraph contains the disclaimer marker
+    if self._is_disclaimer_paragraph(p):
+        disclaimer_found = True
+        print(f"Found disclaimer marker, stopping content extraction. Total paragraphs before disclaimer: {len(paragraphs_before_disclaimer)}")
+        break
+    
+    # Extract text from paragraph
+    text = p.get_text(strip=True)
+    if text and len(text.split()) >= 3:  # Filter out very short paragraphs
+        paragraphs_before_disclaimer.append(text)
+
+# If no disclaimer found, use all paragraphs
+if not disclaimer_found:
+    print("No disclaimer marker found, using all content")
+
+# Group paragraphs into artificial "pages" for consistency with existing structure
+# You can adjust the paragraphs_per_page value based on your needs
+paragraphs_per_page = 10
+pages_content = []
+
+for i in range(0, len(paragraphs_before_disclaimer), paragraphs_per_page):
+    page_paragraphs = paragraphs_before_disclaimer[i:i + paragraphs_per_page]
+    page_num = (i // paragraphs_per_page) + 1
+    
+    pages_content.append({
+        "page_number": page_num,
+        "paragraphs": page_paragraphs,
+        "paragraph_count": len(page_paragraphs),
+        "layout": "ocr_extracted"
+    })
+
+return pages_content
+```
+
+# ADD this new method to the OCRHybridParser class:
+
+def *is_disclaimer_paragraph(self, paragraph_element) -> bool:
+“””
+Check if a paragraph contains the disclaimer marker
+Looking for: <p> <span class='font1' style='font-weight:bold;'> Disclaimers … </span> </p>
+“””
+try:
+# Check if paragraph contains a span with the specific class and style
+spans = paragraph_element.find_all(‘span’, class*=‘font1’)
+
+```
+    for span in spans:
+        # Check if span has font-weight:bold style
+        style = span.get('style', '')
+        if 'font-weight:bold' in style:
+            # Check if the text content contains "disclaimer" (case insensitive)
+            span_text = span.get_text(strip=True).lower()
+            if 'disclaimer' in span_text:
+                return True
+    
+    # Alternative check: look for any bold text containing "disclaimer"
+    # in case the HTML structure is slightly different
+    paragraph_text = paragraph_element.get_text(strip=True).lower()
+    if 'disclaimer' in paragraph_text:
+        # Check if it's in a bold span or strong tag
+        bold_elements = paragraph_element.find_all(['span', 'strong', 'b'])
+        for element in bold_elements:
+            element_text = element.get_text(strip=True).lower()
+            if 'disclaimer' in element_text:
+                return True
+    
+    return False
+    
+except Exception as e:
+    print(f"Error checking disclaimer paragraph: {e}")
+    return False
+```
+
+# REMOVE the existing _remove_disclaimer_pages method since it’s no longer needed
+
+# UPDATE the _ocr_parse_pdf method - replace the disclaimer filtering section:
+
+def _ocr_parse_pdf(self, pdf_path: str, generate_embeddings: bool) -> Dict[str, Any]:
+“””
+Parse PDF using OCR API and process resulting HTML
+“””
+try:
+# Step 1: Send PDF to OCR API
+html_content = self._call_ocr_api(pdf_path)
+
+```
+    if not html_content:
+        return {
+            "success": False,
+            "error": "OCR API returned empty content"
+        }
+    
+    # Step 2: Save HTML locally (optional, for debugging)
+    html_path = pdf_path.replace('.pdf', '_ocr.html')
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    # Step 3: Parse HTML and extract paragraphs (now includes disclaimer filtering)
+    pages_content = self._parse_html_content(html_content)
+    
+    if not pages_content:
+        return {
+            "success": False,
+            "error": "No content extracted from HTML"
+        }
+    
+    # Step 4: Structure result
+    result = {
+        "filename": os.path.basename(pdf_path),
+        "success": True,
+        "layout": "ocr_extracted",
+        "total_pages": len(pages_content),
+        "pages": pages_content,
+        "html_path": html_path
+    }
+    
+    # Step 5: Generate embeddings if requested
+    if generate_embeddings and self.fallback_parser and self.fallback_parser.embedding_model:
+        result["embeddings"] = self.fallback_parser._generate_embeddings(pages_content)
+    
+    return result
+    
+except Exception as e:
+    return {
+        "success": False,
+        "error": f"OCR parsing error: {str(e)}"
+    }
+```
+
+# OPTIONAL: Add this method for more flexible disclaimer pattern matching
+
+def _add_disclaimer_patterns(self, additional_patterns: List[Dict[str, str]]):
+“””
+Add additional disclaimer patterns to detect
+
+```
+Args:
+    additional_patterns: List of dictionaries with 'class', 'style', and 'text' keys
+    
+Example:
+    parser._add_disclaimer_patterns([
+        {
+            'class': 'font2',
+            'style': 'font-weight:bold;',
+            'text': 'legal notice'
+        }
+    ])
+"""
+if not hasattr(self, 'custom_disclaimer_patterns'):
+    self.custom_disclaimer_patterns = []
+
+self.custom_disclaimer_patterns.extend(additional_patterns)
+```
+
+# UPDATE the _is_disclaimer_paragraph method to support custom patterns (OPTIONAL):
+
+def _is_disclaimer_paragraph_enhanced(self, paragraph_element) -> bool:
+“””
+Enhanced disclaimer detection with custom patterns support
+“””
+try:
+# Check the main pattern first
+if self._is_disclaimer_paragraph(paragraph_element):
+return True
+
+```
+    # Check custom patterns if they exist
+    if hasattr(self, 'custom_disclaimer_patterns'):
+        for pattern in self.custom_disclaimer_patterns:
+            spans = paragraph_element.find_all('span', class_=pattern.get('class'))
+            for span in spans:
+                style = span.get('style', '')
+                if pattern.get('style') in style:
+                    span_text = span.get_text(strip=True).lower()
+                    if pattern.get('text', '').lower() in span_text:
+                        return True
+    
+    return False
+    
+except Exception as e:
+    print(f"Error checking disclaimer paragraph: {e}")
+    return False
+```
+    
+    
+    
 ```
 
 # Add this convenience function
@@ -254,7 +458,6 @@ hybrid_parser = OCRHybridParser(
 
 return hybrid_parser
 ```
-
 # Add this to your main/example usage section
 
 def example_hybrid_usage():
